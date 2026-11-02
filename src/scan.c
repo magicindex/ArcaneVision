@@ -105,8 +105,12 @@ static int walk(xl_store *s, uint32_t self, const char *path, int want_stat,
     if (depth > 0) {
         struct stat st;
         if (fstat(fd, &st) == 0 && st.st_dev != g_scan_dev) {
-            close(fd);          /* 其它文件系统的挂载点：记录目录本身，不深入 */
-            return 0;
+            /* 其它文件系统的挂载点：容器 overlay 内部跳过；其余继续遍历，
+               部分 fnOS 系统上用户家目录是独立子卷（bind/subvol） */
+            if (strstr(path, "/overlay2/") || strstr(path, "/merged")) {
+                close(fd);
+                return 0;
+            }
         }
     }
 

@@ -2,7 +2,7 @@
 # 打包 fnOS 应用：dist/xuanlan_<version>_amd64.fpk
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="${VERSION:-0.6.11}"
+VERSION="${VERSION:-0.6.12}"
 PORT="${PORT:-8971}"
 STAGE="$ROOT/build/fpk"
 PAYLOAD="$STAGE/payload"

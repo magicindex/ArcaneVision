@@ -56,7 +56,7 @@ PDF 预览：内置 pdf.js，按页宽适配，可拖拽缩放或最大化。
 
 ## 现在是什么状态
 
-当前版本 **0.6.11**，更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本 **0.6.12**，更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 P0–P3 已跑通：扫描（目录遍历 + ext4 裸设备）→ 建索引 → 落盘 → mmap 加载 → 查询
 → fanotify 增量 → TrimACL 求值 → HTTP 服务 + Web UI，并已打成可安装的飞牛 FPK。

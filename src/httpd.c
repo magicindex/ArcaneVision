@@ -190,6 +190,26 @@ static int resolve_dev(const char *root, char *dev, size_t cap) {
     return access(dev, F_OK) == 0;
 }
 
+/* 根目录下是否存在"真正"的子挂载（排除 docker overlay）：
+ * 有子挂载时裸设备扫描读不到它们，改用目录遍历。 */
+static int has_submounts(const char *root) {
+    FILE *f = fopen("/proc/self/mounts", "r");
+    if (!f) return 0;
+    char line[4096];
+    size_t rl = strlen(root);
+    int hit = 0;
+    while (fgets(line, sizeof line, f)) {
+        char mnt[1024];
+        if (sscanf(line, "%*s %1023s", mnt) != 1) continue;
+        if (strncmp(mnt, root, rl) != 0 || mnt[rl] != '/') continue;
+        if (strstr(mnt, "/overlay2/") || strstr(mnt, "/merged")) continue;
+        hit = 1;
+        break;
+    }
+    fclose(f);
+    return hit;
+}
+
 /* ---------- 构建 ---------- */
 static int build_one(int vi, int verbose) {
     vol_t *v = &g_vols[vi];
@@ -200,6 +220,10 @@ static int build_one(int vi, int verbose) {
     int rc;
     char dev[256];
     int no_raw = getenv("XL_NO_RAW") != NULL;
+    if (!no_raw && has_submounts(v->root)) {
+        if (verbose) fprintf(stderr, "xuanlan: %s 含子挂载，改用目录遍历\n", v->root);
+        no_raw = 1;
+    }
     if (!no_raw && resolve_dev(v->root, dev, sizeof(dev)) && strncmp(dev, "/dev/", 5) == 0) {
         if (verbose) fprintf(stderr, "xuanlan: %s <- %s\n", v->root, dev);
         rc = fsreader_ext4_scan(dev, v->root, &st, verbose);
