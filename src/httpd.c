@@ -1610,6 +1610,20 @@ static void handle_trash_post(sbuf *out, const char *body, int uid)
     sb_puts(out, "{\"ok\":false,\"error\":\"未知操作\"}");
 }
 
+/* 从 JSON 文本里取布尔值：找 "key"，取其后的 true/false，未找到返回 def */
+static int json_bool_def(const char *buf, const char *key, int def) {
+    if (!buf) return def;
+    const char *k = strstr(buf, key);
+    if (!k) return def;
+    const char *c = strchr(k + strlen(key), ':');
+    if (!c) return def;
+    c++;
+    while (*c == ' ' || *c == '\t' || *c == '\n' || *c == '\r') c++;
+    if (strncmp(c, "true", 4) == 0) return 1;
+    if (strncmp(c, "false", 5) == 0) return 0;
+    return def;
+}
+
 static void handle_settings_get(sbuf *out, int uid, int admin, int all) {
     char sp[1200];
     settings_path(sp, sizeof sp);
@@ -1636,6 +1650,8 @@ static void handle_settings_get(sbuf *out, int uid, int admin, int all) {
         json_str(buf ? buf : "", "\"openIn\"", oi, sizeof oi, "window");
         sb_printf(out, ",\"openIn\":\"%s\"", oi);
     }
+    sb_printf(out, ",\"strictHome\":%s",
+              json_bool_def(buf, "\"strictHome\"", 1) ? "true" : "false");
     sb_puts(out, ",\"onlyoffice\":");
     onlyoffice_probe(out);
     sb_puts(out, ",\"preview\":");
@@ -1724,13 +1740,18 @@ static void handle_settings_post(sbuf *out, const char *body, int uid) {
         pthread_mutex_unlock(&g_rcfg_mu);
     }
 
+    int strict_home = json_bool_def(body, "\"strictHome\"", 1);
+    perm_set_strict_home(strict_home);
+
     char sp[1200];
     settings_path(sp, sizeof sp);
     FILE *f = fopen(sp, "w");
     if (!f) { sb_puts(out, "{\"ok\":false,\"error\":\"cannot write\"}"); return; }
     const char *m = rc.mode == 1 ? "daily" : (rc.mode == 2 ? "interval" : "off");
-    fprintf(f, "{\"openWith\":%.*s,\"openIn\":\"%s\",\"rebuild\":{\"mode\":\"%s\",\"hour\":%d,\"minute\":%d,\"hours\":%d}}",
-            (int)len, b, open_in, m, rc.hour, rc.minute, rc.hours);
+    fprintf(f, "{\"openWith\":%.*s,\"openIn\":\"%s\",\"strictHome\":%s,"
+               "\"rebuild\":{\"mode\":\"%s\",\"hour\":%d,\"minute\":%d,\"hours\":%d}}",
+            (int)len, b, open_in, strict_home ? "true" : "false",
+            m, rc.hour, rc.minute, rc.hours);
     fclose(f);
 
     /* 检索范围：解析 "scope":["/vol1/1000", ...] */
@@ -2436,6 +2457,19 @@ static int listen_unix(const char *path) {
 static void on_signal(int sig) { (void)sig; g_stop = 1; }
 
 int httpd_serve(const xl_svc_opts *o) {
+    /* 严格模式：默认开启；settings.json 里可关闭 */
+    {
+        char sp[1200];
+        settings_path(sp, sizeof sp);
+        FILE *f = fopen(sp, "r");
+        if (f) {
+            char b[8192];
+            size_t n = fread(b, 1, sizeof b - 1, f);
+            b[n] = 0;
+            fclose(f);
+            perm_set_strict_home(json_bool_def(b, "\"strictHome\"", 1));
+        }
+    }
     const char *acl_env = getenv("XL_ACL_UID");
     g_acl_uid = acl_env ? atoi(acl_env) : -1;
     g_ui_dir = o->ui_dir;

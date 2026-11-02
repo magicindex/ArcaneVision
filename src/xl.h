@@ -158,6 +158,8 @@ typedef struct {
 } xl_svc_opts;
 int httpd_serve(const xl_svc_opts *o);
 int perm_dir_listable(uid_t uid, const char *dir);
+extern int perm_strict_home;
+void perm_set_strict_home(int on);
 
 /* ---- util.c ---- */
 void  *xmalloc(size_t n);

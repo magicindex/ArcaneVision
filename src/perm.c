@@ -37,6 +37,23 @@
 
 /* 判断「目标 uid」是否属于 gid —— 不能用进程自身的组，
  * 否则 root 进程会把所有 root:root 目录判成组可访问。 */
+int perm_strict_home = 1;
+
+void perm_set_strict_home(int on) { perm_strict_home = on ? 1 : 0; }
+
+/* /volN/<数字>（家目录）及其子路径 */
+static int under_home(const char *dir) {
+    if (strncmp(dir, "/vol", 4) != 0) return 0;
+    const char *p = dir + 4;
+    if (*p < '0' || *p > '9') return 0;
+    while (*p >= '0' && *p <= '9') p++;
+    if (*p != '/') return 0;
+    p++;
+    if (*p < '0' || *p > '9') return 0;
+    while (*p >= '0' && *p <= '9') p++;
+    return (*p == '/' || *p == 0);
+}
+
 static int uid_in_group(uid_t uid, gid_t gid) {
     static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
     static uid_t cached_uid = (uid_t)-1;
@@ -90,6 +107,7 @@ static int eval_one(uid_t uid, const char *dir, int self, int need) {
 
     uint32_t granted = 0, denied = 0;
     int matched = 0;
+    int strict = perm_strict_home && under_home(dir);
     size_t nent = ((size_t)n - 4) / 20;
     for (size_t i = 0; i < nent; i++) {
         const unsigned char *p = buf + 4 + i * 20;
@@ -103,7 +121,7 @@ static int eval_one(uid_t uid, const char *dir, int self, int need) {
 
         uint32_t tag = type_tag & 0x3c;
         int hit = 0;
-        if (tag == A_EVERY) hit = 1;
+        if (tag == A_EVERY) { if (strict && need != A_X && !(type_tag & A_DENY)) continue; hit = 1; }
         else if (tag == A_OWNER) hit = (st.st_uid == uid);
         else if (tag == A_USER) hit = (id == (uint32_t)uid);
         else if (tag == A_GROUP) hit = uid_in_group(uid, (gid_t)id);
@@ -127,6 +145,15 @@ static int eval_ancestors(uid_t uid, const char *dir, int need) {
         if (!sl) return -1;
         if (sl == buf) { if (buf[1] == 0) return -1; buf[1] = 0; }
         else *sl = 0;
+        /* 卷根 /volN 在飞牛里 mode 0，不算权限边界 */
+        {
+            size_t L = strlen(buf);
+            if (L >= 4 && strncmp(buf, "/vol", 4) == 0) {
+                size_t k = 4;
+                while (buf[k] >= '0' && buf[k] <= '9') k++;
+                if (k == L) return -1;
+            }
+        }
         int r = eval_one(uid, buf, 0, need);
         if (r >= 0) return r;
     }
@@ -147,6 +174,14 @@ static int level_ok(uid_t uid, const char *dir, int need) {
     if (r >= 0) return r;
     struct stat st;
     if (stat(dir, &st) != 0) return 0;
+    if (perm_strict_home && under_home(dir)) {
+        /* 严格模式：家目录内不认 others 位 */
+        if (st.st_uid == uid) return (((st.st_mode >> 6) & 7) & need) ? 1 : 0;
+        if (uid_in_group(uid, st.st_gid)) return (((st.st_mode >> 3) & 7) & need) ? 1 : 0;
+        /* 严格模式只收紧"列目录/读"，仍允许 others 的 x 用于穿越到被显式授权的子目录 */
+        if (need == A_X) return ((st.st_mode & 7) & A_X) ? 1 : 0;
+        return 0;
+    }
     r = posix_bit(&st, uid, need);
     return r;
 }

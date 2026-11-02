@@ -1067,6 +1067,9 @@
     '<span id="rbEvery">每 <input type="number" id="rbHours" min="1" max="168" value="6"> 小时</span></div>' +
     '<div class="hint" id="rbHint"></div>' +
     '<h3>检索范围</h3><div class="hint" id="aclWho"></div>' +
+    '<label class="admrow" id="strictRow"><input type="checkbox" id="strictHome" checked>严格模式' +
+    '<span class="hint2">默认开启；家目录内忽略「所有人」授权，只认属主与指定用户/组</span></label>' +
+    '<div class="hint" id="strictHint" style="display:none">严格模式：位于 /volN/&lt;用户&gt;/ 下的目录，即使带「所有人」读写权限，也只有属主和显式授权的用户/组可见；关闭后按文件权限原样判定（who 777 就谁都能看到）。</div>' +
     '<label class="admrow" id="allRow"><input type="checkbox" id="showAll">全盘视角（管理员）' +
     '<span class="hint2">默认关闭；开启后可选择任意目录</span></label>' +
     '<div class="acl" id="aclList"></div></div>' +
@@ -1263,6 +1266,17 @@
       void snapshot;
     }
     {
+      const srow = setmask.querySelector('#strictRow');
+      const scb = setmask.querySelector('#strictHome');
+      if (srow && scb) {
+        scb.checked = settings.strictHome !== false;
+        scb.onchange = () => {
+          const h = setmask.querySelector('#strictHint');
+          if (h) h.style.display = scb.checked ? 'none' : '';
+        };
+      }
+    }
+    {
       const allRow = setmask.querySelector('#allRow');
       const cbAll = setmask.querySelector('#showAll');
       const isAdmin = !!(settings.scopeAvailable && settings.scopeAvailable.admin);
@@ -1325,8 +1339,9 @@
       hours: parseInt(setmask.querySelector('#rbHours').value || '6', 10)
     };
     const oi = setmask.querySelector('#openIn').value;
+    const strictHome = !!setmask.querySelector('#strictHome').checked;
     fetch(API + 'settings', { method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ openWith: ow, openIn: oi, scope, rebuild }) })
+      body: JSON.stringify({ openWith: ow, openIn: oi, strictHome, scope, rebuild }) })
       .then(r => r.json()).then(() => {
         settings.openWith = ow; settings.scope = scope; openIn = oi;
         setmask.classList.remove('on');

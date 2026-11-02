@@ -155,6 +155,8 @@ int main(int argc, char **argv) {
     }
 
     if (strcmp(cmd, "acl") == 0) {
+        const char *se = getenv("XL_STRICT_HOME");
+        perm_set_strict_home(se ? atoi(se) : 1);
         if (argc < 4) { fprintf(stderr, "用法: xuanlan acl UID DIR...\n"); return 2; }
         uid_t uid = (uid_t)atoi(argv[2]);
         for (int i = 3; i < argc; i++)
