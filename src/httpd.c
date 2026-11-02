@@ -1647,7 +1647,7 @@ static void handle_settings_get(sbuf *out, int uid, int admin, int all) {
     else sb_puts(out, "{}");
     {
         char oi[16];
-        json_str(buf ? buf : "", "\"openIn\"", oi, sizeof oi, "window");
+        json_str(buf ? buf : "", "\"openIn\"", oi, sizeof oi, "embed");
         sb_printf(out, ",\"openIn\":\"%s\"", oi);
     }
     sb_printf(out, ",\"strictHome\":%s",
@@ -1711,7 +1711,7 @@ static void handle_settings_post(sbuf *out, const char *body, int uid) {
     if (len > 8192) len = 8192;
 
     char open_in[16];
-    json_str(body, "\"openIn\"", open_in, sizeof open_in, "window");
+    json_str(body, "\"openIn\"", open_in, sizeof open_in, "embed");
     if (strcmp(open_in, "embed")) snprintf(open_in, sizeof open_in, "window");
 
     /* 自动扫描计划 */

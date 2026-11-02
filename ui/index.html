@@ -395,7 +395,7 @@
     const b = p.slice(p.lastIndexOf('/') + 1), i = b.lastIndexOf('.');
     return i > 0 ? b.slice(i + 1).toLowerCase() : '';
   }
-  let openIn = 'window';
+  let openIn = 'embed';
   const openwin = document.createElement('div');
   openwin.className = 'openwin';
   openwin.innerHTML = '<div class="owbar"><span id="owtitle">打开</span><span class="sp"></span>' +
@@ -1054,8 +1054,8 @@
   setmask.className = 'setmask';
   setmask.innerHTML = '<div class="setbox"><div class="setbody"><h2>设置</h2>' +
     '<h3>打开位置</h3><div class="row2"><div class="k">文件与文档打开于</div>' +
-    '<select id="openIn"><option value="window">新窗口（新标签页）</option>' +
-    '<option value="embed">当前窗口子窗口</option></select></div>' +
+    '<select id="openIn"><option value="embed">当前窗口子窗口</option><option value="window">新窗口（新标签页）</option>' +
+    '</select></div>' +
     '<h3>打开方式关联</h3><div id="assoc"></div>' +
     '<div class="hint" id="ooHint"></div>' +
     '<div class="hint" id="pvHint"></div>' +
@@ -1352,12 +1352,12 @@
 
   function loadSettings(){
     fetch(API + 'settings' + (showAll ? '?all=1' : '')).then(r => r.json()).then(d => {
-      settings = d; openIn = d.openIn === 'embed' ? 'embed' : 'window';
+      settings = d; openIn = d.openIn === 'window' ? 'window' : 'embed';
     }).catch(() => {});
   }
   function reloadSettings(){
     fetch(API + 'settings' + (showAll ? '?all=1' : '')).then(r => r.json()).then(d => {
-      settings = d; openIn = d.openIn === 'embed' ? 'embed' : 'window'; renderSettings();
+      settings = d; openIn = d.openIn === 'window' ? 'window' : 'embed'; renderSettings();
     }).catch(() => {});
   }
   loadSettings();
