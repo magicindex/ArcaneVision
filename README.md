@@ -6,6 +6,41 @@
 
 作者：cyberzero　·　神念所至，万象玄览 / Spiritual Sense, All Things Revealed
 
+## 功能
+
+- **毫秒级检索**：直接读 ext4 元数据建索引，500 万条目规模下 3 字符以上查询通常 0.5–7 ms
+- **多卷统一**：/vol1–/vol4 合并为一棵结果树，按修改时间归并
+- **按账号授权**：身份取自飞牛会话（`X-Trim-Userid`），逐目录按 `system.trim_acl` 求值；
+  家目录可开「严格模式」，忽略「所有人」授权
+- **类型分类**：12 类图标与筛选条（文档/表格/演示/PDF/文本/代码/图片/视频/音频/压缩包…）
+- **即时预览**：内置 PDF 阅读器（按页宽适配）、文本/代码高亮底色、图片音视频直接播放；
+  可关联飞牛「文档服务」「在线预览」
+- **文件操作**：多选复制/移动/回收站，回收站支持恢复与清空
+- **索引自维护**：fanotify 实时增量 + 定时全盘对账，索引落盘，重启秒开
+- **单文件 FPK**：随包提供 Web UI，安装后从飞牛桌面打开
+
+## 界面
+
+检索：输入即出结果，左侧为类型图标，右侧为大小与修改时间。
+
+![检索](docs/screenshots/search.png)
+
+右键菜单：打开、下载、定位到文件夹、复制/移动/回收站。
+
+![右键菜单](docs/screenshots/context-menu.png)
+
+定位到文件夹：在页内面板展开所在目录并高亮目标文件。
+
+![定位到文件夹](docs/screenshots/finder.png)
+
+PDF 预览：内置 pdf.js，按页宽适配，可拖拽缩放或最大化。
+
+![PDF 预览](docs/screenshots/preview.png)
+
+设置：打开位置、10 类格式关联、自动全盘扫描、检索范围与严格模式。
+
+![设置](docs/screenshots/settings.png)
+
 ## PDF 阅读器
 
 - 内置 pdf.js（Mozilla，Apache-2.0，见 `ui/vendor/LICENSE.pdfjs`），默认按页宽适配

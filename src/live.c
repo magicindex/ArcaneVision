@@ -196,7 +196,14 @@ static void *worker(void *arg) {
         if (L.stop) break;
         while (L.qh == L.qt && !L.stop)
             pthread_cond_wait(&L.cv, &L.mu);
-        if (L.stop) break;
+        if (L.stop) {
+            while (L.qh != L.qt) {          /* 退出前释放未处理事件 */
+                free(L.q[L.qh].dir);
+                L.q[L.qh].dir = NULL;
+                L.qh = (L.qh + 1) % LV_QUEUE;
+            }
+            break;
+        }
         if (L.qh != L.qt) {
             /* 静默 250ms 后再应用，合并同目录的高频事件 */
             struct timespec ts;
@@ -205,11 +212,13 @@ static void *worker(void *arg) {
             if (ts.tv_nsec >= 1000000000L) { ts.tv_sec++; ts.tv_nsec -= 1000000000L; }
             pthread_cond_timedwait(&L.cv, &L.mu, &ts);
             while (L.qh != L.qt) {
-                char *d = L.q[L.qh].dir;
+                size_t slot = L.qh;
+                char *d = L.q[slot].dir;
                 char name[XL_NAME_MAX + 1];
-                memcpy(name, L.q[L.qh].name, sizeof(name));
-                uint32_t m = L.q[L.qh].mask;
-                L.qh = (L.qh + 1) % LV_QUEUE;
+                memcpy(name, L.q[slot].name, sizeof(name));
+                uint32_t m = L.q[slot].mask;
+                L.q[slot].dir = NULL;              /* 已取走，槽位不再持有指针 */
+                L.qh = (slot + 1) % LV_QUEUE;
                 pthread_mutex_unlock(&L.mu);
                 apply_one(d, name, m);
                 free(d);
@@ -272,8 +281,9 @@ static void *reader(void *arg) {
                         pthread_mutex_lock(&L.mu);
                         size_t nxt = (L.qt + 1) % LV_QUEUE;
                         if (nxt != L.qh) {
-                            free(L.q[L.qt].dir);
-                            L.q[L.qt].dir = strdup(dir);
+                            char *dup = strdup(dir);
+                            free(L.q[L.qt].dir);   /* 正常为 NULL；保留兜底 */
+                            L.q[L.qt].dir = dup;
                             snprintf(L.q[L.qt].name, sizeof(L.q[L.qt].name), "%s", name);
                             L.q[L.qt].mask = m->mask;
                             L.qt = nxt;
