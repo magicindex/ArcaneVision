@@ -117,6 +117,15 @@ scripts/build-fpk.sh      打包装包
 - **P3 部分完成**：TrimACL 求值已实现并通过样本验证；多用户可见段与身份绑定待网关身份来源确认
 - **P4 已完成**：Web UI、FPK 打包，模拟安装在容器内验证通过；真机安装待 App Center 登录
 
+## 许可
+
+本项目以 **GPL-3.0** 发布，全文见 [LICENSE](LICENSE)。
+
+- 第三方组件：pdf.js（Apache-2.0）、Feather Icons 图标路径（MIT），
+  其版权与许可文本见 [THIRD_PARTY.md](THIRD_PARTY.md)、[NOTICE.md](NOTICE.md)，随二进制包分发；
+- 仅在自行部署（不对外分发二进制）时，GPL 不施加额外义务；
+- 分发二进制时须提供对应源码，获取地址见 [NOTICE.md](NOTICE.md)。
+
 ## 合规
 
 本项目为净室重写：未复制、未改编任何现有搜索引擎（包括 Everything、kerything）的源代码，
