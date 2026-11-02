@@ -1149,12 +1149,17 @@
         (kind ? tagFor(kind) : '');
       const cb = row.querySelector('input');
       cb.onchange = () => {
+        const pre = path + '/';
         if (cb.checked) {
+          /* 选中 = 整棵子树纳入：清掉该子树下的排除项 */
           excluded.delete(path); checked.add(path);
+          for (const e of Array.from(excluded)) if (e.startsWith(pre)) excluded.delete(e);
         } else {
           checked.delete(path);
           if (parentPath && checked.has(parentPath)) excluded.add(path);
           else excluded.delete(path);
+          /* 取消 = 该子树下显式勾选一并取消 */
+          for (const c of Array.from(checked)) if (c.startsWith(pre)) checked.delete(c);
         }
         refreshInherit();
       };
@@ -1192,13 +1197,28 @@
       }
     }
     function refreshInherit(){
-      list.querySelectorAll('.scrow').forEach(x => {
+      const rows = list.querySelectorAll('.scrow');
+      rows.forEach(x => {
         if (!x.dataset.parent) return;
         const inp = x.querySelector('input');
         const path = x.dataset.path;
         const inh = checked.has(x.dataset.parent);
         inp.checked = checked.has(path) || (inh && !excluded.has(path));
         inp.title = (inh && !excluded.has(path)) ? '随上级目录包含；取消勾选可单独排除' : '';
+      });
+      /* 上级显示半选：子树里有排除项，或有未随上级勾选的子项 */
+      rows.forEach(x => {
+        const inp = x.querySelector('input');
+        const path = x.dataset.path;
+        if (!inp || !path) return;
+        const pre = path + '/';
+        let partial = false;
+        if (inp.checked) {
+          for (const e of excluded) if (e.startsWith(pre)) { partial = true; break; }
+        } else {
+          for (const c of checked) if (c.startsWith(pre)) { partial = true; break; }
+        }
+        inp.indeterminate = partial;
       });
     }
     for (const it of avail) addRow(list, it.path, it.kind, 0);
