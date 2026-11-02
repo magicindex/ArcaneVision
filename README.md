@@ -56,6 +56,8 @@ PDF 预览：内置 pdf.js，按页宽适配，可拖拽缩放或最大化。
 
 ## 现在是什么状态
 
+当前版本 **0.6.11**，更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+
 P0–P3 已跑通：扫描（目录遍历 + ext4 裸设备）→ 建索引 → 落盘 → mmap 加载 → 查询
 → fanotify 增量 → TrimACL 求值 → HTTP 服务 + Web UI，并已打成可安装的飞牛 FPK。
 全部是本仓库自己的代码，纯 C11 + glibc，服务端无第三方依赖、无 Qt。
@@ -64,6 +66,18 @@ ext4 裸设备读取器已用 `/dev/dm-1` 全卷验证：369 万条记录与 `fi
 扫描 4.3 s（热）／33 s（无缓存），详见 `docs/03-P1实测.md`。
 
 增量与权限的实现细节见 `docs/04-P2增量与ACL.md`。
+
+## 服务托管
+
+安装包自带 `xuanlan.service`：首次启动时同步到 `/etc/systemd/system` 并写入 `app.pid`。
+应用中心的 `cmd/main` 把 `status / start / stop` 委派给 `systemctl`，两套入口指向同一个进程，
+不会出现「应用中心显示已退出、实际还在跑」或两个实例抢 socket 的情况。
+
+```bash
+systemctl status xuanlan      # 查看状态
+systemctl restart xuanlan     # 重启（索引从快照加载，秒开）
+journalctl -u xuanlan -n 50   # 查看日志
+```
 
 ## 构建
 
@@ -138,6 +152,7 @@ src/live.c        fanotify 增量（DFID 句柄还原 + delta 表）
 src/perm.c        TrimACL 二进制求值 + 继承 + POSIX 回落
 src/main.c        CLI / serve
 docs/             架构、合规与净室说明
+CHANGELOG.md      版本更新记录
 tests/smoke.sh    冒烟测试
 tests/ext4_image_test.sh  裸设备读取器与 getdents/find 的一致性测试
 pkg/              FPK 打包源（manifest、cmd、wizard、ui、config）
@@ -150,7 +165,7 @@ scripts/build-fpk.sh      打包装包
 - **P1**：ext4 裸设备扫描器（按公开的 on-disk 格式规范自行实现，顺序读 inode 表后按物理块推进）——把冷建从 15 分钟压到 2.5–4 分钟
 - **P2 已完成**：fanotify 文件系统标记增量 + 周期对账（默认 6 小时）
 - **P3 部分完成**：TrimACL 求值已实现并通过样本验证；多用户可见段与身份绑定待网关身份来源确认
-- **P4 已完成**：Web UI、FPK 打包，模拟安装在容器内验证通过；真机安装待 App Center 登录
+- **P4 已完成**：Web UI、FPK 打包；已在飞牛 fnOS 真机安装运行，登录身份与目录授权均取自系统
 
 ## 许可
 
