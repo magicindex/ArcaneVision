@@ -1225,6 +1225,26 @@
         }
         inp.indeterminate = partial;
       });
+      /* 自下而上：上级状态由已展开的子目录决定——全未选则上级不选，部分选中则半选 */
+      const kids = new Map();
+      rows.forEach(x => {
+        const p = x.dataset.parent;
+        if (p) { if (!kids.has(p)) kids.set(p, []); kids.get(p).push(x); }
+      });
+      for (let i = rows.length - 1; i >= 0; i--) {
+        const x = rows[i], path = x.dataset.path, ch = kids.get(path);
+        if (!ch || !ch.length) continue;
+        const inp = x.querySelector('input');
+        let any = false, all = true;
+        ch.forEach(k => {
+          const ki = k.querySelector('input');
+          const on = ki.checked || ki.indeterminate;
+          if (on) any = true; else all = false;
+        });
+        if (all) all = any ? true : false;
+        inp.checked = any;
+        inp.indeterminate = any && !all;
+      }
     }
     for (const it of avail) addRow(list, it.path, it.kind, 0);
     function setChecked(fn){
