@@ -2455,6 +2455,11 @@ int httpd_serve(const xl_svc_opts *o) {
         size_t rl = strlen(r);
         while (rl && r[rl - 1] == '/') r[--rl] = 0;
         if (!rl) continue;
+        struct stat rst;
+        if (stat(r, &rst) != 0 || !S_ISDIR(rst.st_mode)) {
+            fprintf(stderr, "xuanlan serve: 跳过不存在的挂载点 %s\n", r);
+            continue;
+        }
         vol_t *v = &g_vols[g_nvols];
         memset(v, 0, sizeof(*v));
         snprintf(v->root, sizeof(v->root), "%s", r);
