@@ -1,0 +1,4 @@
+#!/bin/bash
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+bash "${SCRIPT_DIR}/main" stop
+exit 0

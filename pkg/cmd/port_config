@@ -1,0 +1,15 @@
+#!/bin/bash
+# 端口持久化：把安装/配置向导里的 wizard_service_port 落到配置目录
+port_file() { printf "%s/service_port" "${TRIM_PKGETC:-${TRIM_PKGVAR}}"; }
+valid_port() {
+    case "${1:-}" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$1" -ge 1024 ] 2>/dev/null && [ "$1" -le 65535 ] 2>/dev/null
+}
+save_port() {
+    local p="${1:-}"
+    valid_port "$p" || return 0
+    local f
+    f="$(port_file)"
+    mkdir -p "$(dirname "$f")"
+    printf "%s\n" "$p" > "${f}.tmp" && mv -f "${f}.tmp" "$f"
+}

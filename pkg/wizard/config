@@ -1,0 +1,19 @@
+[
+  {
+    "stepTitle": "运行配置",
+    "items": [
+      {
+        "type": "text",
+        "field": "wizard_service_port",
+        "label": "服务端口（1024-65535，留空保持当前端口）",
+        "initValue": "",
+        "rules": [
+          {
+            "pattern": "^$|^[0-9]{4,5}$",
+            "message": "请输入 1024-65535 之间的端口号，或留空保持当前端口"
+          }
+        ]
+      }
+    ]
+  }
+]

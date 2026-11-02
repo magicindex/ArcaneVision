@@ -1,0 +1,6 @@
+#!/bin/bash
+# 安装/升级前准备数据目录
+APP_DIR="${TRIM_APPDEST:-/vol1/@appcenter/xuanlan}"
+DATA_DIR="${TRIM_PKGVAR:-/vol1/@appdata/xuanlan}"
+mkdir -p "${DATA_DIR}/logs" "${DATA_DIR}/idx"
+exit 0

@@ -1,0 +1,5 @@
+#!/bin/bash
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+. "${SCRIPT_DIR}/port_config"
+save_port "${wizard_service_port:-}"
+exit 0

@@ -1,0 +1,19 @@
+# 构建产物
+bin/
+build/
+dist/
+*.o
+*.a
+src/version.h
+
+# 运行数据与索引
+*.idx
+idx/
+trash/
+xl-idx/
+*.log
+
+# 编辑器/系统
+.vscode/
+.idea/
+.DS_Store

@@ -1,0 +1,24 @@
+appname                      = xuanlan
+version                      = @VERSION@
+display_name                 = 玄览
+desc                         = """作者：cyberzero
+
+神念所至，万象玄览
+Spiritual Sense, All Things Revealed
+
+飞牛本地文件索引与即时搜索。
+
+直接读取 ext4 元数据建立索引，毫秒级返回任意深度的文件名与路径；索引落盘，重启即用；登录与授权沿用飞牛账号与目录权限，不做第二套。"""
+source                       = thirdparty
+platform                     = x86
+maintainer                   = cyberzero
+distributor                  = cyberzero
+os_min_version               = 1.0.0
+ctl_stop                     = true
+desktop_uidir                = ui
+desktop_applaunchname        = xuanlan.main
+service_port                 = @PORT@
+checkport                    = false
+disable_authorization_path   = false
+changelog                    = """0.6.0 界面文案改为中性命名的「文档服务」「在线预览」；页脚增加版权/版本/许可信息；以 GPL-3.0 分发，新增 NOTICE.md 合规声明（注明思路参考 Everything 与 kerything，未取用其代码）。"""
+checksum                     = @CHECKSUM@

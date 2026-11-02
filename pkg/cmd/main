@@ -1,0 +1,88 @@
+#!/bin/bash
+# 玄览 / Arcane Vision — 服务控制（fnOS cmd 入口）
+set -u
+
+APP_DIR="${TRIM_APPDEST:-/vol1/@appcenter/xuanlan}"
+DATA_DIR="${TRIM_PKGVAR:-/vol1/@appdata/xuanlan}"
+ETC_DIR="${TRIM_PKGETC:-${DATA_DIR}/etc}"
+PID_FILE="${DATA_DIR}/app.pid"
+LOG_FILE="${DATA_DIR}/logs/xuanlan.log"
+
+mkdir -p "${DATA_DIR}/logs" "${DATA_DIR}/idx" "${ETC_DIR}"
+
+PORT="${TRIM_SERVICE_PORT:-8971}"
+if [ -r "${ETC_DIR}/service_port" ]; then
+    P="$(head -n 1 "${ETC_DIR}/service_port" | tr -d '[:space:]')"
+    case "$P" in ''|*[!0-9]*) ;; *) PORT="$P" ;; esac
+fi
+
+ROOTS="/vol1,/vol2,/vol3,/vol4"
+if [ -r "${ETC_DIR}/xuanlan.conf" ]; then
+    # shellcheck disable=SC1090
+    . "${ETC_DIR}/xuanlan.conf"
+fi
+
+log_msg() { echo "$(date '+%F %T') - $*" >> "${LOG_FILE}"; }
+check_process() { [ -n "${1:-}" ] && kill -0 "${1}" 2>/dev/null; }
+
+status() {
+    [ -r "${PID_FILE}" ] || return 1
+    local pid
+    pid="$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')"
+    if check_process "$pid"; then return 0; fi
+    rm -f "${PID_FILE}"
+    return 1
+}
+
+start_process() {
+    status && return 0
+    rm -f "${APP_DIR}/app.sock"
+    log_msg "starting port=${PORT} roots=${ROOTS}"
+    cd "${APP_DIR}" || return 1
+    setsid ./bin/xuanlan serve \
+        --port "${PORT}" --bind 127.0.0.1 \
+        --socket "${APP_DIR}/app.sock" \
+        --ui "${APP_DIR}/ui" \
+        --index-dir "${DATA_DIR}/idx" \
+        --roots "${ROOTS}" >> "${LOG_FILE}" 2>&1 &
+    local pid=$!
+    printf '%s' "${pid}" > "${PID_FILE}"
+    local i
+    for i in $(seq 1 40); do
+        if [ -S "${APP_DIR}/app.sock" ]; then
+            log_msg "started pid=${pid}"
+            return 0
+        fi
+        check_process "$pid" || break
+        sleep 0.25
+    done
+    log_msg "start failed"
+    return 1
+}
+
+stop_process() {
+    log_msg "stopping"
+    if [ -r "${PID_FILE}" ]; then
+        local pid
+        pid="$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')"
+        if check_process "$pid"; then
+            kill -TERM "$pid" 2>/dev/null
+            local i
+            for i in $(seq 1 20); do
+                check_process "$pid" || break
+                sleep 0.25
+            done
+            check_process "$pid" && kill -KILL "$pid" 2>/dev/null
+        fi
+    fi
+    rm -f "${PID_FILE}" "${APP_DIR}/app.sock"
+    return 0
+}
+
+case "${1:-}" in
+    start)   start_process ;;
+    stop)    stop_process ;;
+    restart) stop_process; start_process ;;
+    status)  status && exit 0 || exit 3 ;;
+    *)       exit 1 ;;
+esac

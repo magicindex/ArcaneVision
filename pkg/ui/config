@@ -1,0 +1,14 @@
+{
+    ".url": {
+        "xuanlan.main": {
+            "title": "玄览",
+            "icon": "images/icon_{0}.png",
+            "type": "iframe",
+            "protocol": "",
+            "gatewayPrefix": "/app/xuanlan",
+            "gatewaySocket": "app.sock",
+            "url": "/app/xuanlan",
+            "allUsers": true
+        }
+    }
+}

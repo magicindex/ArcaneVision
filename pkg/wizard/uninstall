@@ -1,0 +1,21 @@
+[
+  {
+    "stepTitle": "卸载 玄览",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "卸载会停止索引服务。索引文件位于应用数据目录，可保留以便重装后秒开。"
+      },
+      {
+        "type": "radio",
+        "field": "wizard_delete_data",
+        "label": "索引数据",
+        "initValue": "false",
+        "options": [
+          { "label": "保留索引数据", "value": "false" },
+          { "label": "删除索引数据", "value": "true" }
+        ]
+      }
+    ]
+  }
+]

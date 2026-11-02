@@ -1,0 +1,23 @@
+[
+  {
+    "stepTitle": "安装 玄览",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "玄览以 root 身份读取本地磁盘元数据，为 /vol1–/vol4 建立文件名索引。首次启动会在后台建索引，约 1–3 分钟；之后重启秒开。索引只用于本机检索，不上传任何数据。"
+      },
+      {
+        "type": "text",
+        "field": "wizard_service_port",
+        "label": "服务端口（1024-65535）",
+        "initValue": "8971",
+        "rules": [
+          {
+            "pattern": "^[0-9]{4,5}$",
+            "message": "请输入 1024-65535 之间的端口号"
+          }
+        ]
+      }
+    ]
+  }
+]
