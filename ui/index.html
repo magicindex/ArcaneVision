@@ -1244,6 +1244,11 @@
         if (all) all = any ? true : false;
         inp.checked = any;
         inp.indeterminate = any && !all;
+        /* 子级全取消 → 上级同步退出检索范围 */
+        if (!any) {
+          checked.delete(path);
+          if (x.dataset.parent && checked.has(x.dataset.parent)) excluded.add(path);
+        }
       }
     }
     for (const it of avail) addRow(list, it.path, it.kind, 0);
