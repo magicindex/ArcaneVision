@@ -1139,6 +1139,7 @@
       const canExpand = depth < 2;
       const inh = !!(parentPath && checked.has(parentPath));
       if (parentPath) row.dataset.parent = parentPath;
+      row.dataset.path = path;
       row.innerHTML = (canExpand ? '<span class="caret">▸</span>' : '<span class="caret ph"></span>') +
         '<input type="checkbox"' + ((inh || checked.has(path)) ? ' checked' : '') + (inh ? ' disabled title="已包含在上级目录中"' : '') + '>' +
         '<span class="p" title="' + esc(path) + '">' + esc(dispPath(path)) + '</span>' +
@@ -1187,7 +1188,7 @@
           const inp = x.querySelector('input');
           const inh = checked.has(x.dataset.parent);
           inp.disabled = inh;
-          if (inh) inp.checked = true;
+          inp.checked = inh || checked.has(x.dataset.path);
           inp.title = inh ? '已包含在上级目录中' : '';
         }
       });
@@ -1256,7 +1257,7 @@
     const ow = {};
     setmask.querySelectorAll('#assoc select').forEach(sel => { ow[sel.dataset.k] = sel.value; });
     const scope = Array.from(checked);
-    if (!scope.length) { alert('至少选择一个检索目录'); return; }
+    if (!scope.length && !confirm('没有勾选任何目录，保存后将检索不到结果（只能浏览）。仍要保存吗？')) return;
     const rbMode = setmask.querySelector('#rbMode').value;
     const tm = (setmask.querySelector('#rbTime').value || '03:00').split(':');
     const rebuild = {
@@ -1345,7 +1346,11 @@
         stext.textContent = '建索引中 ' + (p.root || '') + ' · ' + (p.records||0).toLocaleString();
         prog.classList.remove('hide');
       } else if (d.state === 'degraded') {
-        dot.className = 'dot bad'; stext.textContent = '部分卷不可用'; prog.classList.add('hide');
+        dot.className = 'dot bad';
+        const bad = (d.volumes || []).filter(v => !v.ok).map(v => v.root.replace(/^\/vol/, '卷'));
+        stext.textContent = '部分卷不可用' + (bad.length ? '（' + bad.join('、') + '）' : '');
+        stext.title = (d.error ? d.error + '\n' : '') + (d.volumes || []).map(v => v.root + ' · ' + (v.ok ? v.records + ' 条' : '不可用')).join('\n');
+        prog.classList.add('hide');
       } else {
         dot.className = 'dot'; stext.textContent = '就绪'; prog.classList.add('hide');
       }

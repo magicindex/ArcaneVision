@@ -20,5 +20,5 @@ desktop_applaunchname        = xuanlan.main
 service_port                 = @PORT@
 checkport                    = false
 disable_authorization_path   = false
-changelog                    = """0.6.0 界面文案改为中性命名的「文档服务」「在线预览」；页脚增加版权/版本/许可信息；以 GPL-3.0 分发，新增 NOTICE.md 合规声明（注明思路参考 Everything 与 kerything，未取用其代码）。"""
+changelog                    = """0.6.1 修复管理员账号无法取消检索范围根目录勾选（此前范围对管理员不生效）、取消父级后子级勾选状态、状态栏显示具体哪个卷不可用。"""
 checksum                     = @CHECKSUM@

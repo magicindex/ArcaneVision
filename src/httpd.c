@@ -928,7 +928,7 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
 
     char (*sc)[512] = xmalloc(sizeof(char[512]) * 64);
     int nsc = -1;
-    if (uid >= 0 && !admin) nsc = scope_load(uid, sc, 64);
+    if (uid >= 0) nsc = scope_load(uid, sc, 64);
 
     uint64_t t0 = now_ms();
     ref_t *refs = NULL;
@@ -1031,7 +1031,7 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
             if (sl == pd) sl[1] = 0; else *sl = 0;
             if (!admin && system_path(path)) continue;
             if (!perm_dir_listable((uid_t)uid, pd)) continue;
-            if (!admin && nsc >= 0 && !scope_allows(sc, nsc, path)) continue;
+            if (nsc >= 0 && !scope_allows(sc, nsc, path)) continue;
         }
         {
             struct stat lst;
@@ -1649,7 +1649,7 @@ static void handle_settings_get(sbuf *out, int uid, int admin, int all) {
     /* 当前用户的检索范围 */
     char (*sc)[512] = xmalloc(sizeof(char[512]) * 64);
     int sn = -1;
-    if (uid >= 0 && !admin) {
+    if (uid >= 0) {
         sn = scope_load(uid, sc, 64);
         if (sn < 0) sn = scope_default(uid, sc, 64);
     }
