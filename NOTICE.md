@@ -54,6 +54,7 @@
 ## 五、分发要求（GPL-3.0 要点）
 
 1. 分发二进制时须同时提供**完整对应源码**，或以书面方式提供获取源码的途径；
+   本项目的源码地址：<https://github.com/magicindex/ArcaneVision>（Gitea 镜像：<http://192.168.3.200:3000/cyberzero/ArcaneVision>）。
 2. 保留本声明、`LICENSE`、`THIRD_PARTY.md` 及各第三方许可证文本；
 3. 修改后的版本须继续以 GPL-3.0 分发，并标注修改；
 4. 不得移除版权声明，不得以原作者名义为衍生品背书。
