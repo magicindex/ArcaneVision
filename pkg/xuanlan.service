@@ -1,6 +1,8 @@
 [Unit]
 Description=Xuanlan (玄览) local file index service
 After=network.target local-fs.target
+StartLimitIntervalSec=120
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -11,10 +13,10 @@ Environment=TRIM_PKGETC=/vol1/@appconf/xuanlan
 Environment=TRIM_APPDEST=/vol1/@appcenter/xuanlan
 Environment=TRIM_SERVICE_PORT=8971
 ExecStart=/vol1/@appcenter/xuanlan/bin/xuanlan serve --port 8971 --bind 127.0.0.1 --socket /vol1/@appcenter/xuanlan/app.sock --ui /vol1/@appcenter/xuanlan/ui --index-dir /vol1/@appdata/xuanlan/idx --roots /vol1,/vol2,/vol3,/vol4
+ExecStartPost=/bin/sh -c 'echo $MAINPID > /vol1/@appdata/xuanlan/app.pid'
+ExecStopPost=/bin/sh -c 'rm -f /vol1/@appdata/xuanlan/app.pid'
 Restart=on-failure
 RestartSec=5
-StartLimitIntervalSec=60
-StartLimitBurst=3
 
 [Install]
 WantedBy=multi-user.target

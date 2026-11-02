@@ -25,7 +25,27 @@ fi
 log_msg() { echo "$(date '+%F %T') - $*" >> "${LOG_FILE}"; }
 check_process() { [ -n "${1:-}" ] && kill -0 "${1}" 2>/dev/null; }
 
+UNIT="xuanlan.service"
+UNIT_DST="/etc/systemd/system/${UNIT}"
+have_systemd() { [ -d /run/systemd/system ]; }
+
+# 把随包安装的 unit 同步到系统（首次安装或升级后）
+ensure_unit() {
+    have_systemd || return 1
+    local src="${APP_DIR}/${UNIT}"
+    [ -r "${src}" ] || return 1
+    if ! cmp -s "${src}" "${UNIT_DST}" 2>/dev/null; then
+        install -m 644 "${src}" "${UNIT_DST}" || return 1
+        systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
+    return 0
+}
+
 status() {
+    if have_systemd && [ -f "${UNIT_DST}" ]; then
+        systemctl is-active --quiet "${UNIT}" && return 0
+        return 1
+    fi
     [ -r "${PID_FILE}" ] || return 1
     local pid
     pid="$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')"
@@ -35,6 +55,14 @@ status() {
 }
 
 start_process() {
+    if ensure_unit; then
+        status || {
+            log_msg "systemctl start ${UNIT}"
+            systemctl reset-failed "${UNIT}" >/dev/null 2>&1 || true
+            systemctl start "${UNIT}" || return 1
+        }
+        return 0
+    fi
     status && return 0
     rm -f "${APP_DIR}/app.sock"
     log_msg "starting port=${PORT} roots=${ROOTS}"
@@ -62,6 +90,11 @@ start_process() {
 
 stop_process() {
     log_msg "stopping"
+    if have_systemd && [ -f "${UNIT_DST}" ]; then
+        systemctl stop "${UNIT}" >/dev/null 2>&1 || true
+        rm -f "${PID_FILE}" "${APP_DIR}/app.sock"
+        return 0
+    fi
     if [ -r "${PID_FILE}" ]; then
         local pid
         pid="$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')"
