@@ -1046,6 +1046,7 @@
   ];
   let settings = { openWith: {}, onlyoffice: { installed: false, running: false }, preview: { installed: false, running: false } };
   let checked = new Set();
+  let excluded = new Set();
   let showAll = localStorage.getItem('xl_all') === '1';
   const setmask = document.createElement('div');
   setmask.className = 'setmask';
@@ -1112,7 +1113,8 @@
     const who = setmask.querySelector('#aclWho');
     list.innerHTML = '<div>读取中…</div>';
     const avail = (settings.scopeAvailable && settings.scopeAvailable.paths) || [];
-    checked = new Set(settings.scope || []);
+    checked = new Set((settings.scope || []).filter(p => p[0] !== '!'));
+    excluded = new Set((settings.scope || []).filter(p => p[0] === '!').map(p => p.slice(1)));
     who.textContent = settings.scopeAvailable && settings.scopeAvailable.admin
       ? '管理员：只列出当前账号可访问的目录；勾选参与检索的目录'
       : '勾选的目录才会被搜索；点 ▸ 可展开子目录，只勾选需要的子目录即可收窄范围';
@@ -1140,13 +1142,20 @@
       const inh = !!(parentPath && checked.has(parentPath));
       if (parentPath) row.dataset.parent = parentPath;
       row.dataset.path = path;
+      const on = checked.has(path) || (inh && !excluded.has(path));
       row.innerHTML = (canExpand ? '<span class="caret">▸</span>' : '<span class="caret ph"></span>') +
-        '<input type="checkbox"' + ((inh || checked.has(path)) ? ' checked' : '') + (inh ? ' disabled title="已包含在上级目录中"' : '') + '>' +
+        '<input type="checkbox"' + (on ? ' checked' : '') + '>' +
         '<span class="p" title="' + esc(path) + '">' + esc(dispPath(path)) + '</span>' +
         (kind ? tagFor(kind) : '');
       const cb = row.querySelector('input');
-      if (!inh) cb.onchange = () => {
-        cb.checked ? checked.add(path) : checked.delete(path);
+      cb.onchange = () => {
+        if (cb.checked) {
+          excluded.delete(path); checked.add(path);
+        } else {
+          checked.delete(path);
+          if (parentPath && checked.has(parentPath)) excluded.add(path);
+          else excluded.delete(path);
+        }
         refreshInherit();
       };
       container.appendChild(row);
@@ -1184,13 +1193,12 @@
     }
     function refreshInherit(){
       list.querySelectorAll('.scrow').forEach(x => {
-        if (x.dataset.parent){
-          const inp = x.querySelector('input');
-          const inh = checked.has(x.dataset.parent);
-          inp.disabled = inh;
-          inp.checked = inh || checked.has(x.dataset.path);
-          inp.title = inh ? '已包含在上级目录中' : '';
-        }
+        if (!x.dataset.parent) return;
+        const inp = x.querySelector('input');
+        const path = x.dataset.path;
+        const inh = checked.has(x.dataset.parent);
+        inp.checked = checked.has(path) || (inh && !excluded.has(path));
+        inp.title = (inh && !excluded.has(path)) ? '随上级目录包含；取消勾选可单独排除' : '';
       });
     }
     for (const it of avail) addRow(list, it.path, it.kind, 0);
@@ -1256,8 +1264,8 @@
   setmask.querySelector('#setSave').onclick = () => {
     const ow = {};
     setmask.querySelectorAll('#assoc select').forEach(sel => { ow[sel.dataset.k] = sel.value; });
-    const scope = Array.from(checked);
-    if (!scope.length && !confirm('没有勾选任何目录，保存后将检索不到结果（只能浏览）。仍要保存吗？')) return;
+    const scope = Array.from(checked).concat(Array.from(excluded).map(p => '!' + p));
+    if (!checked.size && !confirm('没有勾选任何目录，保存后将检索不到结果（只能浏览）。仍要保存吗？')) return;
     const rbMode = setmask.querySelector('#rbMode').value;
     const tm = (setmask.querySelector('#rbTime').value || '03:00').split(':');
     const rebuild = {

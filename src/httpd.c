@@ -1262,14 +1262,21 @@ static void scope_save(int uid, char (*paths)[512], int n) {
     fclose(f);
 }
 
+/* 路径 p 是否在范围内：取最长匹配，排除项（前缀 '!'）优先 */
 static int scope_allows(char (*paths)[512], int n, const char *p) {
+    size_t best_in = 0, best_ex = 0;
     for (int i = 0; i < n; i++) {
-        size_t l = strlen(paths[i]);
-        if (l == 0) continue;
-        if (strncmp(p, paths[i], l) == 0 && (p[l] == 0 || p[l] == '/'))
-            return 1;
+        const char *s = paths[i];
+        int ex = (*s == '!');
+        if (ex) s++;
+        size_t l = strlen(s);
+        if (!l) continue;
+        if (strncmp(p, s, l) != 0) continue;
+        if (p[l] != 0 && p[l] != '/') continue;
+        if (ex) { if (l >= best_ex) best_ex = l; }
+        else    { if (l >  best_in) best_in = l; }
     }
-    return 0;
+    return best_in > best_ex;
 }
 
 /* 默认范围：家目录（/volN/<uid>）+ 单独授权的目录，排除 everyone 共享盘 */
@@ -1744,7 +1751,7 @@ static void handle_settings_post(sbuf *out, const char *body, int uid) {
                     if (pl > 0 && pl < 512) {
                         memcpy(sc[n], q, pl);
                         sc[n][pl] = 0;
-                        if (sc[n][0] == '/') n++;
+                        if (sc[n][0] == '/' || (sc[n][0] == '!' && sc[n][1] == '/')) n++;
                     }
                     q = e2 + 1;
                 }

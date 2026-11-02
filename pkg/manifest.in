@@ -20,5 +20,5 @@ desktop_applaunchname        = xuanlan.main
 service_port                 = @PORT@
 checkport                    = false
 disable_authorization_path   = false
-changelog                    = """0.6.2 单卷设备不再误报「部分卷不可用」：启动时跳过不存在的挂载点，只有真实存在的卷失败才算降级。"""
+changelog                    = """0.6.3 检索范围支持逐级例外：上级包含时可单独取消某个子目录（存为"!"排除项，最长前缀优先）。"""
 checksum                     = @CHECKSUM@
