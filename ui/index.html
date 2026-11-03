@@ -526,10 +526,14 @@
   let owUrl = '';
   const owState = (() => {
     try { const v = JSON.parse(localStorage.getItem('xl_openwin') || 'null'); if (v && v.w > 200) return v; } catch (e) {}
-    return { x: 26, y: 26, w: 0, h: 0, max: false };
+    const first = { x: 26, y: 26, w: 0, h: 0, max: true };
+    try { localStorage.setItem('xl_openwin', JSON.stringify(first)); } catch (e) {}
+    return first;
   })();
   function saveOw(){ try { localStorage.setItem('xl_openwin', JSON.stringify(owState)); } catch (e) {} }
   function applyOw(){
+    const bf = openwin.querySelector('#owfit');
+    if (bf) bf.textContent = owState.max ? '还原' : '最大化';
     if (owState.max) {
       openwin.style.inset = '10px';
       openwin.style.width = ''; openwin.style.height = '';
@@ -543,6 +547,7 @@
     openwin.style.height = owState.h + 'px';
   }
   function toggleOwMax(){
+    owUserToggled = true;
     owState.max = !owState.max;
     openwin.querySelector('#owfit').textContent = owState.max ? '还原' : '最大化';
     applyOw(); saveOw();
@@ -658,8 +663,10 @@
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && openwin.classList.contains('on')) closeOpen();
   });
+  let owUserToggled = false;
   function openURL(url, title){
     if (openIn !== 'embed') { window.open(url, '_blank'); return; }
+    if (!owState.max && !owUserToggled) { owState.max = true; saveOw(); }
     owUrl = url;
     pdfHide();
     owframe.style.display = '';
@@ -1473,7 +1480,7 @@
         }
         settings.openWith = ow; settings.scope = scope; openIn = oi; settings.strictHome = strictHome;
         setmask.classList.remove('on');
-        run();
+        search();
       }).catch(e => alert('保存失败：' + (e && e.message || e)));
   };
   const themeBtn = document.getElementById('theme');

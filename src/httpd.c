@@ -1760,18 +1760,39 @@ static void handle_settings_get(sbuf *out, int uid, int admin, int all) {
 }
 
 static void handle_settings_post(sbuf *out, const char *body, int uid) {
+    static _Thread_local char ow_keep[8192];
+    const char *b = NULL;
+    size_t len = 0;
     const char *p = strstr(body, "\"openWith\"");
-    if (!p) { sb_puts(out, "{\"ok\":false,\"error\":\"openWith required\"}"); return; }
-    const char *b = strchr(p, '{');
-    if (!b) { sb_puts(out, "{\"ok\":false,\"error\":\"bad json\"}"); return; }
-    int depth = 0; const char *e = b;
-    for (; *e; e++) {
-        if (*e == '{') depth++;
-        else if (*e == '}') { if (--depth == 0) { e++; break; } }
+    if (p) {
+        b = strchr(p, '{');
+        if (!b) { sb_puts(out, "{\"ok\":false,\"error\":\"bad json\"}"); return; }
+        int depth = 0; const char *e = b;
+        for (; *e; e++) {
+            if (*e == '{') depth++;
+            else if (*e == '}') { if (--depth == 0) { e++; break; } }
+        }
+        if (depth != 0) { sb_puts(out, "{\"ok\":false,\"error\":\"bad json\"}"); return; }
+        len = (size_t)(e - b);
+        if (len > 8192) len = 8192;
     }
-    if (depth != 0) { sb_puts(out, "{\"ok\":false,\"error\":\"bad json\"}"); return; }
-    size_t len = (size_t)(e - b);
-    if (len > 8192) len = 8192;
+    if (!b) {
+        /* 兼容只提交部分字段：保留现有 openWith */
+        if (!body || !*body) { sb_puts(out, "{\"ok\":false,\"error\":\"empty body\"}"); return; }
+        char sp0[1200];
+        settings_path(sp0, sizeof sp0);
+        ow_keep[0] = 0;
+        FILE *f0 = fopen(sp0, "r");
+        if (f0) { size_t r = fread(ow_keep, 1, sizeof(ow_keep) - 1, f0); ow_keep[r] = 0; fclose(f0); }
+        size_t kl = 0;
+        const char *ko = ow_keep[0] ? json_obj(ow_keep, "\"openWith\"", &kl) : NULL;
+        if (ko && kl > 1 && kl < sizeof(ow_keep)) {
+            memmove(ow_keep, ko, kl); ow_keep[kl] = 0; b = ow_keep; len = kl;
+        } else {
+            strcpy(ow_keep, "{}"); b = ow_keep; len = 2;
+        }
+        fprintf(stderr, "xuanlan serve: settings POST 缺少 openWith，按现有值保存 (body=%zu bytes)\n", strlen(body));
+    }
 
     char open_in[16];
     json_str(body, "\"openIn\"", open_in, sizeof open_in, "embed");
@@ -2250,6 +2271,46 @@ static void handle_client(int fd) {
     if (!n) { close(fd); return; }
     req[n] = 0;
 
+    /* 头部可能先到、正文后到：按 Content-Length 继续读；chunked 则读到结束块 */
+    size_t hdr_end = 0;
+    int chunked_body = 0;
+    {
+        char *he = strstr(req, "\r\n\r\n");
+        if (he) {
+            hdr_end = (size_t)(he - req) + 4;
+            size_t clen = 0;
+            int chunked = 0;
+            for (char *ln = req; ln < he && *ln; ) {
+                char *eol = strstr(ln, "\r\n");
+                size_t ll = eol ? (size_t)(eol - ln) : strlen(ln);
+                if (ll > 15 && !strncasecmp(ln, "content-length:", 15)) {
+                    clen = (size_t)strtoul(ln + 15, NULL, 10);
+                } else if (ll > 17 && !strncasecmp(ln, "transfer-encoding:", 18)) {
+                    if (memmem(ln, ll, "chunked", 7)) chunked = 1;
+                }
+                if (!eol) break;
+                ln = eol + 2;
+            }
+            chunked_body = chunked;
+            if (chunked) {
+                while (n + 1 < sizeof(req) && !memmem(req + hdr_end, n - hdr_end, "\r\n0\r\n", 5)) {
+                    ssize_t r = recv(fd, req + n, sizeof(req) - 1 - n, 0);
+                    if (r <= 0) break;
+                    n += (size_t)r;
+                    req[n] = 0;
+                }
+            } else if (clen) {
+                size_t need = hdr_end + clen;
+                while (n < need && n + 1 < sizeof(req)) {
+                    ssize_t r = recv(fd, req + n, sizeof(req) - 1 - n, 0);
+                    if (r <= 0) break;
+                    n += (size_t)r;
+                    req[n] = 0;
+                }
+            }
+        }
+    }
+
     char method[8] = "", target[4096] = "";
     if (sscanf(req, "%7s %4095s", method, target) != 2) {
         close(fd);
@@ -2278,8 +2339,28 @@ static void handle_client(int fd) {
     int code = 200;
     const char *ctype = "application/json; charset=utf-8";
 
+    static _Thread_local char bodybuf[REQ_MAX];
     const char *req_body = strstr(req, "\r\n\r\n");
     req_body = req_body ? req_body + 4 : "";
+    if (chunked_body && hdr_end && hdr_end < n) {
+        size_t o = 0;
+        const char *q = req + hdr_end, *end = req + n;
+        while (q < end) {
+            char *e = NULL;
+            unsigned long sz = strtoul(q, &e, 16);
+            if (!e || e == q || e + 2 > end) break;
+            q = e + 2;
+            if (sz == 0) break;
+            if (q + sz > end) sz = (size_t)(end - q);
+            if (o + sz >= sizeof(bodybuf)) sz = sizeof(bodybuf) - 1 - o;
+            memcpy(bodybuf + o, q, sz);
+            o += sz;
+            q += sz;
+            if (q + 2 <= end && q[0] == '\r' && q[1] == '\n') q += 2;
+        }
+        bodybuf[o] = 0;
+        req_body = bodybuf;
+    }
     dump_header_names_once(req);
     char hdr_user[128] = "";
     int hdr_admin = 0;
