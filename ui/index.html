@@ -487,6 +487,7 @@
       if (!p.endsWith('/')) p += '/';
       return p + 'api/';
     })();
+    const ROOT = API.slice(0, -4);
 (function(){
   const $ = id => document.getElementById(id);
   const q = $('q'), list = $('list'), empty = $('empty'), meta = $('meta');
@@ -589,8 +590,10 @@
     pdfPages.innerHTML = '<div class="phint">正在载入 PDF…</div>';
     try {
       if (!pdfLib) {
-        pdfLib = await import(new URL('vendor/pdf.min.mjs', location.href).href);
-        pdfLib.GlobalWorkerOptions.workerSrc = new URL('vendor/pdf.worker.min.mjs', location.href).href;
+        // 页面可能挂在 /app/xuanlan（无结尾斜杠），相对路径会解析到 /app/vendor；
+        // 统一用 API 基址去掉 api/ 得到的应用根路径
+        pdfLib = await import(ROOT + 'vendor/pdf.min.mjs');
+        pdfLib.GlobalWorkerOptions.workerSrc = ROOT + 'vendor/pdf.worker.min.mjs';
       }
       if (!pdfDoc) pdfDoc = await pdfLib.getDocument({ url: owUrl, withCredentials: true }).promise;
     } catch (e) {
@@ -705,7 +708,15 @@
     return parts.join('、');
   }
 
+  function downloadFile(p){ window.open(API + 'file?path=' + encodeURIComponent(p) + '&dl=1', '_blank'); }
   async function openWithAssoc(p, how){
+    // 不在任何分类里的扩展名，浏览器只会把它当二进制下载，且文件名会退化；
+    // 先明确告知不支持预览，再由用户决定是否下载
+    if (how !== 'download' && !assocKnown(extOf(p))) {
+      const name = baseName(p);
+      if (confirm('暂不支持在线预览：\n' + name + '\n\n是否下载到本地？')) downloadFile(p);
+      return;
+    }
     if (how === 'builtin') {
       if (extOf(p) === 'pdf') { openPdf(API + 'file?dl=0&path=' + encodeURIComponent(p), baseName(p)); return; }
       const tcat = catOfExt(extOf(p));
@@ -733,7 +744,7 @@
       }
       openURL('/app/trim-preview/?path=' + encodeURIComponent(p), '在线预览 · ' + baseName(p));
     }
-    else if (how === 'download') window.open(API + 'file?path=' + encodeURIComponent(p) + '&dl=1', '_blank');
+    else if (how === 'download') downloadFile(p);
     else {
       const isPdf = extOf(p) === 'pdf';
       const vcat = catOfExt(extOf(p));
@@ -1455,11 +1466,15 @@
     const strictHome = !!setmask.querySelector('#strictHome').checked;
     fetch(API + 'settings', { method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ openWith: ow, openIn: oi, strictHome, scope, rebuild }) })
-      .then(r => r.json()).then(() => {
+      .then(r => r.json()).then(d => {
+        if (d && d.ok === false) {
+          alert('保存失败：' + (d.error || '未知错误'));
+          return;
+        }
         settings.openWith = ow; settings.scope = scope; openIn = oi; settings.strictHome = strictHome;
         setmask.classList.remove('on');
         run();
-      }).catch(() => {});
+      }).catch(e => alert('保存失败：' + (e && e.message || e)));
   };
   const themeBtn = document.getElementById('theme');
   const isLight = () => document.documentElement.getAttribute('data-theme') === 'light';

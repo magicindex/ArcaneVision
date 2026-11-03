@@ -828,8 +828,18 @@ static void handle_file(sbuf *out, const char *req, const char *qs, int uid, int
             }
         }
         enc[o] = 0;
+        /* 老浏览器不看 filename* 时的回退：保留扩展名，主体用 download */
+        char plain[256];
+        const char *dot = strrchr(base, '.');
+        int ext_ok = dot && dot != base && strlen(dot) <= 12;
+        if (ext_ok) {
+            for (const char *q = dot; *q; q++)
+                if ((unsigned char)*q >= 0x80 || *q == '"') { ext_ok = 0; break; }
+        }
+        snprintf(plain, sizeof plain, "download%s", ext_ok ? dot : "");
         snprintf(g_extra_hdr, sizeof g_extra_hdr,
-                 "Content-Disposition: attachment; filename*=UTF-8''%s\r\n", enc);
+                 "Content-Disposition: attachment; filename=\"%s\"; filename*=UTF-8''%s\r\n",
+                 plain, enc);
         *ctype = "application/octet-stream";
     }
 }
