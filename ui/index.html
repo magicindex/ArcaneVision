@@ -1343,7 +1343,7 @@
     fetch(API + 'settings', { method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ openWith: ow, openIn: oi, strictHome, scope, rebuild }) })
       .then(r => r.json()).then(() => {
-        settings.openWith = ow; settings.scope = scope; openIn = oi;
+        settings.openWith = ow; settings.scope = scope; openIn = oi; settings.strictHome = strictHome;
         setmask.classList.remove('on');
         run();
       }).catch(() => {});
