@@ -221,6 +221,23 @@ static int list_payload(const char *trash, const char *id, char *name, size_t nc
     return found;
 }
 
+static int ancestor_under_vol(const char *path)
+{
+    char tmp[4096], real[PATH_MAX];
+    {
+        size_t n = strlen(path);
+        if (n >= sizeof tmp) return 0;
+        memcpy(tmp, path, n + 1);
+    }
+    for (int i = 0; i < 64; i++) {
+        if (realpath(tmp, real)) return strncmp(real, "/vol", 4) == 0;
+        char *sl = strrchr(tmp, '/');
+        if (!sl || sl == tmp) return 0;
+        *sl = 0;
+    }
+    return 0;
+}
+
 int fs_restore(const char *trash, const char *id, char *err, size_t cap)
 {
     if (strchr(id, '/') || strstr(id, "..")) { set_err(err, cap, "非法条目", NULL); return -1; }
@@ -236,6 +253,9 @@ int fs_restore(const char *trash, const char *id, char *err, size_t cap)
     char *slash = strrchr(parent, '/');
     if (!slash) { set_err(err, cap, "原路径无效", NULL); return -1; }
     *slash = 0;
+    if (strncmp(parent, "/vol", 4) != 0 || !ancestor_under_vol(parent)) {
+        set_err(err, cap, "原路径越界", NULL); return -1;
+    }
     if (mkdir_p(parent, 0755) != 0) { set_err(err, cap, "无法创建原目录", NULL); return -1; }
     if (fs_move_path(payload, orig, err, cap) != 0) return -1;
     char dir[4400], meta[4400];

@@ -620,34 +620,52 @@ static void handle_text(sbuf *out, const char *qs, int uid, const char **ctype) 
     char pbuf[4096];
     param(qs, "path", pbuf, sizeof pbuf);
 
-    sb_puts(out,
-        "<!doctype html><meta charset=\"utf-8\"><meta name=\"color-scheme\" content=\"dark\">"
+    char th[16];
+    param(qs, "theme", th, sizeof th);
+    int light = !strcmp(th, "light");
+    const char *c_bg   = light ? "#f7f9fc" : "#0d1524";
+    const char *c_fg   = light ? "#1b2740" : "#dbe6f6";
+    const char *c_bar  = light ? "#eef2f8" : "#111c2e";
+    const char *c_line = light ? "#dbe2ee" : "#21314a";
+    const char *c_dim  = light ? "#5a6880" : "#8fa5c4";
+    const char *c_head = light ? "#101a2c" : "#eaf1fb";
+    const char *c_h4   = light ? "#0b6b60" : "#7fe6d6";
+    const char *c_link = light ? "#0b6fb8" : "#7fd7ff";
+    const char *c_quo  = light ? "#4b5a72" : "#a9bad6";
+    const char *c_qbg  = light ? "rgba(15,23,42,.035)" : "rgba(255,255,255,.02)";
+    const char *c_code = light ? "#eef2f8" : "#111c2e";
+    const char *c_btnb = light ? "rgba(15,156,140,.14)" : "rgba(20,50,54,.92)";
+    const char *c_btnf = light ? "#0b4a44" : "#9ff0e4";
+    sb_printf(out,
+        "<!doctype html><meta charset=\"utf-8\"><meta name=\"color-scheme\" content=\"%s\">"
         "<title></title><style>"
-        "html,body{margin:0;background:#0d1524;color:#dbe6f6;overscroll-behavior:contain}"
+        "html,body{margin:0;background:%s;color:%s;overscroll-behavior:contain}"
         "pre{margin:0;padding:18px 20px;font:13px/1.7 ui-monospace,Menlo,Consolas,monospace;"
         "white-space:pre-wrap;word-break:break-word;tab-size:4}"
-        ".bar{position:sticky;top:0;background:#111c2e;border-bottom:1px solid #21314a;"
-        "padding:6px 14px;font:12px/1.6 -apple-system,sans-serif;color:#8fa5c4}"
+        ".bar{position:sticky;top:0;background:%s;border-bottom:1px solid %s;"
+        "padding:6px 14px;font:12px/1.6 -apple-system,sans-serif;color:%s}"
         "#dbtn{position:fixed;right:16px;bottom:16px;display:none;cursor:pointer;"
-        "border:1px solid rgba(94,234,212,.45);background:rgba(20,50,54,.92);color:#9ff0e4;"
+        "border:1px solid rgba(94,234,212,.45);background:%s;color:%s;"
         "border-radius:999px;padding:8px 16px;font:13px/1 -apple-system,sans-serif;"
-        "box-shadow:0 6px 20px rgba(0,0,0,.45)}"
-        "#dbtn:hover{background:rgba(26,66,70,.95)}"
+        "box-shadow:0 6px 20px rgba(0,0,0,.18)}"
+        "#dbtn:hover{filter:brightness(1.08)}"
         "article{padding:24px 28px 60px;max-width:820px;margin:0 auto;"
-        "font:15px/1.85 -apple-system,\"PingFang SC\",\"Microsoft YaHei\",sans-serif;color:#dbe6f6}"
-        "article h1,article h2,article h3,article h4,article h5,article h6{line-height:1.4;margin:1.4em 0 .6em;color:#eaf1fb}"
+        "font:15px/1.85 -apple-system,\"PingFang SC\",\"Microsoft YaHei\",sans-serif;color:%s}"
+        "article h1,article h2,article h3,article h4,article h5,article h6{line-height:1.4;margin:1.4em 0 .6em;color:%s}"
         "article h1{font-size:24px}article h2{font-size:21px}article h3{font-size:18px}"
-        "article h4{font-size:16px;color:#7fe6d6}article h5,article h6{font-size:15px}"
+        "article h4{font-size:16px;color:%s}article h5,article h6{font-size:15px}"
         "article p{margin:0 0 14px}article ul,article ol{margin:0 0 14px;padding-left:1.5em}"
         "article li{margin:4px 0}article blockquote{margin:0 0 14px;padding:8px 14px;"
-        "border-left:3px solid #2a4a6b;color:#a9bad6;background:rgba(255,255,255,.02)}"
+        "border-left:3px solid %s;color:%s;background:%s}"
         "article img{max-width:100%;height:auto;border-radius:8px;margin:8px 0}"
-        "article a{color:#7fd7ff}article hr{border:0;border-top:1px solid #21314a;margin:22px 0}"
-        "article table{border-collapse:collapse;margin:0 0 14px;width:100%}"
-        "article td,article th{border:1px solid #21314a;padding:6px 10px;font-size:14px}"
+        "article a{color:%s}article hr{border:0;border-top:1px solid %s;margin:22px 0}"
+        "article table{border-collapse:collapse;margin:0 0 14px;width:100%%}"
+        "article td,article th{border:1px solid %s;padding:6px 10px;font-size:14px}"
         "article pre,article code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}"
-        "article pre{background:#111c2e;padding:12px 14px;border-radius:8px;overflow:auto}"
-        "</style>");
+        "article pre{background:%s;padding:12px 14px;border-radius:8px;overflow:auto}"
+        "</style>",
+        light ? "light" : "dark", c_bg, c_fg, c_bar, c_line, c_dim,
+        c_btnb, c_btnf, c_fg, c_head, c_h4, c_line, c_quo, c_qbg, c_link, c_line, c_line, c_code);
     if (truncated) sb_puts(out, "<div class=\"bar\">文件较大，仅显示前 8 MB</div>");
     sb_puts(out, "<pre id=\"src\">");
     html_escape_to(out, text, tlen);
@@ -1479,6 +1497,13 @@ static int fs_guard(int uid, const char *p, int want_dir, char *err, size_t cap)
     struct stat st;
     if (lstat(p, &st) != 0) { snprintf(err, cap, "路径不存在"); return -1; }
     if (want_dir && !S_ISDIR(st.st_mode)) { snprintf(err, cap, "目标不是目录"); return -1; }
+    {
+        /* 解析符号链接后再确认仍在存储卷内，避免经软链访问卷外文件 */
+        char real[PATH_MAX];
+        if (!realpath(p, real) || strncmp(real, "/vol", 4) != 0) {
+            snprintf(err, cap, "路径越界"); return -1;
+        }
+    }
 
     char check[4096];
     if (S_ISDIR(st.st_mode)) snprintf(check, sizeof check, "%s", p);
@@ -1595,8 +1620,12 @@ static void handle_trash_get(sbuf *out, int uid)
     sb_puts(out, "{\"items\":[");
     for (int i = 0; i < n; i++) {
         if (i) sb_puts(out, ",");
-        sb_printf(out, "{\"id\":\"%s\",\"name\":\"%s\",\"orig\":\"%s\",\"size\":%lld,\"mtime\":%lld,\"deleted\":%lld}",
-                  items[i].id, items[i].name, items[i].orig, items[i].size, items[i].mtime, items[i].deleted);
+        sb_printf(out, "{\"id\":\"%s\",\"name\":\"", items[i].id);
+        sb_json(out, items[i].name, strlen(items[i].name));
+        sb_puts(out, "\",\"orig\":\"");
+        sb_json(out, items[i].orig, strlen(items[i].orig));
+        sb_printf(out, "\",\"size\":%lld,\"mtime\":%lld,\"deleted\":%lld}",
+                  items[i].size, items[i].mtime, items[i].deleted);
     }
     sb_puts(out, "]}");
 }
@@ -2167,7 +2196,32 @@ static void dump_header_names_once(const char *req) {
     }
 }
 
+static uid_t g_www_uid = (uid_t)-1;
+static gid_t g_www_gid = (gid_t)-1;
+
 static void handle_client(int fd) {
+    /* 仅允许 root 或 www-data（网关 CGI）连接 unix socket，避免本地用户伪造身份头 */
+    {
+        struct sockaddr_storage ss;
+        socklen_t sl = sizeof ss;
+        if (getsockname(fd, (struct sockaddr *)&ss, &sl) == 0 && ss.ss_family == AF_UNIX) {
+            struct ucred cr;
+            socklen_t cl = sizeof cr;
+            if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cr, &cl) == 0 &&
+                g_www_uid != (uid_t)-1 &&
+                cr.uid != 0 && cr.uid != g_www_uid && cr.gid != g_www_gid) {
+                const char *body = "{\"error\":\"peer not allowed\"}";
+                char hdr[256];
+                int n = snprintf(hdr, sizeof hdr,
+                    "HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\n"
+                    "Content-Length: %zu\r\nConnection: close\r\n\r\n", strlen(body));
+                write(fd, hdr, (size_t)n);
+                write(fd, body, strlen(body));
+                close(fd);
+                return;
+            }
+        }
+    }
     g_extra_hdr[0] = 0;
     g_range_hdr[0] = 0;
     g_fs_fd = -1;
@@ -2474,13 +2528,18 @@ static int listen_unix(const char *path) {
         close(fd);
         return -1;
     }
-    chmod(path, 0666);
+    chmod(path, 0660);
+    if (g_www_gid != (gid_t)-1) chown(path, 0, g_www_gid);
     return fd;
 }
 
 static void on_signal(int sig) { (void)sig; g_stop = 1; }
 
 int httpd_serve(const xl_svc_opts *o) {
+    {
+        struct passwd *pw = getpwnam("www-data");
+        if (pw) { g_www_uid = pw->pw_uid; g_www_gid = pw->pw_gid; }
+    }
     /* 严格模式：默认开启；settings.json 里可关闭 */
     {
         char sp[1200];
