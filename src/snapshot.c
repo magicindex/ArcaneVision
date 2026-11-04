@@ -72,6 +72,7 @@ int snapshot_save(const char *path, const xl_store *s, const xl_index *ix,
     if (!rc && write_at(fd, ix->blob, ix->blob_len, h.postings_off) < 0) rc = -1;
     if (!rc && write_at(fd, root, h.root_len + 1, h.root_off) < 0) rc = -1;
     if (!rc && ftruncate(fd, (off_t)off) < 0) rc = -1;
+    if (!rc && fsync(fd) < 0) rc = -1;   /* rename 之前落盘，避免掉电留下半写索引 */
     if (rc)
         fprintf(stderr, "xuanlan: write %s failed: %s\n", path, strerror(errno));
     if (close(fd) < 0 && !rc) rc = -1;
@@ -94,22 +95,33 @@ int snapshot_open(const char *path, xl_snap *sn) {
         fprintf(stderr, "xuanlan: mmap failed: %s\n", strerror(errno));
         return -1;
     }
+    if (sn->map_len < sizeof(sn->h)) { munmap(sn->map, sn->map_len); memset(sn, 0, sizeof(*sn)); return -1; }
     memcpy(&sn->h, sn->map, sizeof(sn->h));
     if (memcmp(sn->h.magic, XL_MAGIC, 8) != 0) {
         fprintf(stderr, "xuanlan: not a 玄览 index file\n");
-        return -1;
+        goto bad;
     }
     if (sn->h.version != XL_VERSION) {
         fprintf(stderr, "xuanlan: index version %u, expected %u\n",
                 sn->h.version, XL_VERSION);
-        return -1;
+        goto bad;
+    }
+    {
+        uint64_t ml = sn->map_len;
+#define SEG_OK(off, len) ((uint64_t)(off) <= ml && (uint64_t)(len) <= ml - (uint64_t)(off))
+        if (sn->h.rec_count > ml / sizeof(xl_rec) + 1 ||
+            !SEG_OK(sn->h.rec_off, sn->h.rec_count * sizeof(xl_rec)) ||
+            !SEG_OK(sn->h.names_off, sn->h.names_bytes) ||
+            !SEG_OK(sn->h.tri_ids_off, (uint64_t)sn->h.tri_count * 4) ||
+            !SEG_OK(sn->h.tri_ranges_off, (uint64_t)sn->h.tri_count * sizeof(xl_range)) ||
+            !SEG_OK(sn->h.postings_off, sn->h.postings_bytes) ||
+            !SEG_OK(sn->h.root_off, (uint64_t)sn->h.root_len + 1)) {
+            fprintf(stderr, "xuanlan: index truncated\n");
+            goto bad;
+        }
+#undef SEG_OK
     }
     const uint8_t *base = sn->map;
-    uint64_t need = sn->h.postings_off + sn->h.postings_bytes;
-    if (sn->h.root_off + sn->h.root_len + 1 > sn->map_len || need > sn->map_len) {
-        fprintf(stderr, "xuanlan: index truncated\n");
-        return -1;
-    }
     sn->recs = (xl_rec *)(base + sn->h.rec_off);
     sn->names = (char *)(base + sn->h.names_off);
     sn->tri_ids = (uint32_t *)(base + sn->h.tri_ids_off);
@@ -117,6 +129,11 @@ int snapshot_open(const char *path, xl_snap *sn) {
     sn->postings = base + sn->h.postings_off;
     sn->root = (const char *)(base + sn->h.root_off);
     return 0;
+
+bad:
+    munmap(sn->map, sn->map_len);
+    memset(sn, 0, sizeof(*sn));
+    return -1;
 }
 
 void snapshot_close(xl_snap *sn) {

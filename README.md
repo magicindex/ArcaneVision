@@ -8,13 +8,14 @@
 
 ## 功能
 
-- **毫秒级检索**：直接读 ext4 元数据建索引，500 万条目规模下 3 字符以上查询通常 0.5–7 ms
+- **毫秒级检索**：直接读 ext4 元数据建索引，500 万条目规模下 3 字符以上查询通常 0.5–7 ms；
+  索引记录文件大小与 mtime，结果按真实修改时间倒序
 - **多卷统一**：/vol1–/vol4 合并为一棵结果树，按修改时间归并
-- **按账号授权**：身份取自飞牛会话（`X-Trim-Userid`），逐目录按 `system.trim_acl` 求值；
-  家目录可开「严格模式」，忽略「所有人」授权
+- **按账号授权**：unix socket 上的飞牛身份头才可信，TCP 必须 Cookie 认证，否则 `/api/*` 一律 401；
+  逐目录按 `system.trim_acl` 求值，家目录可开「严格模式」，忽略「所有人」授权
 - **类型分类**：12 类图标与筛选条（文档/表格/演示/PDF/文本/代码/图片/视频/音频/压缩包…）
 - **即时预览**：内置 PDF 阅读器（按页宽适配）、文本/代码高亮底色、图片音视频直接播放；
-  可关联飞牛「文档服务」「在线预览」
+  可关联飞牛「文档服务」「在线预览」；服务端转码支持 HDR→SDR 与纯音频
 - **文件操作**：多选复制/移动/回收站，回收站支持恢复与清空
 - **索引自维护**：fanotify 实时增量 + 定时全盘对账，索引落盘，重启秒开
 - **明暗双主题**：标题栏一键切换，偏好保存在本地
@@ -57,9 +58,11 @@ PDF 预览：内置 pdf.js，按页宽适配，可拖拽缩放或最大化。
 
 ## 现在是什么状态
 
-当前版本 **0.7.1**，更新记录见 [CHANGELOG.md](CHANGELOG.md)。支持明暗双主题，默认使用飞牛账号身份与系统目录授权。
+当前版本 **0.8.0**，更新记录见 [CHANGELOG.md](CHANGELOG.md)。支持明暗双主题，默认使用飞牛账号身份与系统目录授权。
+0.8.0 起索引升级到 v2（记录真实 `size/mtime`），从 0.7.x 升级后首次启动会自动全量重建一次；
+按 4.9M 条实测约 25–30 分钟，重建期间服务可响应但结果会暂时变少。升级前建议备份 `idx` 目录。
 
-P0–P3 已跑通：扫描（目录遍历 + ext4 裸设备）→ 建索引 → 落盘 → mmap 加载 → 查询
+P0–P6 已跑通：扫描（目录遍历 + ext4 裸设备）→ 建索引 → 落盘 → mmap 加载 → 查询
 → fanotify 增量 → TrimACL 求值 → HTTP 服务 + Web UI，并已打成可安装的飞牛 FPK。
 全部是本仓库自己的代码，纯 C11 + glibc，服务端无第三方依赖、无 Qt。
 
@@ -74,18 +77,26 @@ ext4 裸设备读取器已用 `/dev/dm-1` 全卷验证：369 万条记录与 `fi
 
 **安全**
 
-- 8971 端口只绑定 `127.0.0.1`，但 TCP 连接无法校验对端用户，理论上本机其他用户可以直连并伪造
-  `X-Trim-Userid`。生产环境应始终通过 NAS 网关（unix socket，已做 `SO_PEERCRED` 校验）访问；
-  计划提供「关闭 TCP 监听」开关，默认关闭。
-- 索引文件不加密。能读到 `<数据目录>/idx` 的人可以看到文件名与路径，但看不到文件内容。
+- 8971 端口只绑定 `127.0.0.1`。身份头（`X-Trim-Userid` 等）只在 unix socket 上可信；
+  TCP 连接必须通过 Trim 登录 Cookie 认证，否则所有 `/api/*` 返回 401（fail-closed）。
+  生产环境仍建议通过 NAS 网关（unix socket，已做 `SO_PEERCRED` 校验）访问。
+- 状态变更接口（重建索引、全局设置、清空回收站）仅管理员可用；设置/文件操作/回收站写接口
+  要求 `Content-Type: application/json`，防止简单表单 CSRF。
+- 索引文件不加密。能读到 `<数据目录>/idx` 的人可以看到文件名、路径、大小与修改时间，但看不到文件内容。
+- `serve --no-tcp` 可完全关闭回环 TCP，仅保留 unix socket；经 NAS 网关部署时建议启用。
+- 索引 v2 记录真实 size/mtime；旧 v1 索引启动时会被拒绝并触发一次全量重建。
 
 **能力边界**
 
 - 不索引 SMB/CIFS 挂载与 `/fs`（trimafs）；网络共享需要先挂到本地卷。
 - 不索引文件内容（没有全文检索）；仅按文件名、类型、路径检索。
+- 服务端转码支持纯音频与 HDR→SDR（需要 ffmpeg 的 zscale 滤镜）；HDR 转换失败时回退为
+  普通 8-bit 转换，颜色可能偏淡。
 - 回收站不会自动过期清理，空间需要手动回收。
-- 冷启动建索引 2.5–4 分钟（ext4 文件名散落在目录块，没有 NTFS 那样的 MFT）；
-  热启动从快照加载，通常 1 秒内可用。
+- 目录列举与「检索范围」授权列表仍按目录逐条扫描快照，复杂度为 O(N)；4.9M 条规模下单目录
+  约 78 ms，设置页展开大量根目录时可能到秒级。后续索引会补目录/子项索引。
+- 冷启动建索引耗时取决于卷类型：ext4 约 430 秒/370 万条；ZFS 因 `d_type` 不可用需逐条
+  `fstatat`，22T 卷约 15–20 分钟。4.9M 条全量实测 25–30 分钟；热启动从快照加载通常 1 秒内可用。
 
 **与飞牛的集成**
 
@@ -135,8 +146,10 @@ bin/xuanlan build --device /dev/dm-1 --out /vol4/@appdata/xuanlan/vol1.idx -v
 bin/xuanlan query --index /vol4/@appdata/xuanlan/index.xl -n 20 报告
 bin/xuanlan query --index /vol4/@appdata/xuanlan/index.xl --files --json .mkv
 
-# 启动服务（HTTP + 网关 socket + Web UI）
-bin/xuanlan serve --roots /vol1,/vol2,/vol3,/vol4 --index-dir /vol4/@appdata/xuanlan
+# 启动服务（网关 socket + Web UI）；--no-tcp 可完全关闭回环 8971
+# --exclude 可重复；存在排除项时 ext4 裸扫会自动退回目录遍历
+bin/xuanlan serve --roots /vol1,/vol2,/vol3,/vol4 --index-dir /vol4/@appdata/xuanlan \
+                 --exclude /vol1/docker --no-tcp
 
 # 判定某用户能否列某目录（TrimACL 求值）
 bin/xuanlan acl 900 /vol1/1000 /vol1/vm
@@ -146,7 +159,7 @@ bin/xuanlan info --index /vol4/@appdata/xuanlan/index.xl
 bin/xuanlan dump --index /vol4/@appdata/xuanlan/index.xl
 ```
 
-查询串是大小写不敏感的子串匹配，中文按 UTF-8 字节处理，无需分词。
+查询串是大小写不敏感的子串匹配，中文按 UTF-8 字节处理，无需分词；少于 2 个字符的查询会直接拒绝。
 
 ## 实测基线（飞牛 fnOS 环境，2026-11）
 
@@ -160,7 +173,7 @@ bin/xuanlan dump --index /vol4/@appdata/xuanlan/index.xl
 | 快照文件 | 10.1 MB |
 | 全流程 | 686 ms |
 | 查询 `screenshot` / `docker-compose` | < 1 ms |
-| 查询单字符 `a`（名字池扫描） | 18 ms |
+| 单字符查询 | 直接拒绝（避免全 names 池扫描） |
 
 与 `find` 逐条比对：记录数与 `find -xdev` 完全一致（173,128），
 12 个 `docker-compose` 命中一致，输出路径全部存在。
@@ -195,12 +208,15 @@ scripts/build-fpk.sh      打包装包
 ## 路线图
 
 - **P0 已完成**：扫描、索引、快照、查询、CLI
-- **P1 已完成**：ext4 裸设备扫描器（按公开的 on-disk 格式规范自行实现，顺序读 inode 表后按物理块推进），冷建从 15 分钟降到 2.5–4 分钟
+- **P1 已完成**：ext4 裸设备扫描器（按公开的 on-disk 格式规范自行实现，顺序读 inode 表后按物理块推进），冷建从 15 分钟降到约 7 分钟/370 万条
 - **P2 已完成**：fanotify 文件系统标记增量 + 周期对账（默认 6 小时）
 - **P3 已完成**：TrimACL 求值通过样本与真机验证；身份取自飞牛会话头 `X-Trim-Userid`，多用户结果按权限过滤
 - **P4 已完成**：Web UI、FPK 打包；已在飞牛 fnOS 真机安装运行，登录身份与目录授权均取自系统
-- **P5 进行中（0.7.x）**：明暗双主题、安全加固（socket 对端校验、软链逃逸、回收站路径）、
-  服务生命周期与应用中心状态对齐；下一步是「关闭回环 TCP」开关与索引加密选项
+- **P5 已完成（0.7.x）**：明暗双主题、安全加固（socket 对端校验、软链逃逸、回收站路径）、
+  服务生命周期与应用中心状态对齐
+- **P6 已完成（0.8.0）**：索引 v2 记录真实 `size/mtime` 并按真实时间排序；目录增量子树；
+  fail-closed 身份与文件级读写权限；HDR/纯音频转码；`--no-tcp`；查询 Top-K 与快照加固
+- **下一步（0.9.x）**：索引加密、SMB/CIFS 与全文检索、目录/ACL 的 O(N) 优化
 
 ## 许可
 

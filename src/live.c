@@ -9,6 +9,7 @@
  */
 #include "xl.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -33,7 +34,7 @@ typedef struct {
     uint8_t flags;
 } lv_add;
 
-typedef struct { char *path; } lv_del;
+typedef struct { char *path; uint8_t prefix; uint8_t active; } lv_del;
 
 /* 开放寻址字符串表：键为路径哈希；值 0xFFFFFFFF 表示墓碑 */
 #define LV_TOMB 0xFFFFFFFFu
@@ -71,6 +72,7 @@ static void map_init(lv_map *m, size_t cap) {
     m->cap = cap; m->used = 0;
     m->keys = calloc(cap, sizeof(uint64_t));
     m->vals = calloc(cap, sizeof(uint32_t));
+    if (!m->keys || !m->vals) { free(m->keys); free(m->vals); m->keys = NULL; m->vals = NULL; m->cap = 0; }
 }
 static void map_free(lv_map *m) { free(m->keys); free(m->vals); memset(m, 0, sizeof(*m)); }
 static uint32_t *map_get(lv_map *m, uint64_t k) {
@@ -83,9 +85,10 @@ static uint32_t *map_get(lv_map *m, uint64_t k) {
     return NULL;
 }
 static void map_put(lv_map *m, uint64_t k, uint32_t v) {
-    if (!m->cap) return;
+    if (!m->cap || !m->keys || !m->vals) return;
     if (m->used * 10 >= m->cap * 7) {           /* 负载 0.7 扩容 */
         lv_map n; map_init(&n, m->cap * 2);
+        if (!n.keys || !n.vals) { map_free(&n); return; }
         for (size_t i = 0; i < m->cap; i++)
             if (m->keys[i]) {
                 size_t j = m->keys[i] & (n.cap - 1);
@@ -95,20 +98,65 @@ static void map_put(lv_map *m, uint64_t k, uint32_t v) {
         n.used = m->used;
         map_free(m); *m = n;
     }
+    if (!m->keys || !m->vals) return;
     size_t i = k & (m->cap - 1);
     while (m->keys[i] && m->keys[i] != k) i = (i + 1) & (m->cap - 1);
     if (!m->keys[i]) { m->keys[i] = k; m->used++; }
     m->vals[i] = v;
 }
 static void map_del(lv_map *m, uint64_t k) {
-    if (!m->cap) return;
+    if (!m->cap || !m->keys) return;
     size_t i = k & (m->cap - 1);
     for (size_t n = 0; n < m->cap; n++, i = (i + 1) & (m->cap - 1))
         if (m->keys[i] == k) { m->vals[i] = LV_TOMB; return; }
 }
 
 /* ---------- delta 维护（调用方持锁） ---------- */
+static int path_prefix(const char *prefix, const char *path) {
+    size_t n = strlen(prefix);
+    return strncmp(prefix, path, n) == 0 && (path[n] == '/' || path[n] == 0);
+}
+
+static int del_is_active(size_t i) {
+    return i < L.dels_n && L.dels[i].active && L.dels[i].path != NULL;
+}
+
+static int is_deleted_locked(const char *path) {
+    if (map_get(&L.del_map, h64(path))) return 1;
+    for (size_t i = 0; i < L.dels_n; i++)
+        if (del_is_active(i) && L.dels[i].prefix && path_prefix(L.dels[i].path, path))
+            return 1;
+    return 0;
+}
+
+static void del_clear(const char *path) {
+    uint64_t k = h64(path);
+    uint32_t *at = map_get(&L.del_map, k);
+    if (!at) return;
+    if (*at < L.dels_n && L.dels[*at].prefix) {
+        L.dels[*at].active = 0;
+        map_del(&L.del_map, k);
+    }
+}
+
+static void add_drop_prefix(const char *path) {
+    size_t n = strlen(path);
+    for (size_t i = 0; i < L.adds_n; ) {
+        const char *p = L.adds[i].path;
+        if (strncmp(p, path, n) == 0 && (p[n] == '/' || p[n] == 0)) {
+            uint64_t k = h64(p);
+            free(L.adds[i].path);
+            L.adds[i] = L.adds[--L.adds_n];
+            map_del(&L.add_map, k);
+            if (i < L.adds_n) map_put(&L.add_map, h64(L.adds[i].path), (uint32_t)i);
+            continue;
+        }
+        i++;
+    }
+}
+
 static void add_put(const char *path, const xl_store_stat *st) {
+    del_clear(path);
     uint64_t k = h64(path);
     uint32_t *at = map_get(&L.add_map, k);
     if (at) {
@@ -116,12 +164,17 @@ static void add_put(const char *path, const xl_store_stat *st) {
         a->size = st->size; a->mtime = st->mtime; a->flags = st->flags;
         return;
     }
-    if (L.adds_n >= LV_MAX_ADDS) { L.fatal = 1; return; }
+    if (L.adds_n >= LV_MAX_ADDS) { __atomic_store_n(&L.fatal, 1, __ATOMIC_RELAXED); return; }
     if (L.adds_n == L.adds_cap) {
-        L.adds_cap = L.adds_cap ? L.adds_cap * 2 : 1024;
-        L.adds = realloc(L.adds, L.adds_cap * sizeof(lv_add));
+        size_t ncap = L.adds_cap ? L.adds_cap * 2 : 1024;
+        lv_add *np = realloc(L.adds, ncap * sizeof(lv_add));
+        if (!np) { __atomic_store_n(&L.fatal, 1, __ATOMIC_RELAXED); return; }
+        L.adds = np;
+        L.adds_cap = ncap;
     }
-    L.adds[L.adds_n].path = strdup(path);
+    char *dup = strdup(path);
+    if (!dup) { __atomic_store_n(&L.fatal, 1, __ATOMIC_RELAXED); return; }
+    L.adds[L.adds_n].path = dup;
     L.adds[L.adds_n].size = st->size;
     L.adds[L.adds_n].mtime = st->mtime;
     L.adds[L.adds_n].flags = st->flags;
@@ -141,18 +194,27 @@ static void add_drop(const char *path) {
     if (i < L.adds_n) map_put(&L.add_map, h64(L.adds[i].path), i);
 }
 
-static void del_put(const char *path) {
+static void del_put2(const char *path, int prefix) {
     uint64_t k = h64(path);
-    add_drop(path);
-    if (map_get(&L.del_map, k)) return;
+    if (prefix) add_drop_prefix(path); else add_drop(path);
+    if (map_get(&L.del_map, k)) return;   /* 已标记删除，不重复追加 */
+    if (L.dels_n >= LV_MAX_ADDS * 2) { __atomic_store_n(&L.fatal, 1, __ATOMIC_RELAXED); return; }
     if (L.dels_n == L.dels_cap) {
-        L.dels_cap = L.dels_cap ? L.dels_cap * 2 : 1024;
-        L.dels = realloc(L.dels, L.dels_cap * sizeof(lv_del));
+        size_t ncap = L.dels_cap ? L.dels_cap * 2 : 1024;
+        lv_del *np = realloc(L.dels, ncap * sizeof(lv_del));
+        if (!np) { __atomic_store_n(&L.fatal, 1, __ATOMIC_RELAXED); return; }
+        L.dels = np;
+        L.dels_cap = ncap;
     }
-    L.dels[L.dels_n].path = strdup(path);
+    char *dup = strdup(path);
+    if (!dup) { __atomic_store_n(&L.fatal, 1, __ATOMIC_RELAXED); return; }
+    L.dels[L.dels_n].path = dup;
+    L.dels[L.dels_n].prefix = prefix ? 1 : 0;
+    L.dels[L.dels_n].active = 1;
     map_put(&L.del_map, k, (uint32_t)L.dels_n);
     L.dels_n++;
 }
+
 
 /* ---------- 事件处理 ---------- */
 static int under_root(const char *path, int *ri) {
@@ -165,6 +227,33 @@ static int under_root(const char *path, int *ri) {
     return 0;
 }
 
+static void add_tree(const char *path, int ri, int depth) {
+    if (depth > 64 || L.adds_n >= LV_MAX_ADDS) return;
+    struct stat st;
+    if (lstat(path, &st) != 0 || st.st_dev != L.root_dev[ri]) return;
+    xl_store_stat xs;
+    xs.size = (uint32_t)st.st_size;
+    xs.mtime = (uint32_t)st.st_mtime;
+    xs.flags = S_ISDIR(st.st_mode) ? XL_F_DIR : (S_ISLNK(st.st_mode) ? XL_F_LINK : 0);
+    add_put(path, &xs);
+    if (!S_ISDIR(st.st_mode)) return;
+
+    DIR *d = opendir(path);
+    if (!d) return;
+    struct dirent *de;
+    char child[PATH_MAX];
+    while ((de = readdir(d)) != NULL) {
+        if (de->d_name[0] == '.' &&
+            (de->d_name[1] == 0 || (de->d_name[1] == '.' && de->d_name[2] == 0)))
+            continue;
+        int n = snprintf(child, sizeof(child), "%s/%s", path, de->d_name);
+        if (n <= 0 || (size_t)n >= sizeof(child)) continue;
+        add_tree(child, ri, depth + 1);
+        if (L.adds_n >= LV_MAX_ADDS) break;
+    }
+    closedir(d);
+}
+
 static void apply_one(const char *dir, const char *name, uint32_t mask) {
     if (!dir || !name || !*name) return;
     int ri;
@@ -174,7 +263,7 @@ static void apply_one(const char *dir, const char *name, uint32_t mask) {
     if (cl <= 0 || (size_t)cl >= sizeof(path)) return;
 
     if (mask & (FAN_DELETE | FAN_MOVED_FROM)) {
-        del_put(path);
+        del_put2(path, (mask & FAN_ONDIR) != 0);
         return;
     }
     if (mask & (FAN_CREATE | FAN_MOVED_TO)) {
@@ -186,6 +275,8 @@ static void apply_one(const char *dir, const char *name, uint32_t mask) {
         xs.mtime = (uint32_t)st.st_mtime;
         xs.flags = S_ISDIR(st.st_mode) ? XL_F_DIR : (S_ISLNK(st.st_mode) ? XL_F_LINK : 0);
         add_put(path, &xs);
+        if (S_ISDIR(st.st_mode) && (mask & FAN_MOVED_TO))
+            add_tree(path, ri, 0);   /* 移入的整棵目录不会为既有子项再产生事件 */
     }
 }
 
@@ -219,10 +310,9 @@ static void *worker(void *arg) {
                 uint32_t m = L.q[slot].mask;
                 L.q[slot].dir = NULL;              /* 已取走，槽位不再持有指针 */
                 L.qh = (slot + 1) % LV_QUEUE;
-                pthread_mutex_unlock(&L.mu);
+                /* add_put/del_put 约定调用方持锁，查询线程也在同一把锁下读 */
                 apply_one(d, name, m);
                 free(d);
-                pthread_mutex_lock(&L.mu);
             }
         }
     }
@@ -240,10 +330,15 @@ static void *reader(void *arg) {
         ssize_t n = read(L.fd, buf, sizeof(buf));
         if (n <= 0) {
             if (errno == EAGAIN || errno == EINTR) continue;
+            __atomic_store_n(&L.fatal, 1, __ATOMIC_RELAXED);   /* 事件流断了，交给周期对账兜底 */
             break;
         }
         for (struct fanotify_event_metadata *m = (void *)buf; FAN_EVENT_OK(m, n);
              m = FAN_EVENT_NEXT(m, n)) {
+            if (m->mask & FAN_Q_OVERFLOW) {
+                __atomic_store_n(&L.fatal, 1, __ATOMIC_RELAXED); /* 队列溢出会丢事件，必须重建 */
+                continue;
+            }
             char *h = (char *)m + sizeof(*m);
             char *end = (char *)m + m->event_len;
             while (h + sizeof(struct fanotify_event_info_header) <= end) {
@@ -353,7 +448,7 @@ void live_clear(void) {
     for (size_t i = 0; i < L.adds_n; i++) free(L.adds[i].path);
     for (size_t i = 0; i < L.dels_n; i++) free(L.dels[i].path);
     L.adds_n = L.dels_n = 0;
-    L.fatal = 0;
+    __atomic_store_n(&L.fatal, 0, __ATOMIC_RELAXED);
     map_free(&L.add_map); map_free(&L.del_map);
     map_init(&L.add_map, 4096); map_init(&L.del_map, 1024);
     pthread_mutex_unlock(&L.mu);
@@ -376,15 +471,49 @@ size_t live_delta_count(size_t *dels) {
     return a;
 }
 
-int live_overflowed(void) { return L.fatal; }
+int live_overflowed(void) { return __atomic_load_n(&L.fatal, __ATOMIC_RELAXED); }
 
 int live_is_deleted(const char *path) {
-    if (!L.started || !L.dels_n) return 0;
+    if (!L.started) return 0;
     int hit = 0;
     pthread_mutex_lock(&L.mu);
-    hit = map_get(&L.del_map, h64(path)) != NULL;
+    hit = is_deleted_locked(path);
     pthread_mutex_unlock(&L.mu);
     return hit;
+}
+
+/* 列出某目录下的 live 新增项（目录视图不能只依赖 6 小时前的基线） */
+size_t live_dir(const char *dir, xl_live_hit **out) {
+    *out = NULL;
+    if (!L.started || !dir || !*dir) return 0;
+    size_t dl = strlen(dir);
+    size_t n = 0, cap = 0;
+    xl_live_hit *v = NULL;
+    pthread_mutex_lock(&L.mu);
+    for (size_t i = 0; i < L.adds_n; i++) {
+        const char *p = L.adds[i].path;
+        const char *sl = strrchr(p, '/');
+        if (!sl) continue;
+        size_t pl = (size_t)(sl - p);
+        if (pl != dl || (dl && strncmp(p, dir, dl) != 0)) continue;
+        if (is_deleted_locked(p)) continue;
+        if (n == cap) {
+            size_t ncap = cap ? cap * 2 : 64;
+            xl_live_hit *nv = realloc(v, ncap * sizeof(*v));
+            if (!nv) { __atomic_store_n(&L.fatal, 1, __ATOMIC_RELAXED); break; }
+            v = nv; cap = ncap;
+        }
+        char *dup = strdup(p);
+        if (!dup) { __atomic_store_n(&L.fatal, 1, __ATOMIC_RELAXED); break; }
+        v[n].path = dup;
+        v[n].mtime = L.adds[i].mtime;
+        v[n].size = L.adds[i].size;
+        v[n].flags = L.adds[i].flags;
+        n++;
+    }
+    pthread_mutex_unlock(&L.mu);
+    *out = v;
+    return n;
 }
 
 /* 扫描 delta 中匹配的新增项，按 mtime 降序返回 */
@@ -399,11 +528,16 @@ size_t live_query(const char *q, xl_live_hit **out) {
         const char *base = strrchr(L.adds[i].path, '/');
         base = base ? base + 1 : L.adds[i].path;
         if (!memmem_ci(base, strlen(base), q, strlen(q))) continue;
+        if (is_deleted_locked(L.adds[i].path)) continue;
         if (n == cap) {
-            cap = cap ? cap * 2 : 64;
-            v = realloc(v, cap * sizeof(*v));
+            size_t ncap = cap ? cap * 2 : 64;
+            xl_live_hit *nv = realloc(v, ncap * sizeof(*v));
+            if (!nv) { __atomic_store_n(&L.fatal, 1, __ATOMIC_RELAXED); break; }
+            v = nv; cap = ncap;
         }
-        v[n].path = strdup(L.adds[i].path);
+        char *dup = strdup(L.adds[i].path);
+        if (!dup) { __atomic_store_n(&L.fatal, 1, __ATOMIC_RELAXED); break; }
+        v[n].path = dup;
         v[n].mtime = L.adds[i].mtime;
         v[n].size = L.adds[i].size;
         v[n].flags = L.adds[i].flags;

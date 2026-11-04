@@ -9,11 +9,13 @@
 #endif
 #include <stdint.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <stddef.h>
 #include <stdbool.h>
 
 #define XL_MAGIC       "XLANIDX"
-#define XL_VERSION     1u
+/* v2：记录内 size/mtime 为真实值；旧索引启动时重建 */
+#define XL_VERSION     2u
 #define XL_HDR_SIZE    128u
 #define XL_ALIGN       4096u
 #define XL_BLOCK       128u   /* 倒排块内条目数 */
@@ -93,9 +95,12 @@ void store_init(xl_store *s);
 void store_free(xl_store *s);
 int  scan_tree(const char *root, xl_store *s, int want_stat, int verbose);
 void scan_add_exclude(const char *prefix);
+int  scan_has_exclude(void);
 uint32_t store_push_root(xl_store *s, uint8_t flags);
 uint32_t store_push(xl_store *s, uint32_t parent, const char *name, size_t len,
                     uint8_t flags);
+uint32_t store_push_meta(xl_store *s, uint32_t parent, const char *name, size_t len,
+                         uint8_t flags, uint32_t size, uint32_t mtime);
 
 /* ---- fsreader_ext4.c ---- */
 int fsreader_ext4_scan(const char *dev, const char *mount_root, xl_store *s,
@@ -142,7 +147,8 @@ typedef struct {
 int query_run(const xl_snap *sn, const char *needle, const xl_query_opts *o);
 /* 收集命中记录号（malloc 返回，调用方 free）；无命中返回 NULL 且 *n_out=0 */
 uint32_t *query_hits(const xl_snap *sn, const char *needle, const xl_query_opts *o,
-                     uint32_t *n_out, int *truncated_out, uint64_t *elapsed_ms);
+                     uint32_t *n_out, int *truncated_out, uint64_t *elapsed_ms,
+                     uint64_t *total_out);
 void snap_path(const xl_snap *sn, uint32_t id, char *out, size_t cap);
 uint32_t tri_lookup_sorted(const uint32_t *ids, uint32_t n, uint32_t tg);
 
@@ -154,10 +160,18 @@ typedef struct {
     char roots[1024];
     char bind_addr[64];
     int  port;
+    int  no_tcp;
     int  rebuild_hours;
 } xl_svc_opts;
 int httpd_serve(const xl_svc_opts *o);
+
+/* ---- perm.c ---- */
+int perm_check(uid_t uid, const char *path, int need, int is_dir);
 int perm_dir_listable(uid_t uid, const char *dir);
+int perm_file_readable(uid_t uid, const char *path);
+int perm_dir_writable(uid_t uid, const char *dir);
+int perm_parent_writable(uid_t uid, const char *path);
+int perm_mode_readable(uid_t uid, const char *path, const struct stat *st);
 extern int perm_strict_home;
 void perm_set_strict_home(int on);
 
@@ -170,8 +184,6 @@ int    mem_ci(const char *hay, size_t hlen, const char *ndl, size_t nlen);
 const char *memmem_ci(const char *hay, size_t hlen, const char *ndl, size_t nlen);
 uint64_t now_ms(void);
 
-#endif
-
 /* ---- 增量层（fanotify + delta） ---- */
 typedef struct { uint32_t size; uint32_t mtime; uint8_t flags; } xl_store_stat;
 typedef struct { char *path; uint32_t size; uint32_t mtime; uint8_t flags; } xl_live_hit;
@@ -181,7 +193,9 @@ void   live_stop(void);
 void   live_clear(void);
 size_t live_delta_count(size_t *dels);
 size_t live_query(const char *needle, xl_live_hit **out);
+size_t live_dir(const char *dir, xl_live_hit **out);
 int    live_is_deleted(const char *path);
 int    live_overflowed(void);
 
 /* ---- 权限（trimacl / POSIX ACL） ---- */
+#endif

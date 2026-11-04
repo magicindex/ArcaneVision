@@ -14,6 +14,7 @@
  */
 #include "xl.h"
 
+#include <errno.h>
 #include <grp.h>
 #include <pwd.h>
 #include <pthread.h>
@@ -31,7 +32,9 @@
 #define A_EVERY 0x10
 #define A_OWNER 0x20
 #define A_X     0x01
+#define A_W     0x02
 #define A_R     0x04
+#define A_INH_FILE 0x02
 #define A_INH_DIR 0x04
 #define A_INH_EXCL 0x4000
 
@@ -93,21 +96,37 @@ static int posix_bit(const struct stat *st, uid_t uid, int need) {
     return (ok & need) ? 1 : 0;
 }
 
-/* need: A_R 或 A_X；self=1 只看本级自己的 ACL 条目 */
-static int eval_one(uid_t uid, const char *dir, int self, int need) {
+/* need: A_R / A_W / A_X 的组合；self=1 只看本级自己的 ACL 条目。
+ * is_dir 决定祖先 ACL 是否按「继承到目录」还是「继承到文件」筛选。 */
+static int eval_one(uid_t uid, const char *dir, int self, int need, int is_dir) {
     struct stat st;
     if (stat(dir, &st) != 0) return -1;
 
-    unsigned char buf[4096];
-    ssize_t n = getxattr(dir, "system.trim_acl", buf, sizeof buf);
-    if (n < 4) return -1;
+    unsigned char stackbuf[4096];
+    unsigned char *buf = stackbuf;
+    ssize_t n = getxattr(dir, "system.trim_acl", stackbuf, sizeof stackbuf);
+    if (n < 0 && errno == ERANGE) {
+        ssize_t sz = getxattr(dir, "system.trim_acl", NULL, 0);
+        if (sz < 4 || sz > (1 << 20)) return -1;
+        buf = malloc((size_t)sz);
+        if (!buf) return -1;
+        n = getxattr(dir, "system.trim_acl", buf, (size_t)sz);
+    }
+    if (n < 4) {
+        if (buf != stackbuf) free(buf);
+        return -1;
+    }
     uint32_t ver;
     memcpy(&ver, buf, 4);
-    if (ver != 1) return -1;
+    if (ver != 1) {
+        if (buf != stackbuf) free(buf);
+        return -1;
+    }
 
     uint32_t granted = 0, denied = 0;
     int matched = 0;
     int strict = perm_strict_home && under_home(dir);
+    uint32_t inh_want = is_dir ? A_INH_DIR : A_INH_FILE;
     size_t nent = ((size_t)n - 4) / 20;
     for (size_t i = 0; i < nent; i++) {
         const unsigned char *p = buf + 4 + i * 20;
@@ -117,7 +136,7 @@ static int eval_one(uid_t uid, const char *dir, int self, int need) {
         memcpy(&inherit, p + 8, 4);
         memcpy(&id, p + 12, 4);
         if (inherit & A_INH_EXCL) continue;              /* 边界标记 */
-        if (!self && !(inherit & A_INH_DIR)) continue;   /* 只认可继承到子目录的条目 */
+        if (!self && !(inherit & inh_want)) continue;     /* 只认可继承到同类目标的条目 */
 
         uint32_t tag = type_tag & 0x3c;
         int hit = 0;
@@ -130,12 +149,15 @@ static int eval_one(uid_t uid, const char *dir, int self, int need) {
         if (type_tag & A_DENY) denied |= perms;
         else if (type_tag & A_ALLOW) granted |= perms;
     }
-    if (!matched) return 0;   /* 本级有 ACL 但没有匹配项 = 拒绝，不再向上找 */
-    if (denied & need) return 0;
-    return (granted & need) ? 1 : 0;
+    int rc;
+    if (!matched) rc = 0;     /* 本级有 ACL 但没有匹配项 = 拒绝，不再向上找 */
+    else if (denied & need) rc = 0;
+    else rc = (granted & need) ? 1 : 0;
+    if (buf != stackbuf) free(buf);
+    return rc;
 }
 
-static int eval_ancestors(uid_t uid, const char *dir, int need) {
+static int eval_ancestors(uid_t uid, const char *dir, int need, int is_dir) {
     char buf[8192];
     size_t n = strlen(dir);
     if (n == 0 || n >= sizeof buf) return -1;
@@ -154,27 +176,24 @@ static int eval_ancestors(uid_t uid, const char *dir, int need) {
                 if (k == L) return -1;
             }
         }
-        int r = eval_one(uid, buf, 0, need);
+        int r = eval_one(uid, buf, 0, need, is_dir);
         if (r >= 0) return r;
     }
     return -1;
 }
 
 /* 单级判定：本级 ACL 优先，其次最近祖先的 ACL，最后 POSIX */
-static int level_ok(uid_t uid, const char *dir, int need) {
-    /* 目录属主即本人：飞牛的家目录 mode 常为 0000 且 ACL 只授权给管理员，
-       属主本人仍应可访问（文件管理器里也是这么表现的）。 */
-    {
-        struct stat st;
-        if (stat(dir, &st) == 0 && st.st_uid == uid) return 1;
-    }
-    int r = eval_one(uid, dir, 1, need);
-    if (r >= 0) return r;
-    r = eval_ancestors(uid, dir, need);
-    if (r >= 0) return r;
+static int level_ok(uid_t uid, const char *path, int need, int is_dir) {
     struct stat st;
-    if (stat(dir, &st) != 0) return 0;
-    if (perm_strict_home && under_home(dir)) {
+    /* 属主本人可访问自己的家目录（飞牛家目录常见 mode 0000 + ACL 只授管理员）。
+       写权限不做这个放行，否则 0555 的目录也会被判定为可写。 */
+    if (stat(path, &st) == 0 && st.st_uid == uid && !(need & A_W)) return 1;
+    int r = eval_one(uid, path, 1, need, is_dir);
+    if (r >= 0) return r;
+    r = eval_ancestors(uid, path, need, is_dir);
+    if (r >= 0) return r;
+    if (stat(path, &st) != 0) return 0;
+    if (perm_strict_home && under_home(path)) {
         /* 严格模式：家目录内不认 others 位 */
         if (st.st_uid == uid) return (((st.st_mode >> 6) & 7) & need) ? 1 : 0;
         if (uid_in_group(uid, st.st_gid)) return (((st.st_mode >> 3) & 7) & need) ? 1 : 0;
@@ -182,31 +201,70 @@ static int level_ok(uid_t uid, const char *dir, int need) {
         if (need == A_X) return ((st.st_mode & 7) & A_X) ? 1 : 0;
         return 0;
     }
-    r = posix_bit(&st, uid, need);
-    return r;
+    return posix_bit(&st, uid, need);
 }
 
-/* 列目录：路径上每一级都要可穿过(x)，目标目录本身要可读(r)。
- * 只判最后一级会漏掉 /vol1/docker(0710) 这类祖先拒绝。 */
-int perm_dir_listable(uid_t uid, const char *dir) {
-    if (uid == 0) return 1;
-    char buf[8192];
-    size_t n = strlen(dir);
-    if (n == 0 || n >= sizeof buf) return 0;
-    memcpy(buf, dir, n + 1);
+static int is_vol_root(const char *p) {
+    if (strncmp(p, "/vol", 4) != 0) return 0;
+    const char *q = p + 4;
+    if (*q < '0' || *q > '9') return 0;
+    while (*q >= '0' && *q <= '9') q++;
+    return *q == 0;
+}
 
-    if (!level_ok(uid, buf, A_X)) return 0;   /* 目标目录自身可穿过 */
-    for (;;) {
+/* 通用路径判定：祖先逐级 X，目标按 need 判定。
+ * is_dir=1 用于目录（继承目录 ACL），0 用于普通文件（继承文件 ACL）。 */
+int perm_check(uid_t uid, const char *path, int need, int is_dir) {
+    if (uid == 0) return 1;
+    if (!path || !*path) return 0;
+    char buf[8192];
+    size_t n = strlen(path);
+    if (n >= sizeof buf) return 0;
+    memcpy(buf, path, n + 1);
+
+    for (int depth = 0; depth < 64; depth++) {
         char *sl = strrchr(buf, '/');
         if (!sl || sl == buf) break;
         *sl = 0;
-        /* 卷根 /volN 在飞牛里 mode 0，但内核允许穿越（trimacl 之外的特例），不参与判定 */
-        if (sl - buf >= 4 && strncmp(buf, "/vol", 4) == 0) {
-            size_t k = 4;
-            while (buf[k] >= '0' && buf[k] <= '9') k++;
-            if (k == (size_t)(sl - buf)) break;
-        }
-            if (!level_ok(uid, buf, A_X)) return 0;
+        /* 卷根 /volN 在飞牛里 mode 0，但内核允许穿越，不参与判定 */
+        if (is_vol_root(buf)) break;
+        if (!level_ok(uid, buf, A_X, 1)) return 0;
     }
-    return level_ok(uid, dir, A_R);
+    return level_ok(uid, path, need, is_dir);
+}
+
+/* 列目录：路径上每一级都要可穿过(x)，目标目录本身要可读(r)。 */
+int perm_dir_listable(uid_t uid, const char *dir) {
+    return perm_check(uid, dir, A_R | A_X, 1);
+}
+
+/* 普通文件可读：祖先只需 X，目标只需 R（缺 ACL 时回落 POSIX）。 */
+int perm_file_readable(uid_t uid, const char *path) {
+    return perm_check(uid, path, A_R, 0);
+}
+
+/* 目录可写（创建/删除/重命名子项需要父目录 W+X）。 */
+int perm_dir_writable(uid_t uid, const char *dir) {
+    return perm_check(uid, dir, A_W | A_X, 1);
+}
+
+int perm_parent_writable(uid_t uid, const char *path) {
+    if (!path) return 0;
+    char buf[8192];
+    size_t n = strlen(path);
+    if (n == 0 || n >= sizeof buf) return 0;
+    memcpy(buf, path, n + 1);
+    char *sl = strrchr(buf, '/');
+    if (!sl || sl == buf) return 0;
+    *sl = 0;
+    return perm_dir_writable(uid, buf);
+}
+
+/* 列表场景的轻量判定：只看目标文件自身 ACL/POSIX，不重复走祖先链。
+ * 调用方应已确认父目录可列。 */
+int perm_mode_readable(uid_t uid, const char *path, const struct stat *st) {
+    if (uid == 0) return 1;
+    int r = eval_one(uid, path, 1, A_R, 0);
+    if (r >= 0) return r;
+    return posix_bit(st, uid, A_R);
 }

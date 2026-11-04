@@ -42,4 +42,14 @@ n_raw=$(wc -l < "$TMP/raw.dump")
 echo "find=$n_find getdents=$n_get raw=$n_raw"
 if ! diff -q "$FIND" "$TMP/getdents.dump" >/dev/null; then echo "getdents 与 find 不一致"; diff "$FIND" "$TMP/getdents.dump" | head; exit 1; fi
 if ! diff -q "$TMP/getdents.dump" "$TMP/raw.dump" >/dev/null; then echo "裸设备与 getdents 不一致"; diff "$TMP/getdents.dump" "$TMP/raw.dump" | head -40; exit 1; fi
+# 裸扫必须从 inode 表带回真实 size/mtime（deep.txt 内容 "hi\n"）
+raw_meta=$("$PWD/bin/xuanlan" query --index "$IDX_R" --json -n 5 deep.txt 2>/dev/null)
+case "$raw_meta" in
+    *'"size":3'*) ;;
+    *) echo "FAIL raw size: $raw_meta"; exit 1 ;;
+esac
+case "$raw_meta" in
+    *'"mtime":0'*) echo "FAIL raw mtime missing"; exit 1 ;;
+esac
+
 echo "OK: 裸设备扫描结果与 getdents 完全一致"

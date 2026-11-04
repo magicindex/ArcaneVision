@@ -14,6 +14,7 @@ typedef struct {
     int dirs_only, files_only;
     uint32_t *hit;
     uint32_t n, cap, limit;
+    uint64_t total;
     int truncated;
     uint32_t last_id;   /* 去重：短查询在同一个名字里可能多处命中 */
     int has_last;
@@ -25,6 +26,38 @@ static int passes_filter(const collect_ctx *c, const xl_rec *r) {
     return 1;
 }
 
+/* 结果按 mtime 新→旧、同 mtime 短名优先；这里用「最差在堆顶」的小顶堆保留最新 K 条，
+ * 避免只取到 posting 顺序里的前 K 条导致按时间排序失真。 */
+static int hit_worse(const xl_rec *a, const xl_rec *b) {
+    if (a->mtime != b->mtime) return a->mtime < b->mtime;
+    if (a->name_len != b->name_len) return a->name_len > b->name_len;
+    return a->name_off > b->name_off;
+}
+
+static void heap_swap(uint32_t *h, uint32_t i, uint32_t j) {
+    uint32_t t = h[i]; h[i] = h[j]; h[j] = t;
+}
+
+static void heap_up(collect_ctx *c, uint32_t i) {
+    while (i) {
+        uint32_t p = (i - 1) / 2;
+        if (!hit_worse(&c->sn->recs[c->hit[i]], &c->sn->recs[c->hit[p]])) break;
+        heap_swap(c->hit, i, p);
+        i = p;
+    }
+}
+
+static void heap_down(collect_ctx *c, uint32_t i) {
+    for (;;) {
+        uint32_t l = i * 2 + 1, r = l + 1, w = i;
+        if (l < c->n && hit_worse(&c->sn->recs[c->hit[l]], &c->sn->recs[c->hit[w]])) w = l;
+        if (r < c->n && hit_worse(&c->sn->recs[c->hit[r]], &c->sn->recs[c->hit[w]])) w = r;
+        if (w == i) break;
+        heap_swap(c->hit, i, w);
+        i = w;
+    }
+}
+
 static void collect(collect_ctx *c, uint32_t id) {
     if (c->has_last && c->last_id == id) return;
     c->last_id = id;
@@ -34,12 +67,22 @@ static void collect(collect_ctx *c, uint32_t id) {
     if (!passes_filter(c, r)) return;
     if (r->name_len < c->nlen) return;
     if (!mem_ci(c->sn->names + r->name_off, r->name_len, c->needle, c->nlen)) return;
-    if (c->n >= c->limit) { c->truncated = 1; return; }
-    if (c->n == c->cap) {
-        c->cap = c->cap ? c->cap * 2 : 1024;
-        c->hit = xrealloc(c->hit, (size_t)c->cap * sizeof(uint32_t));
+    c->total++;
+    if (c->n < c->limit) {
+        if (c->n == c->cap) {
+            c->cap = c->cap ? c->cap * 2 : 1024;
+            c->hit = xrealloc(c->hit, (size_t)c->cap * sizeof(uint32_t));
+        }
+        c->hit[c->n] = id;
+        heap_up(c, c->n);
+        c->n++;
+        return;
     }
-    c->hit[c->n++] = id;
+    c->truncated = 1;
+    if (hit_worse(&c->sn->recs[c->hit[0]], r)) {
+        c->hit[0] = id;
+        heap_down(c, 0);
+    }
 }
 
 static void cb_collect(uint32_t id, void *ctx) { collect((collect_ctx *)ctx, id); }
@@ -135,7 +178,8 @@ void snap_path(const xl_snap *sn, uint32_t id, char *out, size_t cap) {
 }
 
 uint32_t *query_hits(const xl_snap *sn, const char *needle, const xl_query_opts *o,
-                     uint32_t *n_out, int *truncated_out, uint64_t *elapsed_ms) {
+                     uint32_t *n_out, int *truncated_out, uint64_t *elapsed_ms,
+                     uint64_t *total_out) {
     *n_out = 0;
     *truncated_out = 0;
     if (elapsed_ms) *elapsed_ms = 0;
@@ -151,9 +195,7 @@ uint32_t *query_hits(const xl_snap *sn, const char *needle, const xl_query_opts 
     c.nlen = nlen;
     c.dirs_only = o->dirs_only;
     c.files_only = o->files_only;
-    c.limit = o->max_results ? (o->max_results * 200u > 200000u ? 200000u
-                                                               : o->max_results * 200u)
-                             : 200000u;
+    c.limit = o->max_results ? o->max_results : 200000u;
     c.limit = c.limit < 1000 ? 1000 : c.limit;
 
     if (nlen < 3) {
@@ -179,6 +221,7 @@ uint32_t *query_hits(const xl_snap *sn, const char *needle, const xl_query_opts 
     if (c.n > 1) qsort_r(c.hit, c.n, sizeof(uint32_t), cmp_hit, (void *)sn->recs);
     *n_out = c.n;
     *truncated_out = c.truncated;
+    if (total_out) *total_out = c.total;
     if (elapsed_ms) *elapsed_ms = now_ms() - t0;
     return c.hit;
 }
@@ -205,7 +248,8 @@ int query_run(const xl_snap *sn, const char *needle, const xl_query_opts *o) {
     uint64_t t0 = now_ms();
     uint32_t n = 0;
     int truncated = 0;
-    uint32_t *hit = query_hits(sn, needle, o, &n, &truncated, NULL);
+    uint64_t total = 0;
+    uint32_t *hit = query_hits(sn, needle, o, &n, &truncated, NULL, &total);
 
     uint32_t show = o->max_results ? o->max_results : 50;
     if (show > n) show = n;
@@ -213,8 +257,8 @@ int query_run(const xl_snap *sn, const char *needle, const xl_query_opts *o) {
     if (o->json) {
         printf("{\"query\":\"");
         json_escape(needle, strlen(needle), stdout);
-        printf("\",\"total\":%u,\"shown\":%u,\"truncated\":%s,\"items\":[",
-               n, show, truncated ? "true" : "false");
+        printf("\",\"total\":%llu,\"shown\":%u,\"truncated\":%s,\"items\":[",
+               (unsigned long long)total, show, truncated ? "true" : "false");
     }
     for (uint32_t i = 0; i < show; i++) {
         uint32_t id = hit[i];

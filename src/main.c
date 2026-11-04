@@ -39,12 +39,13 @@ static char *mount_for(const char *dev) {
 static void usage(void) {
     fputs("玄览 / Arcane Vision — 全盘文件索引\n"
           "用法:\n"
-          "  xuanlan build --root DIR --out FILE [--exclude DIR]... [--stat] [-v]\n"
+          "  xuanlan build --root DIR --out FILE [--exclude DIR]... [--no-stat] [-v]\n"
           "  xuanlan query --index FILE [-n N] [--json] [--dirs|--files] TERM\n"
           "  xuanlan info  --index FILE\n"
           "  xuanlan dump  --index FILE\n"
-          "  xuanlan serve [--port N] [--bind ADDR] [--socket PATH] [--ui DIR]\n"
-          "                [--index-dir DIR] [--roots /vol1,/vol3,...]\n", stderr);
+          "  xuanlan serve [--port N] [--bind ADDR] [--socket PATH] [--no-socket]\n"
+          "                [--no-tcp] [--ui DIR] [--index-dir DIR]\n"
+          "                [--roots /vol1,/vol3,...] [--exclude DIR]...\n", stderr);
 }
 
 int main(int argc, char **argv) {
@@ -53,7 +54,7 @@ int main(int argc, char **argv) {
 
     if (strcmp(cmd, "build") == 0) {
         const char *root = NULL, *out = NULL, *device = NULL;
-        int want_stat = 0, verbose = 0;
+        int want_stat = 1, verbose = 0;
         for (int i = 2; i < argc; i++) {
             if (!strcmp(argv[i], "--root") && i + 1 < argc) root = argv[++i];
             else if (!strcmp(argv[i], "--out") && i + 1 < argc) out = argv[++i];
@@ -61,6 +62,7 @@ int main(int argc, char **argv) {
                 device = argv[++i];
             else if (!strcmp(argv[i], "--exclude") && i + 1 < argc) scan_add_exclude(argv[++i]);
             else if (!strcmp(argv[i], "--stat")) want_stat = 1;
+            else if (!strcmp(argv[i], "--no-stat")) want_stat = 0;
             else if (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--verbose")) verbose = 1;
             else { fprintf(stderr, "xuanlan: unknown option %s\n", argv[i]); return 2; }
         }
@@ -148,7 +150,9 @@ int main(int argc, char **argv) {
             else if (!strcmp(argv[i], "--roots") && i + 1 < argc)
                 snprintf(o.roots, sizeof(o.roots), "%s", argv[++i]);
             else if (!strcmp(argv[i], "--rebuild-hours") && i + 1 < argc) o.rebuild_hours = atoi(argv[++i]);
+            else if (!strcmp(argv[i], "--exclude") && i + 1 < argc) scan_add_exclude(argv[++i]);
             else if (!strcmp(argv[i], "--no-socket")) o.sock_path[0] = 0;
+            else if (!strcmp(argv[i], "--no-tcp")) o.no_tcp = 1;
             else { fprintf(stderr, "xuanlan: unknown option %s\n", argv[i]); return 2; }
         }
         return httpd_serve(&o);

@@ -147,6 +147,10 @@
   .openwin .owbar{display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12.5px;color:#9fb3d1;
     border-bottom:1px solid rgba(120,160,220,.14)}
   .openwin .owbar .sp{flex:1}
+  .openwin .owbar #owtag{font-size:10.5px;padding:2px 8px;border-radius:999px;
+    color:#7fe6d6;border:1px solid rgba(90,200,190,.38);background:rgba(20,60,60,.45)}
+  html[data-theme="light"] .openwin .owbar #owtag{color:#0f766e;background:rgba(15,118,110,.08);
+    border-color:rgba(15,118,110,.28)}
   .openwin .owbar button{font-size:11.5px;padding:4px 10px;border-radius:7px;cursor:pointer;
     color:#b9c9e2;background:rgba(20,30,46,.8);border:1px solid rgba(120,160,220,.25)}
   .openwin .owbar button:hover{color:#cdf3ee;border-color:rgba(90,200,190,.45)}
@@ -512,7 +516,8 @@
   let openIn = 'embed';
   const openwin = document.createElement('div');
   openwin.className = 'openwin';
-  openwin.innerHTML = '<div class="owbar"><span id="owtitle">打开</span><span class="sp"></span>' +
+  openwin.innerHTML = '<div class="owbar"><span id="owtitle">打开</span>' +
+    '<span id="owtag" style="display:none"></span><span class="sp"></span>' +
     '<button id="owfit">最大化</button><button id="owbrowser">在新标签打开</button>' +
     '<button id="owclose">关闭</button></div>' +
     '<iframe id="owframe" title="打开"></iframe>' +
@@ -665,6 +670,7 @@
   });
   let owUserToggled = false;
   function openURL(url, title){
+    if (url.indexOf('/api/transcode') < 0) setOwTag('');
     if (openIn !== 'embed') { window.open(url, '_blank'); return; }
     if (!owState.max && !owUserToggled) { owState.max = true; saveOw(); }
     owUrl = url;
@@ -706,13 +712,33 @@
     if (cat !== 'video' && cat !== 'audio') return null;
     const info = await probeMedia(p);
     if (!info || !info.ok) return null;
-    const badA = info.audio && !BS_AUDIO.includes(info.audio);
-    const badV = info.video && !BS_VIDEO.includes(info.video);
-    if (!badA && !badV) return null;
+    const badA = info.audio && !BS_AUDIO.includes((info.audio || '').toLowerCase());
+    const badV = info.video && !BS_VIDEO.includes((info.video || '').toLowerCase());
+    const deep = (info.pix || '').indexOf('10') >= 0 || (info.pix || '').indexOf('12') >= 0;
+    const big  = (info.height || 0) > 1080;
+    const hdr  = !!info.hdr;
+    if (!badA && !badV && !deep && !big && !hdr) return null;
     const parts = [];
-    if (badV) parts.push('视频 ' + info.video);
-    if (badA) parts.push('音轨 ' + info.audio);
-    return parts.join('、');
+    if (big) parts.push('4K');
+    if (deep) parts.push('10bit');
+    if (hdr) parts.push('HDR');
+    if (badV) parts.push(info.video.toUpperCase());
+    if (badA) parts.push('音轨 ' + info.audio.toUpperCase());
+    return parts.join(' · ');
+  }
+
+  function openTranscode(p, why){
+    const url = API + 'transcode?path=' + encodeURIComponent(p) + '&q=1080';
+    setOwTag('转码 1080p');
+    say('正在转码播放（1080p，' + (why || '兼容模式') + '）');
+    openURL(url, baseName(p));
+  }
+
+  function setOwTag(text){
+    const el = openwin.querySelector('#owtag');
+    if (!el) return;
+    el.textContent = text || '';
+    el.style.display = text ? 'inline-block' : 'none';
   }
 
   function downloadFile(p){ window.open(API + 'file?path=' + encodeURIComponent(p) + '&dl=1', '_blank'); }
@@ -734,6 +760,7 @@
     if (how === 'preview') {
       const bad = await mediaNeedsTranscode(p);
       if (bad) {
+        if (state && state.transcode && state.transcode.ok) { openTranscode(p, bad); return; }
         if (previewAppOk()) {
           say('浏览器不支持 ' + bad + '，已切换在线预览');
           openURL('/app/trim-preview/?path=' + encodeURIComponent(p), '在线预览 · ' + baseName(p));
@@ -863,7 +890,7 @@
       (d.entries || []).filter(e => e.dir).forEach(e => {
         const row = document.createElement('div');
         row.className = 'mi';
-        row.innerHTML = catIcon('dir', 16) + '<span class="p">' + e.path + '</span>';
+        row.innerHTML = catIcon('dir', 16) + '<span class="p">' + esc(e.path) + '</span>';
         row.onclick = () => dpLoad(e.path);
         box.appendChild(row);
       });
@@ -904,7 +931,7 @@
         const row = document.createElement('div');
         row.className = 'mi';
         row.innerHTML = '<input type="checkbox" class="tk" value="' + esc(t.id) + '">' +
-          '<span>' + t.name + '</span><span class="p">' + esc(t.orig) + '</span>' +
+          '<span>' + esc(t.name) + '</span><span class="p">' + esc(t.orig) + '</span>' +
           '<span style="font-size:11.5px;color:#5f6f8c">' + fmtSize(t.size) + '</span>';
         box.appendChild(row);
       });
@@ -1444,7 +1471,7 @@
       setmask.querySelector('#rbNow').onclick = (ev) => {
         ev.preventDefault();
         if (!confirm('立即对全部卷重新扫描？扫描期间搜索仍可用，但结果可能滞后。')) return;
-        fetch(API + 'rebuild', { method: 'POST' })
+        fetch(API + 'rebuild', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
           .then(r => r.json()).then(() => { hint.textContent = '已开始扫描…'; }).catch(() => {});
       };
     }
@@ -1534,6 +1561,7 @@
     const term = q.value.trim();
     clearTimeout(timer);
     if (!term) { items = []; render(); meta.textContent = ''; spin.classList.remove('on'); return; }
+    if (term.length < 2) { items = []; render(); meta.textContent = '请输入至少 2 个字符'; spin.classList.remove('on'); return; }
     spin.classList.add('on');
     const my = ++seq;
     timer = setTimeout(() => {

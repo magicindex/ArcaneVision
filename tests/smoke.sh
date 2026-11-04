@@ -8,6 +8,8 @@ trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/root/电影/2024" "$TMP/root/work/deep/nest"
 : > "$TMP/root/电影/2024/星际穿越.mkv"
 : > "$TMP/root/电影/2024/Interstellar.mkv"
+touch -d '2020-01-01 00:00:00' "$TMP/root/电影/2024/星际穿越.mkv"
+touch -d '2025-01-01 00:00:00' "$TMP/root/电影/2024/Interstellar.mkv"
 : > "$TMP/root/work/report-q3.pdf"
 : > "$TMP/root/work/deep/nest/docker-compose.yaml"
 : > "$TMP/root/README.md"
@@ -28,6 +30,13 @@ check "docker-compose" 1
 check ".mkv" 2
 check "电影" 1
 check "不存在的东西" 0
+
+# 搜索结果按真实 mtime 倒序：Interstellar(2025) 应排在星际穿越(2020) 前
+first=$("$BIN" query --index "$TMP/i.xl" --json -n 5 .mkv 2>/dev/null |
+        grep -o '"name":"[^"]*"' | head -1)
+[ "$first" = '"name":"Interstellar.mkv"' ] || {
+    echo "FAIL mtime order: first=$first"; exit 1;
+}
 
 # 输出路径必须真实存在
 "$BIN" query --index "$TMP/i.xl" -n 50 .mkv 2>/dev/null | while read -r p; do

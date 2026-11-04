@@ -69,6 +69,13 @@ typedef struct {
     uint8_t  pad;
 } edge;
 
+/* 按 inode 号升序收集的 size/mtime，避免为超大 inode 表分配 8 字节/项 */
+typedef struct {
+    uint32_t ino;
+    uint32_t size;
+    uint32_t mtime;
+} ino_meta;
+
 static inline uint16_t rd16(const uint8_t *p) { return (uint16_t)(p[0] | (p[1] << 8)); }
 static inline uint32_t rd32(const uint8_t *p) {
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
@@ -206,10 +213,13 @@ static void fs_close(ext4_fs *fs) {
 }
 
 /* 阶段一：读 inode 表，收集目录 inode */
-static int collect_dir_inodes(ext4_fs *fs, dir_ino **out, size_t *out_n, int verbose) {
+static int collect_dir_inodes(ext4_fs *fs, dir_ino **out, size_t *out_n,
+                              ino_meta **meta_out, size_t *meta_n, int verbose) {
     size_t cap = 1u << 20, n = 0;
     dir_ino *dirs = xmalloc(cap * sizeof(dir_ino));
     uint8_t *buf = xmalloc(fs->inodes_per_group * (size_t)fs->inode_size);
+    size_t mcap = 1u << 16, mn = 0;
+    ino_meta *meta = xmalloc(mcap * sizeof(ino_meta));
     uint64_t scanned = 0;
 
     for (uint64_t g = 0; g < fs->n_groups; g++) {
@@ -235,6 +245,14 @@ static int collect_dir_inodes(ext4_fs *fs, dir_ino **out, size_t *out_n, int ver
             if (ino >= fs->n_inodes) break;
             if (mode == 0 || !ino_allocated(fs, ino)) continue;
             scanned++;
+            if (mn == mcap) {
+                mcap *= 2;
+                meta = xrealloc(meta, mcap * sizeof(ino_meta));
+            }
+            meta[mn].ino = ino;
+            meta[mn].size = rd32(ip + 0x04);
+            meta[mn].mtime = rd32(ip + 0x10);
+            mn++;
             if ((mode & S_IFMT_) != S_IFDIR_) continue;
             mark_dir(fs, ino);
             if (n == cap) { cap *= 2; dirs = xrealloc(dirs, cap * sizeof(dir_ino)); }
@@ -247,6 +265,8 @@ static int collect_dir_inodes(ext4_fs *fs, dir_ino **out, size_t *out_n, int ver
     }
     free(buf);
     *out = dirs; *out_n = n;
+    if (meta_out) *meta_out = meta;
+    if (meta_n) *meta_n = mn;
     if (verbose)
         fprintf(stderr, "ext4: %llu inodes scanned, %zu directories\n",
                 (unsigned long long)scanned, n);
@@ -415,8 +435,9 @@ int fsreader_ext4_scan(const char *dev, const char *mount_root, xl_store *s,
     if (fs_open(&fs, dev, verbose) < 0) return -1;
 
     dir_ino *dirs = NULL;
-    size_t ndirs = 0;
-    collect_dir_inodes(&fs, &dirs, &ndirs, verbose);
+    ino_meta *meta = NULL;
+    size_t ndirs = 0, nmeta = 0;
+    collect_dir_inodes(&fs, &dirs, &ndirs, &meta, &nmeta, verbose);
 
     blockref *blocks = xmalloc((size_t)ndirs * 2 * sizeof(blockref) + 16);
     size_t nb = 0, bcap = (size_t)ndirs * 2 + 16;
@@ -494,7 +515,19 @@ int fsreader_ext4_scan(const char *dev, const char *mount_root, xl_store *s,
         uint8_t flags = 0;
         if (isdir) flags |= XL_F_DIR;
         else if (e->type == 7) flags |= XL_F_LINK;
-        uint32_t rec = store_push(s, f->rec, names + e->name_off, e->name_len, flags);
+        uint32_t fsize = 0, fmtime = 0;
+        size_t lo = 0, hi = nmeta;
+        while (lo < hi) {
+            size_t mid = lo + (hi - lo) / 2;
+            if (meta[mid].ino < e->child) lo = mid + 1;
+            else hi = mid;
+        }
+        if (lo < nmeta && meta[lo].ino == e->child) {
+            if (!isdir) fsize = meta[lo].size;
+            fmtime = meta[lo].mtime;
+        }
+        uint32_t rec = store_push_meta(s, f->rec, names + e->name_off, e->name_len,
+                                       flags, fsize, fmtime);
         visited++;
 
         if (isdir && e->child != EXT4_ROOT_INO) {
@@ -507,6 +540,7 @@ int fsreader_ext4_scan(const char *dev, const char *mount_root, xl_store *s,
         }
     }
     free(stack);
+    free(meta);
 
     if (verbose)
         fprintf(stderr, "ext4: %zu edges, %zu records, %zu names bytes\n",

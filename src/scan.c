@@ -40,6 +40,8 @@ void scan_add_exclude(const char *prefix) {
     g_excl[g_excl_n++] = p;
 }
 
+int scan_has_exclude(void) { return g_excl_n > 0; }
+
 static int excluded(const char *path) {
     for (size_t i = 0; i < g_excl_n; i++) {
         size_t n = strlen(g_excl[i]);
@@ -143,9 +145,8 @@ static int walk(xl_store *s, uint32_t self, const char *path, int want_stat,
             uint32_t size = 0, mtime = 0;
             if (want_stat || d->d_type == DT_UNKNOWN) {
                 struct stat st;
-                if (fstatat(fd, name, &st, AT_SYMLINK_NOFOLLOW) == 0 &&
-                    !(flags & XL_F_DIR)) {
-                    size = (uint32_t)st.st_size;
+                if (fstatat(fd, name, &st, AT_SYMLINK_NOFOLLOW) == 0) {
+                    if (!(flags & XL_F_DIR)) size = (uint32_t)st.st_size;
                     mtime = (uint32_t)st.st_mtime;
                 }
             }
@@ -174,6 +175,11 @@ static int walk(xl_store *s, uint32_t self, const char *path, int want_stat,
 
 uint32_t store_push_root(xl_store *s, uint8_t flags) {
     return add_rec(s, XL_ROOT, "", 0, flags, 0, 0);
+}
+
+uint32_t store_push_meta(xl_store *s, uint32_t parent, const char *name, size_t len,
+                         uint8_t flags, uint32_t size, uint32_t mtime) {
+    return add_rec(s, parent, name, len, flags, size, mtime);
 }
 
 uint32_t store_push(xl_store *s, uint32_t parent, const char *name, size_t len,

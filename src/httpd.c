@@ -224,16 +224,21 @@ static int build_one(int vi, int verbose) {
         if (verbose) fprintf(stderr, "xuanlan: %s 含子挂载，改用目录遍历\n", v->root);
         no_raw = 1;
     }
+    /* ext4 裸扫不经过 scan.c 的排除表；有排除项时退回目录遍历以保证语义正确 */
+    if (!no_raw && scan_has_exclude()) {
+        if (verbose) fprintf(stderr, "xuanlan: 存在排除项，改用目录遍历\n");
+        no_raw = 1;
+    }
     if (!no_raw && resolve_dev(v->root, dev, sizeof(dev)) && strncmp(dev, "/dev/", 5) == 0) {
         if (verbose) fprintf(stderr, "xuanlan: %s <- %s\n", v->root, dev);
         rc = fsreader_ext4_scan(dev, v->root, &st, verbose);
         if (rc < 0 || st.n < 2) {
             store_free(&st);
             store_init(&st);
-            rc = scan_tree(v->root, &st, 0, verbose);
+            rc = scan_tree(v->root, &st, 1, verbose);
         }
     } else {
-        rc = scan_tree(v->root, &st, 0, verbose);
+        rc = scan_tree(v->root, &st, 1, verbose);
     }
     if (rc < 0 && st.n < 2) {
         snprintf(g_err, sizeof(g_err), "%s: 无法读取", v->root);
@@ -429,8 +434,15 @@ static int run_capture(char *const argv[], char *out, size_t cap) {
     }
     close(pipefd[1]);
     size_t got = 0;
+    uint64_t deadline = now_ms() + 5000;   /* ffprobe 不允许无限挂住 worker */
+    struct pollfd pfd = { .fd = pipefd[0], .events = POLLIN, .revents = 0 };
     for (;;) {
         if (got + 1 >= cap) break;
+        int64_t remain = (int64_t)deadline - (int64_t)now_ms();
+        if (remain <= 0) { kill(pid, SIGKILL); break; }
+        int pr = poll(&pfd, 1, (int)remain);
+        if (pr < 0) { if (errno == EINTR) continue; kill(pid, SIGKILL); break; }
+        if (pr == 0) { kill(pid, SIGKILL); break; }
         ssize_t r = read(pipefd[0], out + got, cap - 1 - got);
         if (r <= 0) break;
         got += (size_t)r;
@@ -438,49 +450,90 @@ static int run_capture(char *const argv[], char *out, size_t cap) {
     out[got] = 0;
     close(pipefd[0]);
     int status = 0;
-    waitpid(pid, &status, 0);
+    for (int i = 0; i < 20; i++) {
+        pid_t w = waitpid(pid, &status, WNOHANG);
+        if (w == pid) break;
+        usleep(50000);
+    }
+    if (waitpid(pid, &status, WNOHANG) == 0) { kill(pid, SIGKILL); waitpid(pid, &status, 0); }
     return WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : -1;
 }
 
-/* 从 ffprobe json 里取第一个指定类型的 codec_name（不引第三方 json 库，简单扫描） */
-static void probe_stream_codec(const char *json, const char *type, char *out, size_t cap) {
+static int jstr_in(const char *ob, const char *end, const char *key, char *out, size_t cap) {
+    if (!out || !cap) return 0;
     out[0] = 0;
-    const char *p = json;
-    while ((p = strstr(p, "\"codec_type\"")) != NULL) {
-        const char *a = strchr(p + 12, '"');
-        const char *b = a ? strchr(a + 1, '"') : NULL;
-        if (!a || !b) break;
-        /* codec_name 在同一对象的 codec_type 之前，向前找对象起点 */
-        const char *ob = p;
-        while (ob > json && *ob != '{') ob--;
-        const char *cn = strstr(ob, "\"codec_name\"");
-        if (cn && cn < p) {
-            const char *ca = strchr(cn + 12, '"');
-            const char *cb = ca ? strchr(ca + 1, '"') : NULL;
-            if (ca && cb && (size_t)(cb - ca - 1) < cap) {
-                memcpy(out, ca + 1, (size_t)(cb - ca - 1));
-                out[cb - ca - 1] = 0;
-            }
-        }
-        size_t tl = (size_t)(b - a - 1);
-        if (tl == strlen(type) && !strncmp(a + 1, type, tl)) return;
-        p = b;
+    size_t kl = strlen(key);
+    for (const char *p = ob; (p = strstr(p, key)) != NULL && p < end; p += kl) {
+        const char *q = p + kl;
+        while (q < end && (*q == ' ' || *q == '\t')) q++;
+        if (q >= end || *q != ':') continue;
+        q++;
+        while (q < end && (*q == ' ' || *q == '\t')) q++;
+        if (q >= end || *q != '"') continue;
+        const char *a = q + 1, *b = memchr(a, '"', (size_t)(end - a));
+        if (!b) return 0;
+        size_t n = (size_t)(b - a);
+        if (n >= cap) n = cap - 1;
+        memcpy(out, a, n); out[n] = 0;
+        return 1;
     }
+    return 0;
 }
 
-static int media_probe(const char *real, char *vcodec, size_t vcap, char *acodec, size_t acap) {
+static int jint_in(const char *ob, const char *end, const char *key, int *out) {
+    size_t kl = strlen(key);
+    for (const char *p = ob; (p = strstr(p, key)) != NULL && p < end; p += kl) {
+        const char *q = p + kl;
+        while (q < end && (*q == ' ' || *q == '\t')) q++;
+        if (q >= end || *q != ':') continue;
+        q++;
+        while (q < end && (*q == ' ' || *q == '\t')) q++;
+        char *ep = NULL;
+        long v = strtol(q, &ep, 10);
+        if (ep != q && ep <= end) { *out = (int)v; return 1; }
+    }
+    return 0;
+}
+
+/* 单次 ffprobe 取编码/分辨率/像素格式/传输特性，避免预览时启动两个进程 */
+static int media_probe(const char *real, char *vcodec, size_t vcap, char *acodec, size_t acap,
+                       int *w, int *h, char *pix, size_t pcap, char *transfer, size_t tcap) {
     static const char *paths[] = { "/usr/bin/ffprobe", "/bin/ffprobe", "/usr/local/bin/ffprobe" };
     char buf[8192];
+    if (vcodec && vcap) vcodec[0] = 0;
+    if (acodec && acap) acodec[0] = 0;
+    if (pix && pcap) pix[0] = 0;
+    if (transfer && tcap) transfer[0] = 0;
+    *w = *h = 0;
     for (size_t i = 0; i < sizeof paths / sizeof paths[0]; i++) {
         if (access(paths[i], X_OK) != 0) continue;
-        char *argv[] = { (char *)paths[i], "-v", "error", "-show_entries", "stream=codec_type,codec_name",
+        char *argv[] = { (char *)paths[i], "-v", "error",
+                         "-show_entries", "stream=codec_type,codec_name,width,height,pix_fmt,color_transfer",
                          "-of", "json", (char *)real, NULL };
-        if (run_capture(argv, buf, sizeof buf) == 0) {
-            probe_stream_codec(buf, "video", vcodec, vcap);
-            probe_stream_codec(buf, "audio", acodec, acap);
-            return 1;
+        if (run_capture(argv, buf, sizeof buf) != 0) return 0;
+        int have_v = 0, have_a = 0;
+        const char *p = buf;
+        while ((p = strstr(p, "\"codec_type\"")) != NULL) {
+            const char *ob = p;
+            while (ob > buf && *ob != '{') ob--;
+            const char *end = strchr(p, '}');
+            if (!end) break;
+            char type[16] = "";
+            jstr_in(ob, end, "\"codec_type\"", type, sizeof type);
+            if (!strcmp(type, "video") && !have_v) {
+                have_v = 1;
+                jstr_in(ob, end, "\"codec_name\"", vcodec, vcap);
+                jstr_in(ob, end, "\"pix_fmt\"", pix, pcap);
+                jstr_in(ob, end, "\"color_transfer\"", transfer, tcap);
+                jint_in(ob, end, "\"width\"", w);
+                jint_in(ob, end, "\"height\"", h);
+            } else if (!strcmp(type, "audio") && !have_a) {
+                have_a = 1;
+                jstr_in(ob, end, "\"codec_name\"", acodec, acap);
+            }
+            p = end + 1;
         }
-        return 0;
+        return 1;
     }
     return 0;
 }
@@ -499,10 +552,16 @@ static void handle_probe(sbuf *out, const char *qs, int uid) {
             *slash = 0;
             if (!perm_dir_listable((uid_t)uid, dir)) { sb_puts(out, "{\"ok\":false,\"error\":\"forbidden\"}"); return; }
         }
+        if (!perm_file_readable((uid_t)uid, real)) { sb_puts(out, "{\"ok\":false,\"error\":\"forbidden\"}"); return; }
     }
-    char vc[32] = "", ac[32] = "";
-    int ok = media_probe(real, vc, sizeof vc, ac, sizeof ac);
-    sb_printf(out, "{\"ok\":%s,\"video\":\"%s\",\"audio\":\"%s\"}", ok ? "true" : "false", vc, ac);
+    struct stat pst;
+    if (stat(real, &pst) != 0 || !S_ISREG(pst.st_mode)) { sb_puts(out, "{\"ok\":false,\"error\":\"not a regular file\"}"); return; }
+    char vc[32] = "", ac[32] = "", pix[40] = "", tr[40] = "";
+    int vw = 0, vh = 0;
+    int ok = media_probe(real, vc, sizeof vc, ac, sizeof ac, &vw, &vh, pix, sizeof pix, tr, sizeof tr);
+    int is_hdr = !strcmp(tr, "smpte2084") || !strcmp(tr, "arib-std-b67");
+    sb_printf(out, "{\"ok\":%s,\"video\":\"%s\",\"audio\":\"%s\",\"width\":%d,\"height\":%d,\"pix\":\"%s\",\"hdr\":%s}",
+              ok ? "true" : "false", vc, ac, vw, vh, pix, is_hdr ? "true" : "false");
 }
 
 
@@ -550,10 +609,11 @@ static char *read_text_file(const char *qs, int uid, size_t *len_out, int *trunc
             *slash = 0;
             if (!perm_dir_listable((uid_t)uid, dir)) { *len_out = (size_t)-1; return NULL; }
         }
+        if (!perm_file_readable((uid_t)uid, real)) { *len_out = (size_t)-1; return NULL; }
     }
     struct stat st;
     if (stat(real, &st) != 0 || !S_ISREG(st.st_mode)) { *len_out = (size_t)-1; return NULL; }
-    int fd = open(real, O_RDONLY | O_CLOEXEC);
+    int fd = open(real, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0) { *len_out = (size_t)-1; return NULL; }
     size_t want = (size_t)st.st_size < CAP ? (size_t)st.st_size : CAP;
     char *buf = malloc(want + 1);
@@ -595,6 +655,7 @@ static void sb_js_string(sbuf *out, const char *s) {
         unsigned char c = (unsigned char)*s;
         if (c == '"' || c == '\\') { sb_puts(out, "\\"); sb_add(out, (const char *)&c, 1); }
         else if (c == '\n') sb_puts(out, "\\n");
+        else if (c == '<') sb_puts(out, "\\x3c");   /* 防止文件名闭合 <script> */
         else if (c < 0x20) sb_puts(out, " ");
         else sb_add(out, (const char *)&c, 1);
     }
@@ -760,8 +821,13 @@ static void handle_file(sbuf *out, const char *req, const char *qs, int uid, int
                 return;
             }
         }
+        if (!perm_file_readable((uid_t)uid, real)) {
+            *code = 403;
+            sb_puts(out, "{\"error\":\"forbidden\"}");
+            return;
+        }
     }
-    int fd = open(real, O_RDONLY | O_CLOEXEC);
+    int fd = open(real, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0) {
         *code = 404;
         sb_puts(out, "{\"error\":\"not found\"}");
@@ -956,6 +1022,26 @@ static int cat_parse(const char *v) {
     return 0;
 }
 
+/* 搜索结果里大量文件共享同一父目录；按目录缓存可避免逐条走 ACL 祖先链。 */
+#define PCACHE_N 4096
+typedef struct { char *dir; int ok; } perm_cache_ent;
+static uint32_t perm_hash(const char *s) {
+    uint32_t h = 2166136261u;
+    while (*s) { h ^= (unsigned char)*s++; h *= 16777619u; }
+    return h;
+}
+static int perm_cache_check(perm_cache_ent *c, const char *dir, uid_t uid) {
+    perm_cache_ent *e = &c[perm_hash(dir) & (PCACHE_N - 1)];
+    if (e->dir && !strcmp(e->dir, dir)) return e->ok;
+    int ok = perm_dir_listable(uid, dir);
+    char *cp = strdup(dir);
+    if (cp) { free(e->dir); e->dir = cp; e->ok = ok; }
+    return ok;
+}
+static void perm_cache_free(perm_cache_ent *c) {
+    for (int i = 0; i < PCACHE_N; i++) free(c[i].dir);
+}
+
 static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
     char q[512] = "", s_limit[32] = "", s_off[32] = "", type[16] = "", s_cat[24] = "";
     param(qs, "q", q, sizeof(q));
@@ -968,13 +1054,29 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
         sb_puts(out, "{\"error\":\"missing q\"}");
         return;
     }
+    /* 单字符查询会退化成全量 names 池扫描（实测 2.6 秒），直接拒绝。 */
+    {
+        int chars = 0;
+        for (const unsigned char *p = (const unsigned char *)q; *p; p++)
+            if ((*p & 0xC0) != 0x80) chars++;
+        if (chars < 2) {
+            sb_puts(out, "{\"error\":\"query too short\"}");
+            return;
+        }
+    }
     uint32_t limit = s_limit[0] ? (uint32_t)atoi(s_limit) : 50;
     uint32_t off = s_off[0] ? (uint32_t)atoi(s_off) : 0;
     if (limit == 0 || limit > 500) limit = 50;
 
     xl_query_opts o;
     memset(&o, 0, sizeof(o));
-    o.max_results = 0;               /* 收集全部，再切片 */
+    /* 只取当前页所需的候选（含权限过滤余量），不再物化全部命中。 */
+    {
+        uint64_t want = (uint64_t)(limit + off) * 20;
+        if (want > 5000) want = 5000;
+        if (want < 200) want = 200;
+        o.max_results = (uint32_t)want;
+    }
     if (!strcmp(type, "dir")) o.dirs_only = 1;
     else if (!strcmp(type, "file")) o.files_only = 1;
 
@@ -985,6 +1087,7 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
     uint64_t t0 = now_ms();
     ref_t *refs = NULL;
     size_t nref = 0, cref = 0;
+    uint64_t total_hits = 0;
     int trunc = 0;
 
     pthread_rwlock_rdlock(&g_rw);
@@ -992,7 +1095,9 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
         if (!g_vols[i].ok) continue;
         uint32_t n = 0;
         int t = 0;
-        uint32_t *hits = query_hits(&g_vols[i].sn, q, &o, &n, &t, NULL);
+        uint64_t vtotal = 0;
+        uint32_t *hits = query_hits(&g_vols[i].sn, q, &o, &n, &t, NULL, &vtotal);
+        total_hits += vtotal;
         if (t) trunc = 1;
         if (n) {
             if (nref + n > cref) {
@@ -1039,11 +1144,19 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
     sb_json(out, q, strlen(q));
     size_t live_dels = 0;
     live_delta_count(&live_dels);
-    sb_printf(out, "\",\"total\":%zu,\"approx\":%s,\"truncated\":%s,\"offset\":%u,\"limit\":%u,\"ms\":%.1f,\"items\":[",
-              nref + nlh, (live_dels || nlh || uid >= 0) ? "true" : "false",
-              trunc ? "true" : "false", off, limit, (double)(now_ms() - t0));
+    sb_printf(out, "\",\"total\":%zu,\"approx\":\"true\",\"truncated\":%s,\"offset\":%u,\"limit\":%u,\"items\":[",
+              total_hits + nlh, trunc ? "true" : "false", off, limit);
+    (void)live_dels;
 
     char path[8192];
+    perm_cache_ent *pcache = calloc(PCACHE_N, sizeof(*pcache));
+    if (!pcache) {
+        pthread_rwlock_unlock(&g_rw);
+        for (size_t k = 0; k < nlh; k++) free(lh[k].path);
+        free(lh); free(refs); free(sc);
+        sb_puts(out, "],\"ms\":0}");
+        return;
+    }
     uint32_t shown = 0;
     size_t i = 0, j = 0, skipped = 0;
     while ((i < nref || j < nlh) && shown < limit) {
@@ -1082,14 +1195,16 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
             if (!sl) continue;
             if (sl == pd) sl[1] = 0; else *sl = 0;
             if (!admin && system_path(path)) continue;
-            if (!perm_dir_listable((uid_t)uid, pd)) continue;
+            if (!perm_cache_check(pcache, pd, (uid_t)uid)) continue;
             if (nsc >= 0 && !scope_allows(sc, nsc, path)) continue;
         }
         {
             struct stat lst;
-            if (stat(path, &lst) == 0) {
-                if (!is_dir) { size = (uint32_t)lst.st_size; mtime = (uint32_t)lst.st_mtime; }
+            int have = stat(path, &lst) == 0;
+            if (!is_dir && uid >= 0) {
+                if (!have || !perm_mode_readable((uid_t)uid, path, &lst)) continue;
             }
+            if (have && !is_dir) { size = (uint32_t)lst.st_size; mtime = (uint32_t)lst.st_mtime; }
         }
         if (skipped < off) { skipped++; continue; }
         if (shown) sb_puts(out, ",");
@@ -1102,8 +1217,9 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
                   is_dir ? "dir" : cat_key(cat_of_name(name, nlen)));
         shown++;
     }
-    sb_puts(out, "]}");
+    sb_printf(out, "],\"ms\":%.1f}", (double)(now_ms() - t0));
     pthread_rwlock_unlock(&g_rw);
+    perm_cache_free(pcache); free(pcache);
     for (size_t k = 0; k < nlh; k++) free(lh[k].path);
     free(lh);
     free(refs);
@@ -1153,6 +1269,18 @@ static void handle_dir(sbuf *out, const char *qs, int uid, int admin) {
     }
     size_t dl = strlen(dir);
     while (dl > 1 && dir[dl - 1] == '/') dir[--dl] = 0;
+    {
+        /* 规范化后再匹配索引路径，避免 .. / 重复斜杠 / 符号链接造成空列表或越界 */
+        char rp[PATH_MAX];
+        if (realpath(dir, rp)) {
+            if (strncmp(rp, "/vol", 4) != 0) {
+                sb_puts(out, "{\"error\":\"forbidden\",\"entries\":[]}");
+                return;
+            }
+            snprintf(dir, sizeof dir, "%s", rp);
+            dl = strlen(dir);
+        }
+    }
     /* 卷根 /volN 的 mode 是 0000，但飞牛允许浏览后按子目录授权；放行并在下面逐项判权。
        管理员也按当前账号的 ACL 过滤，避免列出别人的家目录与系统目录。 */
     int volroot = is_volroot(dir);
@@ -1185,7 +1313,6 @@ static void handle_dir(sbuf *out, const char *qs, int uid, int admin) {
                 int is_dir = (r->flags & XL_F_DIR) != 0;
                 if (pass == 0 && !is_dir) continue;
                 if (pass == 1 && is_dir) continue;
-                total++;
                 snap_path(&v->sn, i, p, sizeof p);
                 if (live_is_deleted(p)) continue;
                 if (uid >= 0 && is_dir) {
@@ -1195,11 +1322,12 @@ static void handle_dir(sbuf *out, const char *qs, int uid, int admin) {
                 uint32_t esz = r->size, emt = r->mtime;
                 if (!is_dir) {
                     struct stat lst;
-                    if (stat(p, &lst) == 0) {
-                        if (lst.st_size > 0) esz = (uint32_t)lst.st_size;
-                        if (lst.st_mtime > 0) emt = (uint32_t)lst.st_mtime;
-                    }
+                    if (stat(p, &lst) != 0) continue;
+                    if (uid >= 0 && !perm_mode_readable((uid_t)uid, p, &lst)) continue;
+                    if (lst.st_size > 0) esz = (uint32_t)lst.st_size;
+                    if (lst.st_mtime > 0) emt = (uint32_t)lst.st_mtime;
                 }
+                total++;
                 if (shown) sb_puts(out, ",");
                 sb_puts(out, "{\"path\":\"");
                 sb_json(out, p, strlen(p));
@@ -1212,7 +1340,45 @@ static void handle_dir(sbuf *out, const char *qs, int uid, int admin) {
             }
         }
     }
-    sb_printf(out, "],\"count\":%d,\"truncated\":%s}", total, total > MAX_ENT ? "true" : "false");
+    /* 基线快照最多 6 小时，目录里刚创建的文件也必须可见 */
+    {
+        xl_live_hit *lh = NULL;
+        size_t nlh = live_dir(dir, &lh);
+        for (size_t li = 0; li < nlh && shown < MAX_ENT; li++) {
+            const char *p = lh[li].path;
+            const char *bn = strrchr(p, '/');
+            bn = bn ? bn + 1 : p;
+            int is_dir = (lh[li].flags & XL_F_DIR) != 0;
+            if (uid >= 0 && !admin) {
+                if (system_path(p)) continue;
+                if (is_dir && sysnoise_name(bn, (uint16_t)strlen(bn))) continue;
+                const char *sl = strrchr(p, '/');
+                char pd[8192];
+                if (!sl) continue;
+                size_t pl = (size_t)(sl - p);
+                if (pl >= sizeof pd) continue;
+                memcpy(pd, p, pl); pd[pl] = 0;
+                if (!perm_dir_listable((uid_t)uid, pd)) continue;
+            }
+            struct stat lst;
+            int have = stat(p, &lst) == 0;
+            if (!is_dir && uid >= 0 && (!have || !perm_mode_readable((uid_t)uid, p, &lst))) continue;
+            if (shown) sb_puts(out, ",");
+            sb_puts(out, "{\"path\":\"");
+            sb_json(out, p, strlen(p));
+            sb_puts(out, "\",\"name\":\"");
+            sb_json(out, bn, strlen(bn));
+            sb_printf(out, "\",\"dir\":%s,\"size\":%u,\"mtime\":%u,\"cat\":\"%s\"}",
+                      is_dir ? "true" : "false",
+                      have ? (unsigned)lh[li].size : 0,
+                      have ? (unsigned)lst.st_mtime : (unsigned)lh[li].mtime,
+                      is_dir ? "dir" : cat_key(cat_of_name(bn, strlen(bn))));
+            shown++; total++;
+        }
+        for (size_t li = 0; li < nlh; li++) free(lh[li].path);
+        free(lh);
+    }
+    sb_printf(out, "],\"count\":%d,\"truncated\":%s}", total, shown >= MAX_ENT ? "true" : "false");
     pthread_rwlock_unlock(&g_rw);
 }
 
@@ -1310,6 +1476,7 @@ static void scope_save(int uid, char (*paths)[512], int n) {
     scope_path(uid, sp, sizeof sp);
     FILE *f = fopen(sp, "w");
     if (!f) return;
+    fchmod(fileno(f), 0600);
     for (int i = 0; i < n; i++) fprintf(f, "%s\n", paths[i]);
     fclose(f);
 }
@@ -1526,6 +1693,10 @@ static int fs_guard(int uid, const char *p, int want_dir, char *err, size_t cap)
     if (uid > 0 && !perm_dir_listable((uid_t)uid, check)) {
         snprintf(err, cap, "没有权限"); return -1;
     }
+    /* 目录项可列不代表文件本身可读：0600 他人文件必须再判目标 R */
+    if (!want_dir && !S_ISDIR(st.st_mode) && uid > 0 && !perm_file_readable((uid_t)uid, p)) {
+        snprintf(err, cap, "没有文件读权限"); return -1;
+    }
     return 0;
 }
 
@@ -1565,22 +1736,28 @@ static void handle_fsop(sbuf *out, const char *body, int uid)
     json_str(body, "\"op\"", op, sizeof op, "");
     json_str(body, "\"dest\"", dest, sizeof dest, "");
 
-    static char paths[200][4200];
+    /* 每个请求独立分配，避免 4 个 worker 共用 static 缓冲互相串改路径 */
+    char (*paths)[4200] = calloc(200, sizeof *paths);
+    if (!paths) { sb_puts(out, "{\"ok\":false,\"error\":\"内存不足\"}"); return; }
     int n = json_str_array(body, "\"paths\"", &paths[0][0], sizeof paths[0], 200);
-    if (!n) { sb_puts(out, "{\"ok\":false,\"error\":\"未选择文件\"}"); return; }
-    if (uid < 0) { sb_puts(out, "{\"ok\":false,\"error\":\"未识别用户\"}"); return; }
+    if (!n) { free(paths); sb_puts(out, "{\"ok\":false,\"error\":\"未选择文件\"}"); return; }
+    if (uid < 0) { free(paths); sb_puts(out, "{\"ok\":false,\"error\":\"未识别用户\"}"); return; }
 
     int is_trash = !strcmp(op, "trash");
     if (!is_trash && strcmp(op, "copy") && strcmp(op, "move")) {
-        sb_puts(out, "{\"ok\":false,\"error\":\"未知操作\"}"); return;
+        free(paths); sb_puts(out, "{\"ok\":false,\"error\":\"未知操作\"}"); return;
     }
 
     char derr[256] = {0};
     if (!is_trash) {
-        if (!dest[0]) { sb_puts(out, "{\"ok\":false,\"error\":\"目标目录为空\"}"); return; }
+        if (!dest[0]) { free(paths); sb_puts(out, "{\"ok\":false,\"error\":\"目标目录为空\"}"); return; }
         if (fs_guard(uid, dest, 1, derr, sizeof derr) != 0) {
+            free(paths);
             sb_printf(out, "{\"ok\":false,\"error\":\"目标：%s\"}", derr);
             return;
+        }
+        if (!perm_dir_writable((uid_t)uid, dest)) {
+            free(paths); sb_puts(out, "{\"ok\":false,\"error\":\"目标目录不可写\"}"); return;
         }
     }
 
@@ -1590,47 +1767,85 @@ static void handle_fsop(sbuf *out, const char *body, int uid)
         char err[256] = {0};
         if (fs_guard(uid, paths[i], 0, err, sizeof err) != 0) {
             if (failed++) sb_puts(out, ",");
-            sb_printf(out, "{\"path\":\"%s\",\"error\":\"%s\"}", paths[i], err);
+            sb_puts(out, "{\"path\":\"");
+            sb_json(out, paths[i], strlen(paths[i]));
+            sb_puts(out, "\",\"error\":\"");
+            sb_json(out, err, strlen(err));
+            sb_puts(out, "\"}");
+            continue;
+        }
+        /* move/trash 会改变源目录内容，必须拥有源父目录写权限 */
+        if ((is_trash || !strcmp(op, "move")) && !perm_parent_writable((uid_t)uid, paths[i])) {
+            if (failed++) sb_puts(out, ",");
+            sb_puts(out, "{\"path\":\"");
+            sb_json(out, paths[i], strlen(paths[i]));
+            sb_puts(out, "\",\"error\":\"源目录不可写\"}");
             continue;
         }
         char name[512];
         base_of(paths[i], name, sizeof name);
         if (is_trash) {
             char id[64];
-            if (fs_trash_path(paths[i], g_trash, id, sizeof id, err, sizeof err) == 0) done++;
+            if (fs_trash_path(paths[i], g_trash, (uid_t)uid, id, sizeof id, err, sizeof err) == 0) done++;
             else {
                 if (failed++) sb_puts(out, ",");
-                sb_printf(out, "{\"path\":\"%s\",\"error\":\"%s\"}", paths[i], err);
+                sb_puts(out, "{\"path\":\"");
+                sb_json(out, paths[i], strlen(paths[i]));
+                sb_puts(out, "\",\"error\":\"");
+                sb_json(out, err, strlen(err));
+                sb_puts(out, "\"}");
             }
             continue;
         }
         char dst[4300];
-        snprintf(dst, sizeof dst, "%s/%s", dest, name);
+        if (strlen(dest) + 1 + strlen(name) >= sizeof dst) {
+            if (failed++) sb_puts(out, ",");
+            sb_puts(out, "{\"path\":\"");
+            sb_json(out, paths[i], strlen(paths[i]));
+            sb_puts(out, "\",\"error\":\"路径过长\"}");
+            continue;
+        }
+        {
+            size_t dl = strlen(dest), nl = strlen(name);
+            memcpy(dst, dest, dl);
+            dst[dl] = '/';
+            memcpy(dst + dl + 1, name, nl + 1);
+        }
         struct stat st;
         if (lstat(dst, &st) == 0) {
             if (failed++) sb_puts(out, ",");
-            sb_printf(out, "{\"path\":\"%s\",\"error\":\"目标已存在\"}", paths[i]);
+            sb_puts(out, "{\"path\":\"");
+            sb_json(out, paths[i], strlen(paths[i]));
+            sb_puts(out, "\",\"error\":\"目标已存在\"}");
             continue;
         }
-        int rc = !strcmp(op, "copy") ? fs_copy_path(paths[i], dst, err, sizeof err)
+        int rc = !strcmp(op, "copy") ? fs_copy_path(paths[i], dst, (uid_t)uid, err, sizeof err)
                                        : fs_move_path(paths[i], dst, err, sizeof err);
         if (rc == 0) done++;
         else {
             if (failed++) sb_puts(out, ",");
-            sb_printf(out, "{\"path\":\"%s\",\"error\":\"%s\"}", paths[i], err);
+            sb_puts(out, "{\"path\":\"");
+            sb_json(out, paths[i], strlen(paths[i]));
+            sb_puts(out, "\",\"error\":\"");
+            sb_json(out, err, strlen(err));
+            sb_puts(out, "\"}");
         }
     }
     sb_printf(out, "],\"done\":%d,\"failedCount\":%d}", done, failed);
+    free(paths);
 }
 
 static void handle_trash_get(sbuf *out, int uid)
 {
-    static fs_trash_item items[500];
-    int n = fs_trash_scan(g_trash, items, 500);
+    fs_trash_item *items = calloc(500, sizeof *items);
+    if (!items) { sb_puts(out, "{\"error\":\"内存不足\"}"); return; }
+    int n = fs_trash_scan(g_trash, (uid_t)uid, items, 500);
     sb_puts(out, "{\"items\":[");
     for (int i = 0; i < n; i++) {
         if (i) sb_puts(out, ",");
-        sb_printf(out, "{\"id\":\"%s\",\"name\":\"", items[i].id);
+        sb_puts(out, "{\"id\":\"");
+        sb_json(out, items[i].id, strlen(items[i].id));
+        sb_puts(out, "\",\"name\":\"");
         sb_json(out, items[i].name, strlen(items[i].name));
         sb_puts(out, "\",\"orig\":\"");
         sb_json(out, items[i].orig, strlen(items[i].orig));
@@ -1638,33 +1853,41 @@ static void handle_trash_get(sbuf *out, int uid)
                   items[i].size, items[i].mtime, items[i].deleted);
     }
     sb_puts(out, "]}");
+    free(items);
 }
 
-static void handle_trash_post(sbuf *out, const char *body, int uid)
+static void handle_trash_post(sbuf *out, const char *body, int uid, int admin)
 {
     char op[16] = {0};
     json_str(body, "\"op\"", op, sizeof op, "");
     if (!strcmp(op, "empty")) {
+        if (!admin) { sb_puts(out, "{\"ok\":false,\"error\":\"需要管理员权限\"}"); return; }
         int removed = 0;
         char err[256] = {0};
         if (fs_empty_trash(g_trash, &removed, err, sizeof err) != 0) {
-            sb_printf(out, "{\"ok\":false,\"error\":\"%s\"}", err);
+            sb_puts(out, "{\"ok\":false,\"error\":\"");
+            sb_json(out, err, strlen(err));
+            sb_puts(out, "\"}");
             return;
         }
         sb_printf(out, "{\"ok\":true,\"removed\":%d}", removed);
         return;
     }
     if (!strcmp(op, "restore")) {
-        static char ids[200][64];
+        char ids[200][64];
         int n = json_str_array(body, "\"ids\"", &ids[0][0], sizeof ids[0], 200);
         int done = 0, failed = 0;
         sb_puts(out, "{\"ok\":true,\"failed\":[");
         for (int i = 0; i < n; i++) {
             char err[256] = {0};
-            if (fs_restore(g_trash, ids[i], err, sizeof err) == 0) done++;
+            if (fs_restore(g_trash, ids[i], (uid_t)uid, err, sizeof err) == 0) done++;
             else {
                 if (failed++) sb_puts(out, ",");
-                sb_printf(out, "{\"id\":\"%s\",\"error\":\"%s\"}", ids[i], err);
+                sb_puts(out, "{\"id\":\"");
+                sb_json(out, ids[i], strlen(ids[i]));
+                sb_puts(out, "\",\"error\":\"");
+                sb_json(out, err, strlen(err));
+                sb_puts(out, "\"}");
             }
         }
         sb_printf(out, "],\"done\":%d,\"failedCount\":%d}", done, failed);
@@ -1759,8 +1982,46 @@ static void handle_settings_get(sbuf *out, int uid, int admin, int all) {
     free(buf);
 }
 
-static void handle_settings_post(sbuf *out, const char *body, int uid) {
+static void save_scope_body(const char *body, int uid) {
+    if (uid < 0) return;
+    const char *sp = strstr(body, "\"scope\"");
+    if (!sp) return;
+    const char *lb = strchr(sp, '[');
+    const char *rb = lb ? strchr(lb, ']') : NULL;
+    if (!lb || !rb) return;
+    char (*sc)[512] = xmalloc(sizeof(char[512]) * 64);
+    int n = 0;
+    const char *q = lb;
+    while (n < 64 && (q = strchr(q, '"')) != NULL && q < rb) {
+        q++;
+        const char *e2 = strchr(q, '"');
+        if (!e2 || e2 > rb) break;
+        size_t pl = (size_t)(e2 - q);
+        if (pl > 0 && pl < 512) {
+            memcpy(sc[n], q, pl);
+            sc[n][pl] = 0;
+            if (sc[n][0] == '/' || (sc[n][0] == '!' && sc[n][1] == '/')) n++;
+        }
+        q = e2 + 1;
+    }
+    scope_save(uid, sc, n);
+    free(sc);
+}
+
+static void handle_settings_post(sbuf *out, const char *body, int uid, int admin) {
     static _Thread_local char ow_keep[8192];
+    /* 全局设置只允许管理员修改；普通用户只能保存自己的检索范围 */
+    int has_global = body && (strstr(body, "\"openWith\"") || strstr(body, "\"openIn\"") ||
+                              strstr(body, "\"strictHome\"") || strstr(body, "\"rebuild\""));
+    if (has_global && !admin) {
+        sb_puts(out, "{\"ok\":false,\"error\":\"需要管理员权限\"}");
+        return;
+    }
+    if (!admin) {
+        save_scope_body(body, uid);
+        sb_puts(out, "{\"ok\":true}");
+        return;
+    }
     const char *b = NULL;
     size_t len = 0;
     const char *p = strstr(body, "\"openWith\"");
@@ -1824,47 +2085,29 @@ static void handle_settings_post(sbuf *out, const char *body, int uid) {
         pthread_mutex_unlock(&g_rcfg_mu);
     }
 
-    int strict_home = json_bool_def(body, "\"strictHome\"", 1);
+    int strict_home = json_bool_def(body, "\"strictHome\"", perm_strict_home);
     perm_set_strict_home(strict_home);
 
-    char sp[1200];
+    char sp[1200], tmp[1300];
     settings_path(sp, sizeof sp);
-    FILE *f = fopen(sp, "w");
+    snprintf(tmp, sizeof tmp, "%s.tmp", sp);
+    FILE *f = fopen(tmp, "w");
     if (!f) { sb_puts(out, "{\"ok\":false,\"error\":\"cannot write\"}"); return; }
+    fchmod(fileno(f), 0600);
     const char *m = rc.mode == 1 ? "daily" : (rc.mode == 2 ? "interval" : "off");
     fprintf(f, "{\"openWith\":%.*s,\"openIn\":\"%s\",\"strictHome\":%s,"
                "\"rebuild\":{\"mode\":\"%s\",\"hour\":%d,\"minute\":%d,\"hours\":%d}}",
             (int)len, b, open_in, strict_home ? "true" : "false",
             m, rc.hour, rc.minute, rc.hours);
-    fclose(f);
-
-    /* 检索范围：解析 "scope":["/vol1/1000", ...] */
-    if (uid >= 0) {
-        const char *sp = strstr(body, "\"scope\"");
-        if (sp) {
-            const char *lb = strchr(sp, '[');
-            const char *rb = lb ? strchr(lb, ']') : NULL;
-            if (lb && rb) {
-                char (*sc)[512] = xmalloc(sizeof(char[512]) * 64);
-                int n = 0;
-                const char *q = lb;
-                while (n < 64 && (q = strchr(q, '"')) != NULL && q < rb) {
-                    q++;
-                    const char *e2 = strchr(q, '"');
-                    if (!e2 || e2 > rb) break;
-                    size_t pl = (size_t)(e2 - q);
-                    if (pl > 0 && pl < 512) {
-                        memcpy(sc[n], q, pl);
-                        sc[n][pl] = 0;
-                        if (sc[n][0] == '/' || (sc[n][0] == '!' && sc[n][1] == '/')) n++;
-                    }
-                    q = e2 + 1;
-                }
-                scope_save(uid, sc, n);
-                free(sc);
-            }
-        }
+    fflush(f);
+    fsync(fileno(f));
+    if (fclose(f) != 0 || rename(tmp, sp) != 0) {
+        unlink(tmp);
+        sb_puts(out, "{\"ok\":false,\"error\":\"cannot write\"}");
+        return;
     }
+
+    save_scope_body(body, uid);
     sb_puts(out, "{\"ok\":true}");
 }
 
@@ -1967,8 +2210,17 @@ static void handle_me(sbuf *out, int uid, const char *via, const char *hdr_name,
     sb_printf(out, "\"}");
 }
 
+static int g_have_ffmpeg;
+static int g_have_nvenc;
+static int g_have_zscale;
+static int g_tc_active;
+static pthread_mutex_t g_tc_mu = PTHREAD_MUTEX_INITIALIZER;
+static void handle_transcode(int fd, const char *qs, int uid);
+
 static void handle_status(sbuf *out) {
     uint64_t total = 0;
+    int cur_vol = -1;
+    char cur_root[256] = "";
     sb_puts(out, "{\"state\":\"");
     if (g_building) sb_puts(out, "building");
     else if (g_failed) sb_puts(out, "degraded");
@@ -1977,6 +2229,9 @@ static void handle_status(sbuf *out) {
     sb_json(out, g_idx_dir, strlen(g_idx_dir));
     sb_puts(out, "\",\"volumes\":[");
     pthread_rwlock_rdlock(&g_rw);
+    cur_vol = g_cur_vol;
+    if (cur_vol >= 0 && cur_vol < g_nvols)
+        snprintf(cur_root, sizeof cur_root, "%s", g_vols[cur_vol].root);
     for (int i = 0; i < g_nvols; i++) {
         vol_t *v = &g_vols[i];
         total += v->records;
@@ -1988,12 +2243,12 @@ static void handle_status(sbuf *out) {
                   (unsigned long long)v->records,
                   (unsigned long long)v->built_at,
                   (unsigned long long)v->build_ms,
-                  (g_building && g_cur_vol == i) ? "true" : "false");
+                  (g_building && cur_vol == i) ? "true" : "false");
     }
     pthread_rwlock_unlock(&g_rw);
     sb_printf(out, "],\"records\":%llu,\"building\":%s,\"progress\":{\"root\":\"",
               (unsigned long long)total, g_building ? "true" : "false");
-    if (g_building && g_cur_vol >= 0) sb_json(out, g_vols[g_cur_vol].root, strlen(g_vols[g_cur_vol].root));
+    if (g_building && cur_root[0]) sb_json(out, cur_root, strlen(cur_root));
     sb_printf(out, "\",\"records\":%llu,\"elapsed_ms\":%llu},\"error\":\"",
               (unsigned long long)xl_scan_records,
               (unsigned long long)(g_building ? now_ms() - g_build_start : g_build_ms));
@@ -2002,6 +2257,8 @@ static void handle_status(sbuf *out) {
     size_t adds = live_delta_count(&dels);
     sb_printf(out, "\",\"live\":{\"adds\":%zu,\"dels\":%zu,\"overflow\":%s}",
               adds, dels, live_overflowed() ? "true" : "false");
+    sb_printf(out, ",\"transcode\":{\"ok\":%s,\"nvenc\":%s}",
+              g_have_ffmpeg ? "true" : "false", g_have_nvenc ? "true" : "false");
     sb_puts(out, ",\"version\":\"");
     sb_puts(out, XL_APP_VERSION);
     sb_puts(out, "\"}");
@@ -2231,16 +2488,29 @@ static uid_t g_www_uid = (uid_t)-1;
 static gid_t g_www_gid = (gid_t)-1;
 
 static void handle_client(int fd) {
+    int is_unix = 0;
+    /* 空闲连接不能永久占住 worker */
+    {
+        struct timeval tv;
+        tv.tv_sec = 5; tv.tv_usec = 0;
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+        tv.tv_sec = 60;
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+    }
     /* 仅允许 root 或 www-data（网关 CGI）连接 unix socket，避免本地用户伪造身份头 */
     {
         struct sockaddr_storage ss;
         socklen_t sl = sizeof ss;
         if (getsockname(fd, (struct sockaddr *)&ss, &sl) == 0 && ss.ss_family == AF_UNIX) {
+            is_unix = 1;
             struct ucred cr;
             socklen_t cl = sizeof cr;
-            if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cr, &cl) == 0 &&
-                g_www_uid != (uid_t)-1 &&
-                cr.uid != 0 && cr.uid != g_www_uid && cr.gid != g_www_gid) {
+            int peer_ok = 0;
+            if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cr, &cl) == 0) {
+                peer_ok = (cr.uid == 0) || (cr.uid == geteuid()) ||
+                          (g_www_uid != (uid_t)-1 && (cr.uid == g_www_uid || cr.gid == g_www_gid));
+            }
+            if (!peer_ok) {
                 const char *body = "{\"error\":\"peer not allowed\"}";
                 char hdr[256];
                 int n = snprintf(hdr, sizeof hdr,
@@ -2261,7 +2531,9 @@ static void handle_client(int fd) {
 
     char req[REQ_MAX];
     size_t n = 0;
+    uint64_t rdl = now_ms() + 8000;   /* 防止 slowloris 一点点喂头占死 worker */
     while (n + 1 < sizeof(req)) {
+        if (now_ms() > rdl) break;
         ssize_t r = recv(fd, req + n, sizeof(req) - 1 - n, 0);
         if (r <= 0) break;
         n += (size_t)r;
@@ -2294,6 +2566,7 @@ static void handle_client(int fd) {
             chunked_body = chunked;
             if (chunked) {
                 while (n + 1 < sizeof(req) && !memmem(req + hdr_end, n - hdr_end, "\r\n0\r\n", 5)) {
+                    if (now_ms() > rdl) break;
                     ssize_t r = recv(fd, req + n, sizeof(req) - 1 - n, 0);
                     if (r <= 0) break;
                     n += (size_t)r;
@@ -2302,6 +2575,7 @@ static void handle_client(int fd) {
             } else if (clen) {
                 size_t need = hdr_end + clen;
                 while (n < need && n + 1 < sizeof(req)) {
+                    if (now_ms() > rdl) break;
                     ssize_t r = recv(fd, req + n, sizeof(req) - 1 - n, 0);
                     if (r <= 0) break;
                     n += (size_t)r;
@@ -2364,23 +2638,23 @@ static void handle_client(int fd) {
     dump_header_names_once(req);
     char hdr_user[128] = "";
     int hdr_admin = 0;
-    header_str(req, "x-trim-username:", hdr_user, sizeof hdr_user);
-    {
-        char a[16] = "";
-        static char last_isadmin[16] = "\x01";
-        int has = header_str(req, "x-trim-isadmin:", a, sizeof a);
-        if (strcmp(a, last_isadmin)) {
-            fprintf(stderr, "xuanlan serve: isadmin 头=%s\n", has ? a : "(缺)");
-            snprintf(last_isadmin, sizeof last_isadmin, "%s", a);
+    int uid = -1;
+    const char *uid_src = NULL;
+    /* 只有 unix socket（网关/root）才可信身份头；TCP 回环任何本地用户都能伪造 */
+    if (is_unix) {
+        header_str(req, "x-trim-username:", hdr_user, sizeof hdr_user);
+        {
+            char a[16] = "";
+            int has = header_str(req, "x-trim-isadmin:", a, sizeof a);
+            if (has)
+                hdr_admin = (a[0] == '1' || a[0] == 't' || a[0] == 'T' || a[0] == 'y' || a[0] == 'Y');
         }
-        if (has)
-            hdr_admin = (a[0] == '1' || a[0] == 't' || a[0] == 'T' || a[0] == 'y' || a[0] == 'Y');
-    }
-    int uid = header_uid(req);
-    const char *uid_src = uid >= 0 ? "trim" : NULL;
-    if (uid < 0) {
-        int cu = header_client_uid(req);
-        if (cu >= 0) { uid = cu; uid_src = "client"; }
+        uid = header_uid(req);
+        uid_src = uid >= 0 ? "trim" : NULL;
+        if (uid < 0) {
+            int cu = header_client_uid(req);
+            if (cu >= 0) { uid = cu; uid_src = "client"; }
+        }
     }
     if (uid < 0) {
         char cookie[4096];
@@ -2394,31 +2668,46 @@ static void handle_client(int fd) {
             else uid_src = "cookie-invalid";
         }
     }
-    if (uid < 0) uid = g_acl_uid;
+    if (uid < 0 && is_unix) uid = g_acl_uid;
+    int admin = (uid == 0) || (is_unix && (hdr_admin || (uid >= 0 && admin_by_uid(uid))));
+    char ct[128] = "";
+    header_str(req, "content-type:", ct, sizeof ct);
+    int json_ct = strcasestr(ct, "application/json") != NULL;
     char tmpall[16];
     memset(tmpall, 0, sizeof tmpall);
     {
         static int last_uid = -2;
         if (uid != last_uid) {
-            fprintf(stderr, "xuanlan serve: 请求身份 uid=%d (%s)\n", uid,
-                    uid < 0 ? (uid_src ? uid_src : "无身份头") : uid_src);
+            fprintf(stderr, "xuanlan serve: 请求身份 uid=%d (%s) net=%s\n", uid,
+                    uid < 0 ? (uid_src ? uid_src : "无身份头") : uid_src,
+                    is_unix ? "unix" : "tcp");
             last_uid = uid;
         }
     }
     if (!strcmp(pathonly, "/api/settings") || (!strcmp(pathonly, "/api/dir") && strstr(qs, "all="))) {
-        fprintf(stderr, "xuanlan serve: %s admin=%d qs=%s\n", pathonly, hdr_admin || uid == 0, qs);
+        fprintf(stderr, "xuanlan serve: %s admin=%d qs=%s\n", pathonly, admin, qs);
     }
-    if (!strcmp(pathonly, "/api/search")) {
-        if (uid < 0) uid = g_acl_uid;
-        handle_search(&body, qs, uid, hdr_admin || uid == 0 || admin_by_uid(uid));
+
+    /* fail-closed：/api 下没有可信身份一律 401（静态 UI 与 /healthz 除外） */
+    if (!strncmp(pathonly, "/api/", 5) && uid < 0) {
+        code = 401;
+        sb_puts(&body, "{\"error\":\"authentication required\"}");
+    } else if (!strcmp(pathonly, "/api/search")) {
+        handle_search(&body, qs, uid, admin);
     } else if (!strcmp(pathonly, "/api/me")) {
-        handle_me(&body, uid, uid_src ? uid_src : (uid >= 0 ? "env" : "none"), hdr_user, hdr_admin || admin_by_uid(uid));
+        handle_me(&body, uid, uid_src ? uid_src : (uid >= 0 ? "env" : "none"), hdr_user, admin);
     } else if (!strcmp(pathonly, "/api/status")) {
         handle_status(&body);
     } else if (!strcmp(pathonly, "/api/rebuild")) {
-        if (strcmp(method, "POST") != 0) {
+        if (!admin) {
+            code = 403;
+            sb_puts(&body, "{\"error\":\"需要管理员权限\"}");
+        } else if (strcmp(method, "POST") != 0) {
             code = 405;
             sb_puts(&body, "{\"error\":\"use POST\"}");
+        } else if (!json_ct) {
+            code = 415;
+            sb_puts(&body, "{\"error\":\"use application/json\"}");
         } else {
             start_build();
             sb_puts(&body, "{\"ok\":true}");
@@ -2429,24 +2718,38 @@ static void handle_client(int fd) {
             fprintf(stderr, "xuanlan client: %.900s\n", msg);
         sb_puts(&body, "{\"ok\":true}");
     } else if (!strcmp(pathonly, "/api/settings")) {
-        if (strcmp(method, "POST") == 0) handle_settings_post(&body, req_body, uid);
-        else handle_settings_get(&body, uid, hdr_admin || uid == 0 || admin_by_uid(uid), param(qs, "all", tmpall, sizeof tmpall));
+        if (strcmp(method, "POST") == 0) {
+            if (!json_ct) { code = 415; sb_puts(&body, "{\"error\":\"use application/json\"}"); }
+            else handle_settings_post(&body, req_body, uid, admin);
+        } else {
+            handle_settings_get(&body, uid, admin, param(qs, "all", tmpall, sizeof tmpall));
+        }
     } else if (!strcmp(pathonly, "/api/acl")) {
-        handle_acl_list(&body, uid, hdr_admin || uid == 0 || admin_by_uid(uid), param(qs, "all", tmpall, sizeof tmpall));
+        handle_acl_list(&body, uid, admin, param(qs, "all", tmpall, sizeof tmpall));
     } else if (!strcmp(pathonly, "/api/dir")) {
-        handle_dir(&body, qs, uid, hdr_admin || uid == 0 || admin_by_uid(uid));
+        handle_dir(&body, qs, uid, admin);
     } else if (!strcmp(pathonly, "/api/fsop")) {
         if (strcmp(method, "POST") != 0) { code = 405; sb_puts(&body, "{\"error\":\"use POST\"}"); }
+        else if (!json_ct) { code = 415; sb_puts(&body, "{\"error\":\"use application/json\"}"); }
         else handle_fsop(&body, req_body, uid);
     } else if (!strcmp(pathonly, "/api/trash")) {
-        if (strcmp(method, "POST") == 0) handle_trash_post(&body, req_body, uid);
-        else handle_trash_get(&body, uid);
+        if (strcmp(method, "POST") == 0) {
+            if (!json_ct) { code = 415; sb_puts(&body, "{\"error\":\"use application/json\"}"); }
+            else handle_trash_post(&body, req_body, uid, admin);
+        } else {
+            handle_trash_get(&body, uid);
+        }
     } else if (!strcmp(pathonly, "/api/raw")) {
         handle_raw(&body, qs, uid, &ctype);
     } else if (!strcmp(pathonly, "/api/text")) {
         handle_text(&body, qs, uid, &ctype);
     } else if (!strcmp(pathonly, "/api/probe")) {
         handle_probe(&body, qs, uid);
+    } else if (!strcmp(pathonly, "/api/transcode")) {
+        handle_transcode(fd, qs, uid);
+        free(body.p);
+        close(fd);
+        return;
     } else if (!strcmp(pathonly, "/api/file")) {
         handle_file(&body, req, qs, uid, &code, &ctype);
     } else if (!strcmp(pathonly, "/healthz")) {
@@ -2515,6 +2818,184 @@ static void handle_client(int fd) {
     close(fd);
 }
 
+/* ---------- 服务端转码（4K/HEVC → 1080p H.264，fMP4 边转边播） ---------- */
+static int g_have_ffmpeg;
+static int g_have_nvenc;
+static int g_have_zscale;
+
+static const char *ffmpeg_path(void) {
+    static const char *cand[] = { "/usr/bin/ffmpeg", "/bin/ffmpeg", "/usr/local/bin/ffmpeg" };
+    for (size_t i = 0; i < sizeof cand / sizeof cand[0]; i++)
+        if (access(cand[i], X_OK) == 0) return cand[i];
+    return NULL;
+}
+
+static void detect_transcode(void) {
+    const char *p = ffmpeg_path();
+    if (!p) return;
+    g_have_ffmpeg = 1;
+    char buf[8192];
+    char *argv[] = { (char *)p, "-hide_banner", "-encoders", NULL };
+    if (run_capture(argv, buf, sizeof buf) == 0 && strstr(buf, "h264_nvenc")) g_have_nvenc = 1;
+    char fbuf[65536];
+    char *fargv[] = { (char *)p, "-hide_banner", "-filters", NULL };
+    if (run_capture(fargv, fbuf, sizeof fbuf) == 0 && strstr(fbuf, "zscale")) g_have_zscale = 1;
+}
+
+static void tc_release(void) {
+    pthread_mutex_lock(&g_tc_mu);
+    if (g_tc_active > 0) g_tc_active--;
+    pthread_mutex_unlock(&g_tc_mu);
+}
+
+static void send_simple(int fd, int code, const char *json) {
+    char hdr[512];
+    int hl = snprintf(hdr, sizeof hdr,
+        "HTTP/1.1 %d %s\r\nContent-Type: application/json; charset=utf-8\r\n"
+        "Content-Length: %zu\r\nConnection: close\r\n\r\n",
+        code, code == 200 ? "OK" : (code == 403 ? "Forbidden" : "Error"),
+        strlen(json));
+    write_all(fd, hdr, (size_t)hl);
+    write_all(fd, json, strlen(json));
+}
+
+static void handle_transcode(int fd, const char *qs, int uid) {
+    char raw[4096], qbuf[16], tbuf[32];
+    if (!param(qs, "path", raw, sizeof raw)) { send_simple(fd, 400, "{\"error\":\"missing path\"}"); return; }
+    if (strncmp(raw, "/vol", 4) || strstr(raw, "..")) { send_simple(fd, 403, "{\"error\":\"path not allowed\"}"); return; }
+    char real[PATH_MAX];
+    if (!realpath(raw, real) || strncmp(real, "/vol", 4)) { send_simple(fd, 404, "{\"error\":\"not found\"}"); return; }
+    struct stat tst;
+    if (stat(real, &tst) != 0 || !S_ISREG(tst.st_mode)) { send_simple(fd, 403, "{\"error\":\"not a regular file\"}"); return; }
+    if (uid >= 0) {
+        char dir[PATH_MAX];
+        snprintf(dir, sizeof dir, "%s", real);
+        char *slash = strrchr(dir, '/');
+        if (slash && slash != dir) {
+            *slash = 0;
+            if (!perm_dir_listable((uid_t)uid, dir)) { send_simple(fd, 403, "{\"error\":\"forbidden\"}"); return; }
+        }
+        if (!perm_file_readable((uid_t)uid, real)) { send_simple(fd, 403, "{\"error\":\"forbidden\"}"); return; }
+    }
+    if (!g_have_ffmpeg) { send_simple(fd, 503, "{\"error\":\"ffmpeg not available\"}"); return; }
+
+    /* 每路转码都会长期占用一个 worker 和一个 ffmpeg，限制并发避免拖垮整个服务 */
+    pthread_mutex_lock(&g_tc_mu);
+    if (g_tc_active >= 2) { pthread_mutex_unlock(&g_tc_mu); send_simple(fd, 503, "{\"error\":\"too many transcodes\"}"); return; }
+    g_tc_active++;
+    pthread_mutex_unlock(&g_tc_mu);
+
+    if (!param(qs, "q", qbuf, sizeof qbuf)) snprintf(qbuf, sizeof qbuf, "1080");
+    int W = 1920, H = 1080, br = 4;
+    if (!strcmp(qbuf, "720")) { W = 1280; H = 720; br = 3; }
+    else if (!strcmp(qbuf, "480")) { W = 854; H = 480; br = 2; }
+
+    double start = 0;
+    if (param(qs, "t", tbuf, sizeof tbuf)) start = atof(tbuf);
+    if (!(start >= 0) || start > 1e7) start = 0;
+    char ss[32];
+    snprintf(ss, sizeof ss, "%.3f", start);
+
+    char vc[32] = "", ac[32] = "", pix[40] = "", tr[40] = "";
+    int vw = 0, vh = 0;
+    int probed = media_probe(real, vc, sizeof vc, ac, sizeof ac, &vw, &vh, pix, sizeof pix, tr, sizeof tr);
+    int has_video = probed ? vc[0] != 0 : 1;   /* ffprobe 缺失时按旧行为尝试视频 */
+    int is_hdr = !strcmp(tr, "smpte2084") || !strcmp(tr, "arib-std-b67");
+    if (probed && !has_video && !ac[0]) { tc_release(); send_simple(fd, 415, "{\"error\":\"no decodable stream\"}"); return; }
+    char vf[512];
+    if (has_video && is_hdr && g_have_zscale)
+        snprintf(vf, sizeof vf,
+                 "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,"
+                 "tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,"
+                 "format=yuv420p,scale=%d:%d:force_original_aspect_ratio=decrease:force_divisible_by=2", W, H);
+    else if (has_video)
+        snprintf(vf, sizeof vf,
+                 "scale=%d:%d:force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuv420p", W, H);
+    else
+        vf[0] = 0;
+
+    char vb[16], vmax[16], vbuf[16];
+    snprintf(vb, sizeof vb, "%dM", br);
+    snprintf(vmax, sizeof vmax, "%dM", br * 3 / 2);
+    snprintf(vbuf, sizeof vbuf, "%dM", br * 2);
+    char *argv[48];
+    int n = 0;
+    argv[n++] = (char *)ffmpeg_path();
+    argv[n++] = "-hide_banner"; argv[n++] = "-loglevel"; argv[n++] = "error";
+    argv[n++] = "-nostdin";
+    if (start > 0) { argv[n++] = "-ss"; argv[n++] = ss; }
+    argv[n++] = "-i"; argv[n++] = real;
+    argv[n++] = "-t"; argv[n++] = "14400";   /* 单次最多 4 小时 */
+    if (has_video) {
+        argv[n++] = "-map"; argv[n++] = "0:v:0";
+        argv[n++] = "-map"; argv[n++] = "0:a:0?";
+        argv[n++] = "-vf"; argv[n++] = vf;
+        if (g_have_nvenc) {
+            argv[n++] = "-c:v"; argv[n++] = "h264_nvenc";
+            argv[n++] = "-preset"; argv[n++] = "p4";
+            argv[n++] = "-rc"; argv[n++] = "vbr";
+            argv[n++] = "-b:v"; argv[n++] = vb;
+            argv[n++] = "-maxrate"; argv[n++] = vmax;
+            argv[n++] = "-bufsize"; argv[n++] = vbuf;
+        } else {
+            argv[n++] = "-c:v"; argv[n++] = "libx264";
+            argv[n++] = "-preset"; argv[n++] = "veryfast";
+            argv[n++] = "-b:v"; argv[n++] = vb;
+        }
+    } else {
+        argv[n++] = "-map"; argv[n++] = "0:a:0";
+    }
+    argv[n++] = "-c:a"; argv[n++] = "aac";
+    argv[n++] = "-b:a"; argv[n++] = "128k";
+    argv[n++] = "-ac"; argv[n++] = "2";
+    argv[n++] = "-movflags"; argv[n++] = "frag_keyframe+empty_moov+default_base_moof";
+    argv[n++] = "-f"; argv[n++] = "mp4";
+    argv[n++] = "pipe:1";
+    argv[n] = NULL;
+
+    int pfd[2];
+    if (pipe(pfd) != 0) { tc_release(); send_simple(fd, 500, "{\"error\":\"pipe failed\"}"); return; }
+    pid_t pid = fork();
+    if (pid < 0) { close(pfd[0]); close(pfd[1]); tc_release(); send_simple(fd, 500, "{\"error\":\"fork failed\"}"); return; }
+    if (pid == 0) {
+        dup2(pfd[1], 1);
+        close(pfd[0]); close(pfd[1]);
+        int devnull = open("/dev/null", O_WRONLY);
+        if (devnull >= 0) { dup2(devnull, 2); close(devnull); }
+        execv(argv[0], argv);
+        _exit(127);
+    }
+    close(pfd[1]);
+
+    char rhdr[512];
+    int hl = snprintf(rhdr, sizeof rhdr,
+        "HTTP/1.1 200 OK\r\nContent-Type: video/mp4\r\n"
+        "Transfer-Encoding: chunked\r\nAccept-Ranges: none\r\n"
+        "Cache-Control: no-store\r\nX-Transcode: %s\r\nConnection: close\r\n\r\n",
+        g_have_nvenc ? "nvenc" : "libx264");
+    if (write_all(fd, rhdr, (size_t)hl) != 0) { kill(pid, SIGTERM); waitpid(pid, NULL, 0); close(pfd[0]); tc_release(); return; }
+
+    char *buf = malloc(64 * 1024);
+    int ok = buf != NULL;
+    while (ok) {
+        ssize_t r = read(pfd[0], buf, 64 * 1024);
+        if (r < 0) { if (errno == EINTR) continue; break; }
+        if (r == 0) break;
+        char ch[32];
+        int cl = snprintf(ch, sizeof ch, "%zx\r\n", (size_t)r);
+        if (write_all(fd, ch, (size_t)cl) != 0 ||
+            write_all(fd, buf, (size_t)r) != 0 ||
+            write_all(fd, "\r\n", 2) != 0) { ok = 0; break; }
+    }
+    free(buf);
+    if (!ok) kill(pid, SIGTERM);
+    close(pfd[0]);
+    int st = 0;
+    waitpid(pid, &st, 0);
+    if (ok) write_all(fd, "0\r\n\r\n", 5);
+    tc_release();
+}
+
 /* ---------- 线程池 ---------- */
 static int g_q[Q_CAP];
 static int g_qh, g_qt, g_qn;
@@ -2539,6 +3020,7 @@ static void enqueue(int fd) {
     pthread_mutex_lock(&g_qlock);
     if (g_qn == Q_CAP) {
         pthread_mutex_unlock(&g_qlock);
+        send_simple(fd, 503, "{\"error\":\"server busy\"}");
         close(fd);
         return;
     }
@@ -2627,6 +3109,7 @@ static int listen_unix(const char *path) {
 static void on_signal(int sig) { (void)sig; g_stop = 1; }
 
 int httpd_serve(const xl_svc_opts *o) {
+    detect_transcode();
     {
         struct passwd *pw = getpwnam("www-data");
         if (pw) { g_www_uid = pw->pw_uid; g_www_gid = pw->pw_gid; }
@@ -2652,7 +3135,7 @@ int httpd_serve(const xl_svc_opts *o) {
     mkdir(g_trash, 0755);
     mkdir(o->idx_dir, 0755);
     if (o->sock_path[0] && probe_existing(o->sock_path)) {
-        if (tcp_alive(o->port)) {
+        if (o->no_tcp || tcp_alive(o->port)) {
             fprintf(stderr, "xuanlan serve: 已有实例在 %s 上响应，本次退出\n", o->sock_path);
             return 0;
         }
@@ -2677,9 +3160,16 @@ int httpd_serve(const xl_svc_opts *o) {
         }
         vol_t *v = &g_vols[g_nvols];
         memset(v, 0, sizeof(*v));
-        snprintf(v->root, sizeof(v->root), "%s", r);
-        const char *base = strrchr(r, '/');
-        base = base ? base + 1 : r;
+        char rp[PATH_MAX];
+        const char *norm = realpath(r, rp) ? rp : r;
+        size_t nl = strlen(norm);
+        if (nl >= sizeof(v->root)) {
+            fprintf(stderr, "xuanlan serve: 挂载点路径过长: %s\n", norm);
+            continue;
+        }
+        memcpy(v->root, norm, nl + 1);
+        const char *base = strrchr(norm, '/');
+        base = base ? base + 1 : norm;
         if (snprintf(v->file, sizeof(v->file), "%s/%s.idx", o->idx_dir, base) >= (int)sizeof(v->file)) {
             fprintf(stderr, "xuanlan serve: 索引路径过长: %s\n", r);
             continue;
@@ -2708,10 +3198,12 @@ int httpd_serve(const xl_svc_opts *o) {
 
     int ls[2];
     int nls = 0;
-    ls[nls] = listen_tcp(o->bind_addr, o->port);
-    if (ls[nls] < 0) fprintf(stderr, "xuanlan serve: TCP %s:%d 绑定失败: %s\n",
-                             o->bind_addr, o->port, strerror(errno));
-    else nls++;
+    if (!o->no_tcp) {
+        ls[nls] = listen_tcp(o->bind_addr, o->port);
+        if (ls[nls] < 0) fprintf(stderr, "xuanlan serve: TCP %s:%d 绑定失败: %s\n",
+                                 o->bind_addr, o->port, strerror(errno));
+        else nls++;
+    }
     if (o->sock_path[0]) {
         ls[nls] = listen_unix(o->sock_path);
         if (ls[nls] < 0) fprintf(stderr, "xuanlan serve: socket %s 失败: %s\n",
