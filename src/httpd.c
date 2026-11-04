@@ -1201,10 +1201,11 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
         {
             struct stat lst;
             int have = stat(path, &lst) == 0;
-            if (!is_dir && uid >= 0) {
-                if (!have || !perm_mode_readable((uid_t)uid, path, &lst)) continue;
-            }
-            if (have && !is_dir) { size = (uint32_t)lst.st_size; mtime = (uint32_t)lst.st_mtime; }
+            /* 索引可能短时间保留已删除/已卸载路径；不要把它们当搜索结果返回 */
+            if (!have) continue;
+            if (is_dir && !S_ISDIR(lst.st_mode)) continue;
+            if (!is_dir && uid >= 0 && !perm_mode_readable((uid_t)uid, path, &lst)) continue;
+            if (!is_dir) { size = (uint32_t)lst.st_size; mtime = (uint32_t)lst.st_mtime; }
         }
         if (skipped < off) { skipped++; continue; }
         if (shown) sb_puts(out, ",");
@@ -1272,14 +1273,21 @@ static void handle_dir(sbuf *out, const char *qs, int uid, int admin) {
     {
         /* 规范化后再匹配索引路径，避免 .. / 重复斜杠 / 符号链接造成空列表或越界 */
         char rp[PATH_MAX];
-        if (realpath(dir, rp)) {
-            if (strncmp(rp, "/vol", 4) != 0) {
-                sb_puts(out, "{\"error\":\"forbidden\",\"entries\":[]}");
-                return;
-            }
-            snprintf(dir, sizeof dir, "%s", rp);
-            dl = strlen(dir);
+        struct stat dst;
+        if (!realpath(dir, rp)) {
+            sb_puts(out, "{\"error\":\"not found\",\"entries\":[]}");
+            return;
         }
+        if (strncmp(rp, "/vol", 4) != 0) {
+            sb_puts(out, "{\"error\":\"forbidden\",\"entries\":[]}");
+            return;
+        }
+        if (stat(rp, &dst) != 0 || !S_ISDIR(dst.st_mode)) {
+            sb_puts(out, "{\"error\":\"not found\",\"entries\":[]}");
+            return;
+        }
+        snprintf(dir, sizeof dir, "%s", rp);
+        dl = strlen(dir);
     }
     /* 卷根 /volN 的 mode 是 0000，但飞牛允许浏览后按子目录授权；放行并在下面逐项判权。
        管理员也按当前账号的 ACL 过滤，避免列出别人的家目录与系统目录。 */

@@ -266,5 +266,8 @@ int perm_mode_readable(uid_t uid, const char *path, const struct stat *st) {
     if (uid == 0) return 1;
     int r = eval_one(uid, path, 1, A_R, 0);
     if (r >= 0) return r;
+    /* TRIM/ZFS 的 owner ACE 允许属主读取 mode 000 的文件（SMB 迁移数据常见）；
+     * 与 level_ok() 的属主语义保持一致，否则这些文件会被目录列表误过滤。 */
+    if (st && st->st_uid == uid) return 1;
     return posix_bit(st, uid, A_R);
 }

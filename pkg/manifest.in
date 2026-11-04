@@ -21,5 +21,5 @@ desktop_applaunchname        = xuanlan.main
 service_port                 = @PORT@
 checkport                    = false
 disable_authorization_path   = false
-changelog                    = """0.8.0 索引 v2（真实 size/mtime 与时间排序）、目录增量子树、HDR/纯音频转码、fail-closed 身份与文件级权限、快照加固。升级后首次启动会自动全量重建。"""
+changelog                    = """0.8.1 修复 mode 000 属主文件被目录列表误过滤导致目录显示为空；不存在的目录返回 not found，搜索跳过已删除路径。"""
 checksum                     = @CHECKSUM@
