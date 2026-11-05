@@ -2,7 +2,10 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#070a12">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <script>(function(){try{if(localStorage.getItem('xl_theme')==='light')document.documentElement.setAttribute('data-theme','light');}catch(e){}})();</script>
 <title>玄览 · Arcane Vision</title>
 <style>
@@ -17,6 +20,7 @@
   body{
     margin:0; color:var(--txt); background:var(--bg);
     font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Inter","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+    -webkit-tap-highlight-color:transparent;
     -webkit-font-smoothing:antialiased;
     background-image:
       radial-gradient(1100px 600px at 12% -10%, rgba(94,234,212,.14), transparent 60%),
@@ -67,9 +71,11 @@
   }
   .search input{
     width:100%;border:0;outline:0;background:transparent;color:var(--txt);
+    -webkit-appearance:none;appearance:none;
     font-size:19px;padding:21px 58px 21px 54px;font-weight:450;
   }
   .search input::placeholder{color:#63708c}
+  .search input::-webkit-search-cancel-button,.search input::-webkit-search-decoration{-webkit-appearance:none;display:none}
   .icon{position:absolute;left:19px;top:50%;transform:translateY(-50%);opacity:.55}
   .spinner{
     position:absolute;right:18px;top:50%;width:18px;height:18px;margin-top:-9px;
@@ -263,6 +269,10 @@
     border:1px solid rgba(90,200,190,.35);color:#59d3c8}
   .setbox .tag.g{border-color:rgba(220,180,90,.4);color:#d9b45a}
   .setbox .foot{display:flex;justify-content:flex-end;gap:10px;margin:6px 18px 14px 10px;flex:none}
+  .setbox .sclose{position:absolute;right:10px;top:8px;z-index:3;width:34px;height:34px;border-radius:9px;
+    border:1px solid rgba(120,160,220,.25);background:rgba(20,30,46,.8);color:#b9c9e2;
+    font-size:20px;line-height:1;cursor:pointer;padding:0}
+  .setbox .sclose:hover{color:#cdf3ee;border-color:rgba(90,200,190,.45)}
   .setbox button.act{padding:7px 16px;border-radius:9px;font-size:12.5px;cursor:pointer;opacity:1;
     border:1px solid rgba(120,160,220,.25);background:rgba(20,30,46,.8);color:#b9c9e2}
   .setbox button.act.primary{border-color:rgba(90,200,190,.5);background:rgba(30,70,74,.7);color:#cdf3ee}
@@ -297,6 +307,20 @@
     opacity:0;pointer-events:none;transition:.2s;backdrop-filter:blur(10px);
   }
   .toast.on{opacity:1;transform:translate(-50%,0)}
+
+  .totop{
+    position:fixed;right:24px;bottom:calc(24px + env(safe-area-inset-bottom));z-index:145;
+    width:42px;height:42px;border-radius:50%;display:grid;place-items:center;cursor:pointer;
+    color:#cdf3ee;background:rgba(16,26,40,.78);border:1px solid rgba(90,200,190,.38);
+    box-shadow:0 8px 24px rgba(0,0,0,.35);backdrop-filter:blur(12px);
+    opacity:0;visibility:hidden;transform:translateY(8px);
+    transition:opacity .18s,transform .18s,visibility .18s,background .18s,border-color .18s;
+  }
+  .totop.on{opacity:1;visibility:visible;transform:none}
+  .totop:hover{background:rgba(26,44,58,.92);border-color:rgba(90,220,200,.62);color:#fff}
+  .totop:active{transform:translateY(1px) scale(.96)}
+  .totop svg{width:18px;height:18px;display:block}
+  body.sel .totop{opacity:0;visibility:hidden;pointer-events:none}
 
   /* ---------- 亮色主题 ---------- */
   html[data-theme="light"]{
@@ -396,6 +420,10 @@
   html[data-theme="light"] footer .motto{color:#6b768c}
   html[data-theme="light"] footer .motto i{color:#7b879c}
   html[data-theme="light"] footer .legal{color:#6e7a90}
+
+  html[data-theme="light"] .totop{background:rgba(255,255,255,.92);color:#0b6b60;
+    border-color:rgba(15,156,140,.38);box-shadow:0 8px 24px rgba(20,50,60,.16)}
+  html[data-theme="light"] .totop:hover{background:#fff;border-color:rgba(15,156,140,.66);color:#074f47}
   html[data-theme="light"] .toast{background:#fff;color:#16233a;border-color:rgba(15,156,140,.5);
     box-shadow:0 14px 34px rgba(15,23,42,.16)}
   html[data-theme="light"] .empty{color:#6b7a90}
@@ -403,13 +431,102 @@
   html:not([data-theme="light"]) .theme .i-sun{display:block}
   html[data-theme="light"] .theme .i-moon{display:block}
 
-  @media(max-width:620px){
-    .wrap{padding:22px 14px 60px}
-    .search input{font-size:16px;padding:17px 48px 17px 46px}
+  .more{
+    display:none;flex:none;width:34px;height:34px;border-radius:9px;padding:0;
+    align-items:center;justify-content:center;cursor:pointer;font-family:inherit;
+    color:var(--dim);background:rgba(255,255,255,.04);border:1px solid var(--line);
+    font-size:18px;line-height:1;
+  }
+  .more:hover{color:var(--txt);border-color:rgba(94,234,212,.4)}
+  .ctx.sheet{
+    left:10px!important;right:10px;top:auto!important;
+    bottom:calc(10px + env(safe-area-inset-bottom));min-width:0;max-height:72dvh;overflow:auto;
+    padding:8px;border-radius:16px;
+  }
+  .ctx.sheet div{padding:12px 14px;font-size:14px;border-radius:10px}
+  .ctx.sheet .sep{margin:5px 10px}
+
+  @media(max-width:620px),(pointer:coarse){
+    .wrap{padding:16px 12px calc(56px + env(safe-area-inset-bottom))}
+    header{gap:9px;margin-bottom:16px}
+    .mark{width:40px;height:40px;border-radius:12px;font-size:18px}
+    .brand h1{font-size:17px}
     .brand p{display:none}
-    .status{font-size:11px;padding:6px 10px}
-    .status .who{margin-left:12px;font-size:12px;color:#7c88a8;letter-spacing:.5px}
-  .status .cnt{display:none}
+    .status{margin-left:auto;gap:6px;font-size:11px;padding:6px 9px;min-width:0}
+    .status .cnt{display:none}
+    .status .who{max-width:76px;margin-left:4px;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .gear{width:34px;height:34px;margin-left:2px}
+    .search input{font-size:16px;padding:17px 48px 17px 46px}
+    .search .qclear{width:32px;height:32px;right:8px}
+
+    .bar{display:grid;grid-template-columns:1fr auto;gap:7px 8px;margin:12px 0 8px}
+    .chips{
+      grid-column:1/-1;display:flex;flex-wrap:nowrap;gap:5px;overflow-x:auto;
+      padding:1px 18px 3px 1px;scrollbar-width:none;-webkit-overflow-scrolling:touch;
+      scroll-snap-type:x proximity;
+      -webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 18px),transparent);
+      mask-image:linear-gradient(90deg,#000 calc(100% - 18px),transparent);
+    }
+    .chips::-webkit-scrollbar{display:none}
+    .chips .chip{flex:none;min-height:34px;padding:6px 10px;font-size:12.5px;scroll-snap-align:start}
+    .meta{grid-column:1;justify-self:start;align-self:center;min-width:0;font-size:11.5px}
+    .tbtn{grid-column:2;justify-self:end;min-height:34px;padding:6px 12px}
+
+    li.row{
+      display:grid;grid-template-columns:18px 32px minmax(0,1fr) auto;
+      grid-template-areas:"ck ico body more" ". . meta more";
+      column-gap:9px;row-gap:2px;align-items:center;padding:11px 8px;border-radius:11px;
+    }
+    li.row .ck{grid-area:ck;width:18px;height:18px;margin-right:0}
+    li.row .ico{grid-area:ico;width:32px;height:32px}
+    li.row .body{grid-area:body}
+    li.row .more{grid-area:more;align-self:center}
+    .name{font-size:14px}
+    .path{font-size:11.5px}
+    li.row .meta-i{
+      grid-area:meta;justify-self:start;max-width:none;overflow:visible;
+      font-size:10.5px!important;text-align:left;white-space:nowrap;
+    }
+    li.row .act{display:none!important}
+    .more{display:inline-flex}
+    .empty{padding:38px 14px;font-size:13px}
+
+    .openwin{inset:0;border:0;border-radius:0;padding-top:env(safe-area-inset-top)}
+    .openwin .owbar{padding:10px 12px;padding-top:max(10px,env(safe-area-inset-top))}
+    .openwin .owbar #owtitle{max-width:36vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .openwin #owfit{display:none}
+    .openwin .rsz{display:none}
+    .openwin .pbar{padding:8px 10px}
+    .openwin .ppages{padding:10px 8px 20px}
+
+    .finder .panel,.setbox,.modal .box{
+      top:calc(8px + env(safe-area-inset-top));width:calc(100vw - 16px);
+      max-height:calc(100dvh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    }
+    .setbox .setbody{padding:12px 10px;margin:6px}
+    .setbox .agrid,.setbox .acl{grid-template-columns:1fr}
+    .setbox .row2,.setbox .acell{gap:8px;padding:8px}
+    .setbox .acell select{max-width:46vw}
+    .setbox .foot{margin:4px 12px calc(10px + env(safe-area-inset-bottom)) 8px}
+    .modal .mf{padding-bottom:calc(10px + env(safe-area-inset-bottom))}
+    .modal .mi{padding:11px 10px}
+    .modal .mi .p{font-size:11px}
+    .finder .panel{border-radius:14px;height:calc(100dvh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom))}
+    .finder .list{flex:1}
+    .finder .row{padding:11px 10px}
+    .selbar{
+      left:10px;right:10px;transform:none;bottom:calc(10px + env(safe-area-inset-bottom));
+      flex-wrap:wrap;justify-content:center;gap:6px;padding:8px 10px;
+    }
+    .selbar button{min-height:32px;padding:6px 10px}
+    .toast{bottom:calc(18px + env(safe-area-inset-bottom));max-width:calc(100vw - 24px);text-align:center}
+    .totop{right:12px;bottom:calc(18px + env(safe-area-inset-bottom));width:44px;height:44px}
+  }
+  @media(max-width:380px){
+    .status .who{display:none}
+    .gear{width:32px;height:32px}
+    .setbox .acell{flex-wrap:wrap}
+    .setbox .acell select{max-width:100%}
   }
 </style>
 </head>
@@ -442,7 +559,7 @@
 
   <div class="search">
     <svg class="icon" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>
-    <input id="q" type="text" placeholder="搜索文件与文件夹，输入即定位…" autocomplete="off" spellcheck="false" autofocus>
+    <input id="q" type="search" placeholder="搜索文件与文件夹，输入即定位…" autocomplete="off" spellcheck="false" enterkeyhint="search" autocapitalize="off">
     <button class="qclear" id="qclear" title="清空 (Esc)" aria-label="清空">×</button>
     <div class="spinner" id="spin"></div>
   </div>
@@ -482,6 +599,7 @@
   </footer>
 </div>
 <div class="toast" id="toast"></div>
+<button class="totop" id="toTop" type="button" title="返回顶部" aria-label="返回顶部"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
 
 <script>
     // 页面可能由网关以 /app/xuanlan 或 /app/xuanlan/ 打开，统一取到目录前缀
@@ -494,7 +612,23 @@
     const ROOT = API.slice(0, -4);
 (function(){
   const $ = id => document.getElementById(id);
+
+  const toTop = $('toTop');
+  let topOn = false;
+  function updateTop(){
+    const show = scrollY > 360 && !document.body.classList.contains('sel');
+    if (show === topOn) return;
+    topOn = show;
+    toTop.classList.toggle('on', show);
+  }
+  addEventListener('scroll', updateTop, {passive:true});
+  addEventListener('resize', updateTop);
+  updateTop();
+  toTop.onclick = () => window.scrollTo({top:0,
+    behavior:matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'});
   const q = $('q'), list = $('list'), empty = $('empty'), meta = $('meta');
+  const coarse = matchMedia('(pointer:coarse)').matches;
+  if (!coarse) q.focus({preventScroll:true});
 
   // ---- 右键菜单 ----
   const ctx = document.createElement('div');
@@ -803,6 +937,8 @@
     const n = picked.size;
     selbar.querySelector('#seln').textContent = '已选 ' + n + ' 项';
     selbar.classList.toggle('on', n > 0);
+    document.body.classList.toggle('sel', n > 0);
+    updateTop();
   }
   function togglePick(it){
     if (!it) return;
@@ -960,6 +1096,7 @@
 
   function showCtx(x, y, it){
     ctxItem = it;
+    ctx.classList.toggle('sheet', coarse);
     const ext = extOf(it.path);
     const how = !it.dir && assocKnown(ext) ? assocFor(ext) : 'preview';
     ctxHow = how;
@@ -970,9 +1107,11 @@
     ctx.querySelector('[data-a="raw"]').style.display = how === 'docs' ? '' : 'none';
     ctx.querySelector('[data-a="dl"]').style.display = it.dir ? 'none' : '';
     ctx.classList.add('on');
-    const w = ctx.offsetWidth, h = ctx.offsetHeight;
-    ctx.style.left = Math.min(x, innerWidth - w - 8) + 'px';
-    ctx.style.top = Math.min(y, innerHeight - h - 8) + 'px';
+    if (!coarse) {
+      const w = ctx.offsetWidth, h = ctx.offsetHeight;
+      ctx.style.left = Math.min(x, innerWidth - w - 8) + 'px';
+      ctx.style.top = Math.min(y, innerHeight - h - 8) + 'px';
+    }
   }
   function hideCtx(){ ctx.classList.remove('on'); ctxItem = null; }
   ctx.onclick = e => {
@@ -1101,12 +1240,22 @@
           '<div class="path"><span>' + esc(parentPath(it.path)) + '</span></div>' +
         '</div>' +
         '<div class="meta-i" style="font-size:11.5px;color:#6e7891;flex:none">' + [fmtSize(it.size), fmtTime(it.mtime)].filter(Boolean).join(' · ') + '</div>' +
-        '<div class="act"><button>复制路径</button></div>';
-      li.querySelector('button').onclick = e => { e.stopPropagation(); copy(it.path); };
+        '<div class="act"><button>复制路径</button></div>' +
+        '<button class="more" type="button" aria-label="更多操作" title="更多操作">⋯</button>';
+      li.querySelector('.act button').onclick = e => { e.stopPropagation(); copy(it.path); };
+      li.querySelector('.more').onclick = e => {
+        e.stopPropagation(); sel = idx; paintSel();
+        const r = e.currentTarget.getBoundingClientRect();
+        showCtx(r.left, r.bottom + 4, it);
+      };
       li.querySelector('.ck').onclick = e => { e.stopPropagation(); togglePick(it); };
-      li.onclick = () => { sel = idx; paintSel(); };
-      li.ondblclick = e => {
+      li.onclick = e => {
         if (e.target.closest('button, input')) return;
+        sel = idx; paintSel();
+        if (coarse) openEntry(it);
+      };
+      li.ondblclick = e => {
+        if (coarse || e.target.closest('button, input')) return;
         sel = idx; paintSel();
         openEntry(it);
       };
@@ -1210,7 +1359,7 @@
   let showAll = localStorage.getItem('xl_all') === '1';
   const setmask = document.createElement('div');
   setmask.className = 'setmask';
-  setmask.innerHTML = '<div class="setbox"><div class="setbody"><h2>设置</h2>' +
+  setmask.innerHTML = '<div class="setbox"><button class="sclose" id="setX" type="button" aria-label="关闭设置">×</button><div class="setbody"><h2>设置</h2>' +
     '<h3>打开位置</h3><div class="row2"><div class="k">文件与文档打开于</div>' +
     '<select id="openIn"><option value="embed">当前窗口子窗口</option><option value="window">新窗口（新标签页）</option>' +
     '</select></div>' +
@@ -1483,6 +1632,7 @@
   }
   setmask.addEventListener('click', e => { if (e.target === setmask) setmask.classList.remove('on'); });
   setmask.querySelector('#setClose').onclick = () => setmask.classList.remove('on');
+  setmask.querySelector('#setX').onclick = () => setmask.classList.remove('on');
   setmask.querySelector('#setSave').onclick = () => {
     const ow = {};
     setmask.querySelectorAll('#assoc select').forEach(sel => { ow[sel.dataset.k] = sel.value; });
