@@ -156,3 +156,34 @@ uid 1000 /vol1/docker/overlay2/…/diff -> 0（0.1.6 为 1，越权）
 ```
 
 HTTP 层（`X-Trim-Userid` 取 1000 / 900 / 878，`q=IMG_`）过滤后的归属分布与各自 ACL 一致。
+
+## 0.8.6 修正（Administrators 组）
+
+实测发现内核还允许 **`Administrators` 组（gid 1000）跨过 TrimACL 读取整卷**，与 root
+类似；这一点此前没有在 `perm.c` 里跟随，导致管理员搜不到自己实际能打开的文件。
+
+隔离复现（容器里用 `--user UID:GID` 只给单一组，避免继承）：
+
+| 进程 uid:gid | `/vol1/@appdata/xuanlan`（root 700） | `/vol1/1001`（1001 700） | NextCloud `data/admin/files` |
+| --- | --- | --- | --- |
+| 500:1000 | 可读 | 可读 | 可读 |
+| 1000:1000 | 可读 | 可读 | 可读 |
+| 1000:1001 | 拒绝 | 拒绝 | 可读（家目录属主/projid=1000） |
+| 1001:1001 | 拒绝 | 可读 | 拒绝 |
+
+结论：判断依据是进程是否带 **gid 1000**；换成 `1001:1000` 同样全通。`www-data`
+（uid 712）另有系统账号特权，与普通用户无关。
+
+修正方式：`perm_check()` / `perm_mode_readable()` 在 uid 0 之外，若目标 uid 属于
+`getgrnam("Administrators")` 的组，也直接放行。非管理员仍走原有 ACE/POSIX 求值。
+
+验证：
+
+```
+xuanlan acl 1000 /vol1/1000/NextCloud/data/admin/files   -> 1
+xuanlan acl 1001 /vol1/1000/NextCloud/data/admin/files   -> 0
+xuanlan acl 12345 /vol1/1000/NextCloud/data/admin/files  -> 0
+```
+
+unix socket 上带 `x-trim-userid: 1000` 查询 `工程施工派工单` 返回 1 条；`1001` 仍为 0 条。
+

@@ -1,3 +1,16 @@
+## 0.8.6
+
+- 修复：飞牛管理员（`Administrators` 组成员，如王耀辉 uid 1000）在玄览里搜不到
+  实际可读的文件。内核允许管理员组跨过 TrimACL 读取整卷，而玄览的权限求值只认
+  ACE 中的属主/用户/组条目，导致 NextCloud `data` 这类「只授 owner 给 www-data」
+  的目录被整棵过滤
+- 现象：以 uid 1000 搜索 `工程施工派工单` 返回 0 条；`uid 0` 直接查索引有 1 条，
+  文件本身存在且可读
+- 权限求值现在先判断目标 uid 是否属于 `Administrators` 组（`getgrnam`，与内核实测
+  一致），属于则按 root 语义放行；非管理员（uid 1001、12345 等）仍按原 ACE/POSIX 判定
+- 验证：`xuanlan acl 1000 /vol1/1000/NextCloud/data/admin/files` → 1；
+  `xuanlan acl 1001 ...` → 0；unix socket 上 `x-trim-userid: 1000` 搜索返回 1 条
+
 ## 0.8.5
 
 - 打开方式关联新增「富文本」组：`txt/text/rtf/md/markdown/mdown/mkd/mdx/html/htm/xhtml/

@@ -57,6 +57,29 @@ static int under_home(const char *dir) {
     return (*p == '/' || *p == 0);
 }
 
+static int uid_in_group(uid_t uid, gid_t gid);
+
+/* fnOS 内核对 Administrators 组（惯例 gid 1000）放行整卷读写，与 root 等价。
+ * 不跟随这条规则，管理员在玄览里会看不到内核实际可读的目录（如 NextCloud
+ * data 下由 www-data 持有、只授 owner 的子树）。 */
+static gid_t admin_gid(void) {
+    static gid_t cached = (gid_t)-2;
+    static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
+
+    pthread_mutex_lock(&mu);
+    if (cached == (gid_t)-2) {
+        struct group *gr = getgrnam("Administrators");
+        cached = gr ? gr->gr_gid : (gid_t)-1;
+    }
+    pthread_mutex_unlock(&mu);
+    return cached;
+}
+
+static int uid_is_admin(uid_t uid) {
+    gid_t g = admin_gid();
+    return g != (gid_t)-1 && uid_in_group(uid, g);
+}
+
 static int uid_in_group(uid_t uid, gid_t gid) {
     static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
     static uid_t cached_uid = (uid_t)-1;
@@ -215,7 +238,7 @@ static int is_vol_root(const char *p) {
 /* 通用路径判定：祖先逐级 X，目标按 need 判定。
  * is_dir=1 用于目录（继承目录 ACL），0 用于普通文件（继承文件 ACL）。 */
 int perm_check(uid_t uid, const char *path, int need, int is_dir) {
-    if (uid == 0) return 1;
+    if (uid == 0 || uid_is_admin(uid)) return 1;
     if (!path || !*path) return 0;
     char buf[8192];
     size_t n = strlen(path);
@@ -263,7 +286,7 @@ int perm_parent_writable(uid_t uid, const char *path) {
 /* 列表场景的轻量判定：只看目标文件自身 ACL/POSIX，不重复走祖先链。
  * 调用方应已确认父目录可列。 */
 int perm_mode_readable(uid_t uid, const char *path, const struct stat *st) {
-    if (uid == 0) return 1;
+    if (uid == 0 || uid_is_admin(uid)) return 1;
     int r = eval_one(uid, path, 1, A_R, 0);
     if (r >= 0) return r;
     /* TRIM/ZFS 的 owner ACE 允许属主读取 mode 000 的文件（SMB 迁移数据常见）；
