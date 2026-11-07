@@ -732,6 +732,7 @@
   }
   async function openPdf(url, title){
     owUrl = url;
+    setOwBrowser();
     openwin.querySelector('#owtitle').textContent = title || 'PDF';
     owframe.style.display = 'none';
     owframe.removeAttribute('srcdoc');
@@ -829,6 +830,7 @@
     if (openIn !== 'embed') { window.open(url, '_blank'); return; }
     if (!owState.max && !owUserToggled) { owState.max = true; saveOw(); }
     owUrl = url;
+    setOwBrowser();
     pdfHide();
     owframe.style.display = '';
     owframe.removeAttribute('srcdoc');
@@ -846,7 +848,11 @@
     openURL('/docs/preview?path=' + encodeURIComponent(p), '文档服务 · ' + baseName(p));
   }
   function assocFor(ext){
-    for (const [key, , exts, , def] of ASSOC) if (exts.includes(ext)) return settings.openWith[key] || def;
+    for (const [key, , exts, , def] of ASSOC) if (exts.includes(ext)) {
+      let v = settings.openWith[key];
+      if (!v && key === 'rich') v = settings.openWith.text; // 兼容 0.8.4 及更早的「文本」关联
+      return v || def;
+    }
     return 'preview';
   }
   function assocKnown(ext){
@@ -897,6 +903,10 @@
     el.textContent = text || '';
     el.style.display = text ? 'inline-block' : 'none';
   }
+  function setOwBrowser(label){
+    const el = openwin.querySelector('#owbrowser');
+    if (el) el.textContent = label || '在新标签打开';
+  }
 
   function downloadFile(p){ window.open(API + 'file?path=' + encodeURIComponent(p) + '&dl=1', '_blank'); }
   // 没有内置渲染器的格式：优先交给已安装的预览/文档应用，否则明确询问是否下载，
@@ -910,6 +920,18 @@
     if (docsAvailable()) { openDoc(p); return; }
     if (confirm(why + '：\n' + name + '\n\n是否下载到本地？')) downloadFile(p);
   }
+  // 富文本统一入口：Markdown 渲染、HTML 沙箱渲染、RTF 交给文档服务或纯文本解析、其余按文本查看
+  function openRich(p){
+    const ext = extOf(p);
+    if (isMdExt(ext)) { openURL(API + 'markdown?path=' + encodeURIComponent(p) + themeQ(), baseName(p)); return; }
+    if (ext === 'html' || ext === 'htm' || ext === 'xhtml' || ext === 'shtml') { openHtmlPreview(p); return; }
+    if (ext === 'rtf') {
+      if (docsAvailable()) { openDoc(p); return; }
+      openRtf(p);
+      return;
+    }
+    openURL(API + 'text?path=' + encodeURIComponent(p) + themeQ(), baseName(p));
+  }
   async function openWithAssoc(p, how){
     // 不在任何分类里的扩展名，浏览器只会把它当二进制下载，且文件名会退化；
     // 先明确告知不支持预览，再由用户决定是否下载
@@ -918,6 +940,7 @@
       if (confirm('暂不支持在线预览：\n' + name + '\n\n是否下载到本地？')) downloadFile(p);
       return;
     }
+    if (how === 'rich') { openRich(p); return; }
     if (how === 'builtin') {
       const ext = extOf(p);
       if (ext === 'pdf') { openPdf(API + 'file?dl=0&path=' + encodeURIComponent(p), baseName(p)); return; }
@@ -945,6 +968,7 @@
         }
         return;
       }
+      if (catOfExt(extOf(p)) === 'rich') { openRich(p); return; }
     }
     if (how === 'docs') openDoc(p);
     else if (how === 'fnpreview') {
@@ -961,6 +985,7 @@
       const isMd = isMdExt(ext);
       const vcat = catOfExt(ext);
       if (ext === 'epub') { openEpub(p); return; }
+      if (vcat === 'rich') { openRich(p); return; }
       if (vcat === 'pdf' && !isPdf && !isMd) { noBuiltinPreview(p, '该格式无法用内置阅读器打开'); return; }
       const vpath = isMd ? 'markdown' : ((vcat === 'text' || vcat === 'code') ? 'text' : 'file');
       const themed = isMd || vcat === 'text' || vcat === 'code';
@@ -999,6 +1024,11 @@
       if (seg === '..') out.pop(); else out.push(seg);
     }
     return out.join('/');
+  }
+  // 文件系统路径（保留根斜杠），HTML 里的相对资源用它拼 /api/file?path=
+  function normFsPath(base, href){
+    const p = normZipPath(base, href);
+    return p ? '/' + p : '/';
   }
   function entryOf(files, lower, base, href){
     const raw = String(href || '');
@@ -1061,7 +1091,7 @@
     }
     if (total > 256 * 1024 * 1024) throw new Error('EPUB 解压后超过 256 MB，已拒绝解析');
   }
-  function epubLoadingDoc(){
+  function epubLoadingDoc(label){
     const light = document.documentElement.getAttribute('data-theme') === 'light';
     const bg = light ? '#f7f9fc' : '#0d1524', dim = light ? '#5a6880' : '#8fa5c4';
     const line = light ? '#dbe2ee' : '#21314a', acc = light ? '#0b6b96' : '#7fd7ff';
@@ -1069,17 +1099,18 @@
       'html,body{height:100%;margin:0;background:' + bg + ';color:' + dim + ';font:14px/1.7 -apple-system,sans-serif}' +
       '.h{display:flex;height:100%;align-items:center;justify-content:center;flex-direction:column;gap:10px}' +
       '.d{width:22px;height:22px;border:2px solid ' + line + ';border-top-color:' + acc + ';border-radius:50%;animation:s .8s linear infinite}' +
-      '@keyframes s{to{transform:rotate(360deg)}}</style><div class="h"><div class="d"></div><div>正在解析 EPUB…</div></div>';
+      '@keyframes s{to{transform:rotate(360deg)}}</style><div class="h"><div class="d"></div><div>' +
+      xmlEscape(label || '正在解析 EPUB…') + '</div></div>';
   }
-  function epubErrorDoc(msg){
+  function epubErrorDoc(msg, title){
     const light = document.documentElement.getAttribute('data-theme') === 'light';
     const bg = light ? '#f7f9fc' : '#0d1524', fg = light ? '#1b2740' : '#dbe6f6', dim = light ? '#5a6880' : '#8fa5c4';
     return '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>' +
       'html,body{height:100%;margin:0;background:' + bg + ';color:' + fg + ';font:14px/1.8 -apple-system,sans-serif}' +
       '.w{max-width:560px;margin:0 auto;padding:56px 22px}.t{font-size:17px;font-weight:600;margin-bottom:10px}' +
       '.m{color:' + dim + ';word-break:break-word}.h{margin-top:18px;font-size:12.5px;color:' + dim + '}</style>' +
-      '<div class="w"><div class="t">EPUB 预览失败</div><div class="m">' + xmlEscape(msg) + '</div>' +
-      '<div class="h">可以点右上角「在新标签打开」下载，或用手机上的阅读器打开。</div></div>';
+      '<div class="w"><div class="t">' + xmlEscape(title || '预览失败') + '</div><div class="m">' + xmlEscape(msg) + '</div>' +
+      '<div class="h">可以点右上角「在新标签打开」下载，或用其他阅读器打开。</div></div>';
   }
   async function buildEpubHtml(p, light){
     const fflate = await loadFFlate();
@@ -1387,6 +1418,7 @@
     if (openIn !== 'embed') { window.open(API + 'file?path=' + encodeURIComponent(p), '_blank'); return; }
     if (!owState.max && !owUserToggled) { owState.max = true; saveOw(); }
     owUrl = API + 'file?path=' + encodeURIComponent(p);
+    setOwBrowser();
     pdfHide();
     owframe.style.display = '';
     owframe.removeAttribute('src');
@@ -1402,8 +1434,251 @@
       openwin.querySelector('#owtitle').textContent = book.title || baseName(p);
       setOwTag('EPUB · ' + book.chapters + ' 章');
     } catch (e) {
-      owframe.srcdoc = epubErrorDoc((e && e.message) || String(e));
+      owframe.srcdoc = epubErrorDoc((e && e.message) || String(e), 'EPUB 预览失败');
       setOwTag('EPUB · 失败');
+    }
+  }
+  // ---- 富文本：HTML 渲染（清洗后放进 sandbox iframe）----
+  async function buildHtmlPreview(p){
+    const r = await fetch(API + 'file?path=' + encodeURIComponent(p), { credentials: 'same-origin' });
+    if (!r.ok) throw new Error('读取文件失败（HTTP ' + r.status + '）');
+    const buf = new Uint8Array(await r.arrayBuffer());
+    if (buf.length > 8 * 1024 * 1024) throw new Error('文件超过 8 MB，暂不支持内置渲染');
+    // 按 BOM / <meta charset> 识别 GBK 等老页面，避免中文乱码
+    let cs = 'utf-8';
+    if (buf[0] === 0xFE && buf[1] === 0xFF) cs = 'utf-16be';
+    else if (buf[0] === 0xFF && buf[1] === 0xFE) cs = 'utf-16le';
+    else {
+      const head = new TextDecoder('latin1').decode(buf.subarray(0, 2048)).toLowerCase();
+      const m = head.match(/charset\s*=\s*["']?([a-z0-9_-]+)/);
+      if (m) {
+        if (m[1] === 'gb2312' || m[1] === 'gb18030') cs = 'gbk';
+        else if (/^(gbk|big5|shift_jis|euc-kr|windows-1252|iso-8859-1)$/.test(m[1])) cs = m[1];
+      }
+    }
+    let text;
+    try { text = new TextDecoder(cs).decode(buf); } catch (e) { text = new TextDecoder('utf-8').decode(buf); }
+    const dom = new DOMParser().parseFromString(text, 'text/html');
+    const tEl = dom.querySelector('title');
+    const title = ((tEl && tEl.textContent) || baseName(p)).trim();
+    const baseDir = epubDir(p);
+    const apiFile = full => API + 'file?path=' + encodeURIComponent(full);
+    let styles = '';
+    for (const s of Array.from(dom.getElementsByTagName('style'))) {
+      let css = (s.textContent || '')
+        .replace(/@import[^;]*;?/gi, '')
+        .replace(/expression\s*\(/gi, 'none(')
+        .replace(/javascript\s*:/gi, 'none:')
+        .replace(/<\/style/gi, '<\\/style');
+      css = css.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (m, q, href) => {
+        if (/^(data:|#)/i.test(href)) return m;
+        return 'url("' + apiFile(normFsPath(baseDir, href)) + '")';
+      });
+      styles += css + '\n';
+      s.parentNode.removeChild(s);
+    }
+    const body = dom.body;
+    if (!body) throw new Error('没有可显示的 HTML 内容');
+    const drop = ['SCRIPT', 'IFRAME', 'OBJECT', 'EMBED', 'FORM', 'INPUT', 'BUTTON', 'TEXTAREA',
+                  'SELECT', 'LINK', 'META', 'BASE', 'VIDEO', 'AUDIO', 'SOURCE', 'TRACK',
+                  'CANVAS', 'TEMPLATE', 'SVG', 'MATH'];
+    for (const tag of drop) {
+      const els = body.getElementsByTagName(tag);
+      while (els.length) els[0].parentNode.removeChild(els[0]);
+    }
+    const all = body.getElementsByTagName('*');
+    for (let i = 0; i < all.length; i++) {
+      const el = all[i];
+      const attrs = Array.from(el.attributes);
+      for (const a of attrs) {
+        const n = a.name.toLowerCase();
+        if (n.indexOf('on') === 0 || n === 'srcset' || n === 'sizes' ||
+            n === 'formaction' || n === 'action' || n === 'method') {
+          el.removeAttribute(a.name);
+          continue;
+        }
+        if (n === 'style' && /url\s*\(|expression|javascript:/i.test(a.value)) {
+          el.setAttribute('style', a.value.replace(/url\s*\([^)]*\)/gi, 'none').replace(/expression\s*\([^)]*\)/gi, 'none'));
+          continue;
+        }
+        if (n === 'href' || n === 'xlink:href' || n === 'src' || n === 'poster') {
+          if (el.tagName === 'IMG' && n === 'src') continue;
+          if (el.tagName === 'A' && n === 'href') continue;
+          el.removeAttribute(a.name);
+        }
+      }
+      if (el.tagName === 'IMG') {
+        const src = el.getAttribute('src');
+        if (src && !/^data:/i.test(src)) {
+          if (/^(https?:)?\/\//i.test(src) || src.charAt(0) === '/') {
+            el.removeAttribute('src');
+          } else {
+            let raw = src.split('#')[0].split('?')[0];
+            try { raw = decodeURIComponent(raw); } catch (e) {}
+            el.setAttribute('src', apiFile(normFsPath(baseDir, raw)));
+          }
+        }
+        el.removeAttribute('srcset');
+      }
+      if (el.tagName === 'A' && el.hasAttribute('href')) {
+        const href = el.getAttribute('href');
+        if (/^https?:/i.test(href)) {
+          el.setAttribute('target', '_blank');
+          el.setAttribute('rel', 'noopener noreferrer');
+        } else el.removeAttribute('href');
+      }
+    }
+    const baseCss = 'html,body{margin:0;padding:0}' +
+      'body{padding:22px;background:#fff;color:#1b2740;font:16px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;overflow-wrap:break-word}' +
+      'img{max-width:100%;height:auto}a{color:#0b6b96}' +
+      '@media(max-width:620px){body{padding:16px}}';
+    const doc = '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">' +
+      '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+      '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src \'self\' data:; style-src \'self\' \'unsafe-inline\'; font-src \'self\' data:; media-src \'self\' data:">' +
+      '<title>' + xmlEscape(title) + '</title><style>' + baseCss + styles + '</style></head><body>' +
+      body.innerHTML + '</body></html>';
+    return { doc, title };
+  }
+  async function openHtmlPreview(p){
+    // HTML 一律走清洗后的 sandbox 渲染，避免同源脚本拿到应用权限；openIn=window 也不例外
+    if (!owState.max && !owUserToggled) { owState.max = true; saveOw(); }
+    // 「在新标签打开」对 HTML 只提供下载，不把源文件当同源页面加载
+    owUrl = API + 'file?path=' + encodeURIComponent(p) + '&dl=1';
+    setOwBrowser('下载');
+    pdfHide();
+    owframe.style.display = '';
+    owframe.removeAttribute('src');
+    owframe.setAttribute('sandbox', 'allow-same-origin allow-popups');
+    openwin.querySelector('#owtitle').textContent = baseName(p);
+    openwin.classList.add('on');
+    applyOw();
+    setOwTag('HTML');
+    owframe.srcdoc = epubLoadingDoc('正在渲染 HTML…');
+    try {
+      const page = await buildHtmlPreview(p);
+      owframe.srcdoc = page.doc;
+      openwin.querySelector('#owtitle').textContent = page.title || baseName(p);
+      setOwTag('HTML');
+    } catch (e) {
+      owframe.srcdoc = epubErrorDoc((e && e.message) || String(e), 'HTML 预览失败');
+      setOwTag('HTML · 失败');
+    }
+  }
+
+  // ---- 富文本：RTF 纯文本解析（无文档服务时的兜底）----
+  function rtfToText(src){
+    let out = '', i = 0, depth = 0, skipAt = -1;
+    const skip = ['fonttbl','colortbl','stylesheet','info','pict','object','header','footer',
+      'headerl','headerr','footerl','footerr','footnote','annotation','field','fldinst',
+      'listtable','listoverridetable','rsidtbl','generator','xmlnstbl','themedata',
+      'colorschememapping','latentstyles','datastore','filetbl','revtbl','mmathPr'];
+    const isWord = c => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+    while (i < src.length) {
+      const c = src.charAt(i);
+      if (c === '{') {
+        depth++;
+        let j = i + 1;
+        while (j < src.length && /\s/.test(src.charAt(j))) j++;
+        let dest = false;
+        if (src.charAt(j) === '\\') {
+          let k = j + 1;
+          if (src.charAt(k) === '*') dest = true;
+          else {
+            let w = '';
+            while (k < src.length && isWord(src.charAt(k))) w += src.charAt(k++);
+            if (skip.indexOf(w) >= 0) dest = true;
+          }
+        }
+        if (dest && skipAt < 0) skipAt = depth;
+        i++;
+        continue;
+      }
+      if (c === '}') {
+        if (skipAt === depth) skipAt = -1;
+        depth = Math.max(0, depth - 1);
+        i++;
+        continue;
+      }
+      if (c === '\\') {
+        const n = src.charAt(i + 1);
+        if (n === "'") {
+          const hex = src.substr(i + 2, 2);
+          if (skipAt < 0 && /^[0-9a-fA-F]{2}$/.test(hex)) out += String.fromCharCode(parseInt(hex, 16));
+          i += 4;
+          continue;
+        }
+        if (n === '\\' || n === '{' || n === '}') {
+          if (skipAt < 0) out += n;
+          i += 2;
+          continue;
+        }
+        if (n === '~') { if (skipAt < 0) out += '\u00a0'; i += 2; continue; }
+        if (n === '_') { if (skipAt < 0) out += '\u2011'; i += 2; continue; }
+        if (n === '-' || n === '*' || n === '\n' || n === '\r') { i += 2; continue; }
+        let j = i + 1, w = '';
+        while (j < src.length && isWord(src.charAt(j))) w += src.charAt(j++);
+        let num = '';
+        if (src.charAt(j) === '-') { num += '-'; j++; }
+        while (j < src.length && src.charAt(j) >= '0' && src.charAt(j) <= '9') num += src.charAt(j++);
+        if (src.charAt(j) === ' ') j++;
+        i = j;
+        if (!w || skipAt >= 0) continue;
+        if (w === 'par' || w === 'line') out += '\n';
+        else if (w === 'tab') out += '\t';
+        else if (w === 'emdash') out += '\u2014';
+        else if (w === 'endash') out += '\u2013';
+        else if (w === 'lquote' || w === 'ldblquote') out += '\u201c';
+        else if (w === 'rquote' || w === 'rdblquote') out += '\u201d';
+        else if (w === 'bullet') out += '\u2022';
+        else if (w === 'u') {
+          let cp = parseInt(num || '0', 10);
+          if (cp < 0) cp += 65536;
+          out += String.fromCharCode(cp);
+          if (src.charAt(i) === '?') i++;
+        }
+        continue;
+      }
+      if (c === '\r' || c === '\n') { i++; continue; }
+      if (skipAt < 0) out += c;
+      i++;
+    }
+    return out.replace(/\n{3,}/g, '\n\n').trim();
+  }
+  async function openRtf(p){
+    if (!owState.max && !owUserToggled) { owState.max = true; saveOw(); }
+    owUrl = API + 'file?path=' + encodeURIComponent(p);
+    setOwBrowser();
+    pdfHide();
+    owframe.style.display = '';
+    owframe.removeAttribute('src');
+    owframe.setAttribute('sandbox', 'allow-same-origin');
+    openwin.querySelector('#owtitle').textContent = baseName(p);
+    openwin.classList.add('on');
+    applyOw();
+    setOwTag('RTF');
+    owframe.srcdoc = epubLoadingDoc('正在解析 RTF…');
+    try {
+      const r = await fetch(owUrl, { credentials: 'same-origin' });
+      if (!r.ok) throw new Error('读取文件失败（HTTP ' + r.status + '）');
+      const raw = await r.text();
+      if (raw.length > 8 * 1024 * 1024) throw new Error('文件超过 8 MB，暂不支持内置预览');
+      const text = rtfToText(raw);
+      if (text.replace(/\s/g, '').length < 2) throw new Error('没有解析出可显示的文本，可能是不支持的 RTF 子集');
+      const light = document.documentElement.getAttribute('data-theme') === 'light';
+      const bg = light ? '#f7f9fc' : '#0d1524', fg = light ? '#1b2740' : '#dbe6f6';
+      const doc = '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">' +
+        '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+        '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'">' +
+        '<title>' + xmlEscape(baseName(p)) + '</title><style>' +
+        'html,body{margin:0;background:' + bg + ';color:' + fg + '}' +
+        'pre{margin:0;padding:20px 22px;white-space:pre-wrap;word-break:break-word;' +
+        'font:16px/1.85 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}' +
+        '</style></head><body><pre>' + xmlEscape(text) + '</pre></body></html>';
+      owframe.srcdoc = doc;
+      setOwTag('RTF · 纯文本');
+    } catch (e) {
+      owframe.srcdoc = epubErrorDoc((e && e.message) || String(e), 'RTF 预览失败');
+      setOwTag('RTF · 失败');
     }
   }
 
@@ -1824,13 +2099,14 @@
   const OPTS_DOC = [['docs','文档服务'],['fnpreview','在线预览（应用中心）'],['builtin','内置阅读器（适配页宽）'],['preview','浏览器直接打开'],['download','下载文件']];
   const OPTS_MEDIA = [['preview','浏览器直接打开'],['fnpreview','在线预览（应用中心）'],['download','下载文件']];
   const OPTS_DL = [['download','下载文件'],['fnpreview','在线预览（应用中心）']];
+  const OPTS_RICH = [['rich','内置富文本（Markdown/HTML 渲染）'],['docs','文档服务'],['preview','浏览器直接打开'],['fnpreview','在线预览（应用中心）'],['download','下载文件']];
   const ASSOC = [
-    ['doc', '文字文档', ['doc','docm','docx','docxf','dot','dotm','dotx','odt','ott','rtf','stw','wps','wpt','pages','hwp','hwpx'], OPTS_DOC, 'docs'],
+    ['doc', '文字文档', ['doc','docm','docx','docxf','dot','dotm','dotx','odt','ott','stw','wps','wpt','pages','hwp','hwpx'], OPTS_DOC, 'docs'],
     ['sheet', '表格', ['xls','xlsx','xlsm','xlsb','xlt','xltx','ods','ots','csv','et','ett','sxc','numbers'], OPTS_DOC, 'docs'],
     ['slide', '幻灯片', ['ppt','pptx','pptm','pps','ppsx','ppsxm','pot','potx','odp','otp','dps','dpt','key'], OPTS_DOC, 'docs'],
     ['pdf', 'PDF', ['pdf','xps','oxps','djvu','epub','fb2'], OPTS_DOC, 'builtin'],
-    ['text', '文本', ['txt','md','markdown','log','ini','conf','cfg','toml','rst'], OPTS_MEDIA, 'preview'],
-    ['code', '代码', ['c','h','cc','cpp','hpp','py','js','mjs','ts','tsx','jsx','go','rs','java','kt','swift','rb','php','sh','bash','zsh','sql','html','htm','css','scss','vue','svelte','yaml','yml','json','xml'], OPTS_MEDIA, 'preview'],
+    ['rich', '富文本', ['txt','text','rtf','md','markdown','mdown','mkd','mdx','html','htm','xhtml','shtml','json','jsonc','xml','xsl','log','ini','conf','cfg','toml','rst','tex','nfo'], OPTS_RICH, 'rich'],
+    ['code', '代码', ['c','h','cc','cpp','hpp','py','js','mjs','ts','tsx','jsx','go','rs','java','kt','swift','rb','php','sh','bash','zsh','sql','css','scss','vue','svelte','yaml','yml'], OPTS_MEDIA, 'preview'],
     ['image', '图片', ['jpg','jpeg','png','gif','webp','bmp','svg','ico','tif','tiff','heic','heif','avif','raw','cr2','nef','arw','dng'], OPTS_MEDIA, 'preview'],
     ['audio', '音频', ['mp3','flac','wav','m4a','aac','ogg','oga','opus','ape','wma','aiff','alac'], OPTS_MEDIA, 'preview'],
     ['video', '视频', ['mp4','mkv','mov','avi','webm','wmv','flv','m4v','mpg','mpeg','ts','m2ts','rmvb','3gp'], OPTS_MEDIA, 'preview'],
@@ -1877,7 +2153,7 @@
     box.innerHTML = '';
     const o = oo();
     for (const [key, label, , opts, def] of ASSOC) {
-      const cur = settings.openWith[key] || def;
+      const cur = settings.openWith[key] || (key === 'rich' ? settings.openWith.text : '') || def;
       const row = document.createElement('div');
       row.className = 'acell';
       row.innerHTML = '<div class="k">' + label + '</div>' +

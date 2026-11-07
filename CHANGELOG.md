@@ -1,3 +1,18 @@
+## 0.8.5
+
+- 打开方式关联新增「富文本」组：`txt/text/rtf/md/markdown/mdown/mkd/mdx/html/htm/xhtml/
+  shtml/json/jsonc/xml/xsl/log/ini/conf/cfg/toml/rst/tex/nfo`；可选内置富文本、文档服务、
+  浏览器直接打开、在线预览、下载，默认内置
+- 内置富文本：Markdown 走 `/api/markdown`；HTML 清洗后放进 sandbox iframe 渲染（去脚本、
+  iframe、表单、事件属性、外链资源，CSP 兜底，相对图片重写到 `/api/file`，自动识别 GBK
+  等旧编码）；RTF 有文档服务时交给文档服务，否则内置纯文本解析（跳过字体/颜色表、支持
+  `\uN`、`\par`、`\'hh` 等）
+- 安全：HTML 不再以同源页面裸渲染，即使打开方式为「浏览器直接打开」或新窗口也走沙箱，
+  避免文件内脚本获取应用权限
+- 兼容：旧的 `openWith.text` 自动映射到 `rich`；`html/json/xml` 从「代码」组移入富文本，
+  `rtf` 从「文字文档」组移入，避免同一扩展名重复出现
+- 文档：新增 `docs/08-富文本关联.md`
+
 ## 0.8.4
 
 - 新增内置 EPUB 阅读器：fflate 在浏览器内解压，解析 `container.xml` → OPF → spine，
