@@ -851,7 +851,12 @@
     for (const [key, , exts, , def] of ASSOC) if (exts.includes(ext)) {
       let v = settings.openWith[key];
       if (!v && key === 'rich') v = settings.openWith.text; // 兼容 0.8.4 及更早的「文本」关联
-      return v || def;
+      v = v || def;
+      // 文档服务/在线预览未安装或未运行时，实际打开改用浏览器，
+      // 但保留用户的偏好，装好应用后自动恢复。
+      if (v === 'docs' && !docsAvailable()) v = 'preview';
+      if (v === 'fnpreview' && !previewAppOk()) v = 'preview';
+      return v;
     }
     return 'preview';
   }
@@ -933,6 +938,9 @@
     openURL(API + 'text?path=' + encodeURIComponent(p) + themeQ(), baseName(p));
   }
   async function openWithAssoc(p, how){
+    // 显式指定「文档服务 / 在线预览」但应用不可用时，不弹错误框，直接改用浏览器
+    if (how === 'docs' && !docsAvailable()) { say('未检测到文档服务，已改用浏览器打开'); how = 'preview'; }
+    if (how === 'fnpreview' && !previewAppOk()) { say('未检测到在线预览，已改用浏览器打开'); how = 'preview'; }
     // 不在任何分类里的扩展名，浏览器只会把它当二进制下载，且文件名会退化；
     // 先明确告知不支持预览，再由用户决定是否下载
     if (how !== 'download' && !assocKnown(extOf(p))) {
@@ -2106,10 +2114,10 @@
     ['slide', '幻灯片', ['ppt','pptx','pptm','pps','ppsx','ppsxm','pot','potx','odp','otp','dps','dpt','key'], OPTS_DOC, 'docs'],
     ['pdf', 'PDF', ['pdf','xps','oxps','djvu','epub','fb2'], OPTS_DOC, 'builtin'],
     ['rich', '富文本', ['txt','text','rtf','md','markdown','mdown','mkd','mdx','html','htm','xhtml','shtml','json','jsonc','xml','xsl','log','ini','conf','cfg','toml','rst','tex','nfo'], OPTS_RICH, 'rich'],
-    ['code', '代码', ['c','h','cc','cpp','hpp','py','js','mjs','ts','tsx','jsx','go','rs','java','kt','swift','rb','php','sh','bash','zsh','sql','css','scss','vue','svelte','yaml','yml'], OPTS_MEDIA, 'preview'],
-    ['image', '图片', ['jpg','jpeg','png','gif','webp','bmp','svg','ico','tif','tiff','heic','heif','avif','raw','cr2','nef','arw','dng'], OPTS_MEDIA, 'preview'],
-    ['audio', '音频', ['mp3','flac','wav','m4a','aac','ogg','oga','opus','ape','wma','aiff','alac'], OPTS_MEDIA, 'preview'],
-    ['video', '视频', ['mp4','mkv','mov','avi','webm','wmv','flv','m4v','mpg','mpeg','ts','m2ts','rmvb','3gp'], OPTS_MEDIA, 'preview'],
+    ['code', '代码', ['c','h','cc','cpp','hpp','py','js','mjs','ts','tsx','jsx','go','rs','java','kt','swift','rb','php','sh','bash','zsh','sql','css','scss','vue','svelte','yaml','yml'], OPTS_MEDIA, 'fnpreview'],
+    ['image', '图片', ['jpg','jpeg','png','gif','webp','bmp','svg','ico','tif','tiff','heic','heif','avif','raw','cr2','nef','arw','dng'], OPTS_MEDIA, 'fnpreview'],
+    ['audio', '音频', ['mp3','flac','wav','m4a','aac','ogg','oga','opus','ape','wma','aiff','alac'], OPTS_MEDIA, 'fnpreview'],
+    ['video', '视频', ['mp4','mkv','mov','avi','webm','wmv','flv','m4v','mpg','mpeg','ts','m2ts','rmvb','3gp'], OPTS_MEDIA, 'fnpreview'],
     ['archive', '压缩包', ['zip','rar','7z','tar','gz','tgz','bz2','xz','zst','lz4','iso'], OPTS_DL, 'download']
   ];
   let settings = { openWith: {}, onlyoffice: { installed: false, running: false }, preview: { installed: false, running: false } };
@@ -2152,14 +2160,18 @@
     box.className = 'agrid';
     box.innerHTML = '';
     const o = oo();
+    const docOk = docsAvailable(), pvOk = previewAppOk();
     for (const [key, label, , opts, def] of ASSOC) {
       const cur = settings.openWith[key] || (key === 'rich' ? settings.openWith.text : '') || def;
+      const miss = cur === 'docs' && !docOk ? '文档服务'
+                 : cur === 'fnpreview' && !pvOk ? '在线预览' : '';
       const row = document.createElement('div');
       row.className = 'acell';
       row.innerHTML = '<div class="k">' + label + '</div>' +
         '<select data-k="' + key + '">' +
         opts.map(([v, t]) => '<option value="' + v + '"' + (cur === v ? ' selected' : '') + '>' + t + '</option>').join('') +
-        '</select>';
+        '</select>' +
+        (miss ? '<div class="hint2 bad">未检测到' + miss + '，实际打开时改用浏览器</div>' : '');
       box.appendChild(row);
     }
     const pv = settings.preview || {};
@@ -2408,13 +2420,13 @@
     const oi = setmask.querySelector('#openIn').value;
     const strictHome = !!setmask.querySelector('#strictHome').checked;
     fetch(API + 'settings', { method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ openWith: ow, openIn: oi, strictHome, scope, rebuild }) })
+      body: JSON.stringify({ openWith: ow, openIn: oi, strictHome, scope, rebuild, settingsVersion: 2 }) })
       .then(r => r.json()).then(d => {
         if (d && d.ok === false) {
           alert('保存失败：' + (d.error || '未知错误'));
           return;
         }
-        settings.openWith = ow; settings.scope = scope; openIn = oi; settings.strictHome = strictHome;
+        settings.openWith = ow; settings.scope = scope; settings.settingsVersion = 2; openIn = oi; settings.strictHome = strictHome;
         setmask.classList.remove('on');
         search();
       }).catch(e => alert('保存失败：' + (e && e.message || e)));
@@ -2430,14 +2442,28 @@
   };
   document.getElementById('gear').onclick = openSettings;
 
+  // 一次性迁移旧默认值到 0.8.8 默认值：
+  //   旧「文本」关联（preview）→ 富文本内置；代码/图片/音频/视频 preview → 在线预览。
+  //   保存一次后 settingsVersion=2，之后不再覆盖用户选择。
+  function migrateOpenWith(d){
+    if (!d || (d.settingsVersion || 1) >= 2) return d;
+    const ow = d.openWith || (d.openWith = {});
+    if (!ow.rich) ow.rich = (ow.text && ow.text !== 'preview') ? ow.text : 'rich';
+    delete ow.text;
+    for (const k of ['code', 'image', 'audio', 'video']) {
+      if (!ow[k] || ow[k] === 'preview') ow[k] = 'fnpreview';
+    }
+    d.settingsVersion = 2;
+    return d;
+  }
   function loadSettings(){
     fetch(API + 'settings' + (showAll ? '?all=1' : '')).then(r => r.json()).then(d => {
-      settings = d; openIn = d.openIn === 'window' ? 'window' : 'embed';
+      d = migrateOpenWith(d); settings = d; openIn = d.openIn === 'window' ? 'window' : 'embed';
     }).catch(() => {});
   }
   function reloadSettings(){
     fetch(API + 'settings' + (showAll ? '?all=1' : '')).then(r => r.json()).then(d => {
-      settings = d; openIn = d.openIn === 'window' ? 'window' : 'embed'; renderSettings();
+      d = migrateOpenWith(d); settings = d; openIn = d.openIn === 'window' ? 'window' : 'embed'; renderSettings();
     }).catch(() => {});
   }
   loadSettings();

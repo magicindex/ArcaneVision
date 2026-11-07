@@ -2043,6 +2043,8 @@ static void handle_settings_get(sbuf *out, int uid, int admin, int all) {
     sb_puts(out, "{\"openWith\":");
     if (ow && owlen) sb_add(out, ow, owlen);
     else sb_puts(out, "{}");
+    sb_printf(out, ",\"settingsVersion\":%d",
+              json_int(buf ? buf : "", "\"settingsVersion\"", 1));
     {
         char oi[16];
         json_str(buf ? buf : "", "\"openIn\"", oi, sizeof oi, "embed");
@@ -2207,7 +2209,7 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
     if (!f) { sb_puts(out, "{\"ok\":false,\"error\":\"cannot write\"}"); return; }
     fchmod(fileno(f), 0600);
     const char *m = rc.mode == 1 ? "daily" : (rc.mode == 2 ? "interval" : "off");
-    fprintf(f, "{\"openWith\":%.*s,\"openIn\":\"%s\",\"strictHome\":%s,"
+    fprintf(f, "{\"settingsVersion\":2,\"openWith\":%.*s,\"openIn\":\"%s\",\"strictHome\":%s,"
                "\"rebuild\":{\"mode\":\"%s\",\"hour\":%d,\"minute\":%d,\"hours\":%d}}",
             (int)len, b, open_in, strict_home ? "true" : "false",
             m, rc.hour, rc.minute, rc.hours);
