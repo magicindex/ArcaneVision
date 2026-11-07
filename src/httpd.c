@@ -4,6 +4,7 @@
  */
 #include "xl.h"
 #include "fsops.h"
+#include "markdown.h"
 #include "version.h"
 
 #include <arpa/inet.h>
@@ -765,6 +766,109 @@ static void handle_text(sbuf *out, const char *qs, int uid, const char **ctype) 
         "btn.onclick=()=>{on=!on;src.style.display=on?'none':'block';doc.style.display=on?'block':'none';"
         "btn.textContent=on?'查看源码':'按文档查看';};"
         "</script>");
+    free(text);
+    *ctype = "text/html; charset=utf-8";
+}
+
+static void handle_markdown(sbuf *out, const char *qs, int uid, const char **ctype) {
+    size_t tlen = 0;
+    int truncated = 0;
+    char *text = read_text_file(qs, uid, &tlen, &truncated);
+    if (!text) {
+        if (tlen == (size_t)-1) {
+            char raw[4096];
+            if (!param(qs, "path", raw, sizeof raw)) sb_puts(out, "{\"error\":\"missing path\"}");
+            else if (strncmp(raw, "/vol", 4) || strstr(raw, "..")) sb_puts(out, "{\"error\":\"path not allowed\"}");
+            else sb_puts(out, "{\"error\":\"not found or forbidden\"}");
+        } else {
+            sb_puts(out, "{\"error\":\"not a file\"}");
+        }
+        *ctype = "application/json; charset=utf-8";
+        return;
+    }
+
+    size_t hlen = 0;
+    char *html = md_render_html(text, tlen, &hlen);
+    if (!html) {
+        free(text);
+        sb_puts(out, "{\"error\":\"render failed\"}");
+        *ctype = "application/json; charset=utf-8";
+        return;
+    }
+
+    char fmt[16] = {0};
+    param(qs, "format", fmt, sizeof fmt);
+    if (!strcmp(fmt, "json")) {
+        sb_puts(out, "{\"ok\":true,\"html\":\"");
+        sb_json(out, html, hlen);
+        sb_printf(out, "\",\"truncated\":%s}", truncated ? "true" : "false");
+        *ctype = "application/json; charset=utf-8";
+        free(html);
+        free(text);
+        return;
+    }
+
+    char pbuf[4096] = {0};
+    param(qs, "path", pbuf, sizeof pbuf);
+    const char *base = strrchr(pbuf, '/');
+    base = base ? base + 1 : pbuf;
+
+    char th[16] = {0};
+    param(qs, "theme", th, sizeof th);
+    int light = !strcmp(th, "light");
+    const char *bg   = light ? "#f7f9fc" : "#0d1524";
+    const char *fg   = light ? "#1b2740" : "#dbe6f6";
+    const char *dim  = light ? "#5a6880" : "#8fa5c4";
+    const char *line = light ? "#dbe2ee" : "#21314a";
+    const char *head = light ? "#101a2c" : "#eaf1fb";
+    const char *acc  = light ? "#0b6b96" : "#7fd7ff";
+    const char *code = light ? "#edf2f8" : "#111c2e";
+    const char *quote= light ? "#4b5a72" : "#a9bad6";
+
+    sb_printf(out,
+        "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+        "<meta name=\"color-scheme\" content=\"%s\">"
+        "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; img-src http: https:; base-uri 'none'; form-action 'none'\">"
+        "<title>",
+        light ? "light" : "dark");
+    html_escape_to(out, base, strlen(base));
+    sb_puts(out, "</title><style>");
+    sb_printf(out,
+        ":root{--bg:%s;--fg:%s;--dim:%s;--line:%s;--head:%s;--accent:%s;--code:%s;--quote:%s}",
+        bg, fg, dim, line, head, acc, code, quote);
+    sb_puts(out,
+        "*{box-sizing:border-box}"
+        "html{background:var(--bg)}"
+        "body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.78 -apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif;overflow-wrap:break-word}"
+        ".md{max-width:860px;margin:0 auto;padding:34px 30px 72px}"
+        ".md>:first-child{margin-top:0}"
+        "h1,h2,h3,h4,h5,h6{line-height:1.35;color:var(--head);margin:1.55em 0 .62em;font-weight:650}"
+        "h1{font-size:28px;border-bottom:1px solid var(--line);padding-bottom:.3em}"
+        "h2{font-size:22px;border-bottom:1px solid var(--line);padding-bottom:.22em}"
+        "h3{font-size:19px}h4{font-size:17px}h5,h6{font-size:16px}"
+        "p,ul,ol,blockquote,pre,table{margin:0 0 16px}"
+        "ul,ol{padding-left:1.45em}li{margin:5px 0}"
+        "a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}"
+        "strong{color:var(--head)}del{color:var(--dim)}"
+        "code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em;background:var(--code);padding:2px 5px;border-radius:5px}"
+        "pre{background:var(--code);padding:14px 16px;border-radius:10px;overflow:auto;line-height:1.6}"
+        "pre code{display:block;background:none;padding:0;font-size:13px;white-space:pre}"
+        "blockquote{margin-left:0;padding:8px 16px;border-left:3px solid var(--accent);color:var(--quote);background:rgba(127,215,255,.055)}"
+        "hr{border:0;border-top:1px solid var(--line);margin:26px 0}"
+        "img{max-width:100%;height:auto;border-radius:8px;margin:8px 0}"
+        "table{border-collapse:collapse;width:100%;display:block;overflow-x:auto}"
+        "th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;font-size:14px}"
+        "th{background:var(--code);color:var(--head)}"
+        ".note{padding:8px 14px;border-bottom:1px solid var(--line);color:var(--dim);font-size:13px}"
+        "@media(max-width:620px){.md{padding:22px 18px 56px}h1{font-size:24px}h2{font-size:20px}body{font-size:15px}}"
+        "</style></head><body>");
+    if (truncated) sb_puts(out, "<div class=\"note\">文件较大，仅渲染前 8 MB</div>");
+    sb_puts(out, "<article class=\"md\">");
+    sb_add(out, html, hlen);
+    sb_puts(out, "</article></body></html>");
+
+    free(html);
     free(text);
     *ctype = "text/html; charset=utf-8";
 }
@@ -2751,6 +2855,8 @@ static void handle_client(int fd) {
         handle_raw(&body, qs, uid, &ctype);
     } else if (!strcmp(pathonly, "/api/text")) {
         handle_text(&body, qs, uid, &ctype);
+    } else if (!strcmp(pathonly, "/api/markdown") || !strcmp(pathonly, "/api/md")) {
+        handle_markdown(&body, qs, uid, &ctype);
     } else if (!strcmp(pathonly, "/api/probe")) {
         handle_probe(&body, qs, uid);
     } else if (!strcmp(pathonly, "/api/transcode")) {

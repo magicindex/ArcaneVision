@@ -146,7 +146,7 @@
   .ctx div{padding:8px 12px;border-radius:8px;font-size:13px;color:#c8d3ea;cursor:pointer;white-space:nowrap}
   .ctx div:hover{background:rgba(86,190,190,.16);color:#eaf6f6}
 
-  .openwin{position:fixed;inset:26px;z-index:190;display:none;flex-direction:column;overflow:hidden;
+  .openwin{position:fixed;top:26px;right:26px;bottom:26px;left:26px;z-index:190;display:none;flex-direction:column;overflow:hidden;
     background:linear-gradient(180deg,rgba(22,31,48,.99),rgba(13,19,31,.99));
     border:1px solid rgba(120,180,200,.22);border-radius:14px;box-shadow:0 24px 70px rgba(0,0,0,.6)}
   .openwin.on{display:flex}
@@ -184,7 +184,7 @@
     color:#cdeee9;background:rgba(30,70,74,.7);border:1px solid rgba(90,200,190,.35)}
   .selbar button.danger{color:#ffd9d6;background:rgba(96,32,32,.55);border-color:rgba(220,110,100,.4)}
   .selbar button.plain,.modal button.plain{color:#b9c9e2;background:rgba(20,30,46,.8);border-color:rgba(120,160,220,.25)}
-  .modal{position:fixed;inset:0;z-index:170;display:none;background:rgba(6,10,18,.72);backdrop-filter:blur(6px)}
+  .modal{position:fixed;top:0;right:0;bottom:0;left:0;z-index:170;display:none;background:rgba(6,10,18,.72);backdrop-filter:blur(6px)}
   .modal.on{display:block}
   .modal .box{position:absolute;left:50%;top:70px;transform:translateX(-50%);width:min(780px,92vw);
     max-height:calc(100vh - 140px);display:flex;flex-direction:column;border-radius:14px;overflow:hidden;
@@ -202,7 +202,7 @@
   .tbtn{font-size:11.5px;padding:4px 10px;border-radius:8px;cursor:pointer;color:#b9c9e2;
     background:rgba(20,30,46,.8);border:1px solid rgba(120,160,220,.25)}
   .tbtn:hover{color:#cdf3ee;border-color:rgba(90,200,190,.45)}
-  .finder{position:fixed;inset:0;z-index:120;display:none;background:rgba(6,10,18,.72);backdrop-filter:blur(6px)}
+  .finder{position:fixed;top:0;right:0;bottom:0;left:0;z-index:120;display:none;background:rgba(6,10,18,.72);backdrop-filter:blur(6px)}
   .finder.on{display:block}
   .finder .panel{position:absolute;left:50%;top:64px;transform:translateX(-50%);width:min(960px,92vw);
     max-height:calc(100vh - 128px);display:flex;flex-direction:column;border-radius:16px;overflow:hidden;
@@ -227,7 +227,7 @@
   .gear svg{width:17px;height:17px;display:block}
   .gear:hover{color:#c9f2ea;border-color:rgba(90,200,190,.45);background:rgba(30,52,64,.7);
     transform:rotate(45deg)}
-  .setmask{position:fixed;inset:0;z-index:130;display:none;background:rgba(6,10,18,.72);backdrop-filter:blur(6px)}
+  .setmask{position:fixed;top:0;right:0;bottom:0;left:0;z-index:130;display:none;background:rgba(6,10,18,.72);backdrop-filter:blur(6px)}
   .setmask.on{display:block}
   .setbox{position:absolute;left:50%;top:56px;transform:translateX(-50%);width:min(780px,92vw);
     max-height:calc(100vh - 112px);overflow:hidden;border-radius:16px;padding:0;
@@ -440,7 +440,7 @@
   .more:hover{color:var(--txt);border-color:rgba(94,234,212,.4)}
   .ctx.sheet{
     left:10px!important;right:10px;top:auto!important;
-    bottom:calc(10px + env(safe-area-inset-bottom));min-width:0;max-height:72dvh;overflow:auto;
+    bottom:calc(10px + env(safe-area-inset-bottom));min-width:0;max-height:72vh;max-height:72dvh;overflow:auto;
     padding:8px;border-radius:16px;
   }
   .ctx.sheet div{padding:12px 14px;font-size:14px;border-radius:10px}
@@ -491,7 +491,7 @@
     .more{display:inline-flex}
     .empty{padding:38px 14px;font-size:13px}
 
-    .openwin{inset:0;border:0;border-radius:0;padding-top:env(safe-area-inset-top)}
+    .openwin{top:0;right:0;bottom:0;left:0;border:0;border-radius:0;padding-top:env(safe-area-inset-top)}
     .openwin .owbar{padding:10px 12px;padding-top:max(10px,env(safe-area-inset-top))}
     .openwin .owbar #owtitle{max-width:36vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .openwin #owfit{display:none}
@@ -501,6 +501,7 @@
 
     .finder .panel,.setbox,.modal .box{
       top:calc(8px + env(safe-area-inset-top));width:calc(100vw - 16px);
+      max-height:calc(100vh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
       max-height:calc(100dvh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
     }
     .setbox .setbody{padding:12px 10px;margin:6px}
@@ -511,7 +512,7 @@
     .modal .mf{padding-bottom:calc(10px + env(safe-area-inset-bottom))}
     .modal .mi{padding:11px 10px}
     .modal .mi .p{font-size:11px}
-    .finder .panel{border-radius:14px;height:calc(100dvh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom))}
+    .finder .panel{border-radius:14px;height:calc(100vh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom));height:calc(100dvh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom))}
     .finder .list{flex:1}
     .finder .row{padding:11px 10px}
     .selbar{
@@ -647,6 +648,7 @@
     const b = p.slice(p.lastIndexOf('/') + 1), i = b.lastIndexOf('.');
     return i > 0 ? b.slice(i + 1).toLowerCase() : '';
   }
+  function isMdExt(e){ return e === 'md' || e === 'markdown' || e === 'mdown' || e === 'mkd'; }
   let openIn = 'embed';
   const openwin = document.createElement('div');
   openwin.className = 'openwin';
@@ -670,16 +672,24 @@
     return first;
   })();
   function saveOw(){ try { localStorage.setItem('xl_openwin', JSON.stringify(owState)); } catch (e) {} }
+  // 不用 inset 简写：旧版 Android WebView（如 Android 10 / Chrome 83）不支持，
+  // 会让子窗口失去定位和尺寸，看上去像“点了没反应”
+  function setOwBox(top, right, bottom, left){
+    openwin.style.top = top; openwin.style.right = right;
+    openwin.style.bottom = bottom; openwin.style.left = left;
+  }
   function applyOw(){
     const bf = openwin.querySelector('#owfit');
     if (bf) bf.textContent = owState.max ? '还原' : '最大化';
     if (owState.max) {
-      openwin.style.inset = '10px';
+      // 手机/窄屏贴边全屏，桌面留 10px 边距
+      const edge = (coarse || innerWidth <= 620) ? '0px' : '10px';
+      setOwBox(edge, edge, edge, edge);
       openwin.style.width = ''; openwin.style.height = '';
       return;
     }
     if (!owState.w) { owState.x = 26; owState.y = 26; owState.w = innerWidth - 52; owState.h = innerHeight - 52; }
-    openwin.style.inset = 'auto';
+    setOwBox('auto', 'auto', 'auto', 'auto');
     openwin.style.left = owState.x + 'px';
     openwin.style.top = owState.y + 'px';
     openwin.style.width = owState.w + 'px';
@@ -741,7 +751,10 @@
       }
       if (!pdfDoc) pdfDoc = await pdfLib.getDocument({ url: owUrl, withCredentials: true }).promise;
     } catch (e) {
-      pdfPages.innerHTML = '<div class="phint">PDF 载入失败：' + ((e && e.message) || e) + '</div>';
+      const msg = (e && e.message) || e;
+      pdfPages.innerHTML = '<div class="phint">PDF 载入失败：' + esc(String(msg)) +
+        '<br><br>若手机系统 WebView 版本偏旧（例如 Android 10 自带的 Chrome 83），内置阅读器无法运行。' +
+        '请更新系统 WebView（应用市场 → Android System WebView），或点上方「在新标签打开」下载后查看。</div>';
       return;
     }
     const n = pdfDoc.numPages;
@@ -876,6 +889,17 @@
   }
 
   function downloadFile(p){ window.open(API + 'file?path=' + encodeURIComponent(p) + '&dl=1', '_blank'); }
+  // 没有内置渲染器的格式：优先交给已安装的预览/文档应用，否则明确询问是否下载，
+  // 不再把 application/octet-stream 塞进 iframe 让用户对着空白面板猜
+  function noBuiltinPreview(p, why){
+    const name = baseName(p);
+    if (previewAppOk()) {
+      openURL('/app/trim-preview/?path=' + encodeURIComponent(p), '在线预览 · ' + name);
+      return;
+    }
+    if (docsAvailable()) { openDoc(p); return; }
+    if (confirm(why + '：\n' + name + '\n\n是否下载到本地？')) downloadFile(p);
+  }
   async function openWithAssoc(p, how){
     // 不在任何分类里的扩展名，浏览器只会把它当二进制下载，且文件名会退化；
     // 先明确告知不支持预览，再由用户决定是否下载
@@ -885,10 +909,17 @@
       return;
     }
     if (how === 'builtin') {
-      if (extOf(p) === 'pdf') { openPdf(API + 'file?dl=0&path=' + encodeURIComponent(p), baseName(p)); return; }
-      const tcat = catOfExt(extOf(p));
-      const tview = (tcat === 'text' || tcat === 'code') ? 'text' : 'file';
-      openURL(API + tview + '?path=' + encodeURIComponent(p), baseName(p));
+      const ext = extOf(p);
+      if (ext === 'pdf') { openPdf(API + 'file?dl=0&path=' + encodeURIComponent(p), baseName(p)); return; }
+      if (isMdExt(ext)) { openURL(API + 'markdown?path=' + encodeURIComponent(p) + themeQ(), baseName(p)); return; }
+      const tcat = catOfExt(ext);
+      if (tcat === 'text' || tcat === 'code') {
+        openURL(API + 'text?path=' + encodeURIComponent(p) + themeQ(), baseName(p));
+        return;
+      }
+      // EPUB / XPS / DjVu / FB2 等归类在 PDF 下，但没有内置渲染器；
+      // 服务端按 application/octet-stream 返回，塞进 iframe 只会静默触发下载
+      noBuiltinPreview(p, '该格式暂不支持内置预览');
       return;
     }
     if (how === 'preview') {
@@ -914,12 +945,16 @@
     }
     else if (how === 'download') downloadFile(p);
     else {
-      const isPdf = extOf(p) === 'pdf';
-      const vcat = catOfExt(extOf(p));
-      const vpath = (vcat === 'text' || vcat === 'code') ? 'text' : 'file';
+      const ext = extOf(p);
+      const isPdf = ext === 'pdf';
+      const isMd = isMdExt(ext);
+      const vcat = catOfExt(ext);
+      if (vcat === 'pdf' && !isPdf && !isMd) { noBuiltinPreview(p, '该格式无法用内置阅读器打开'); return; }
+      const vpath = isMd ? 'markdown' : ((vcat === 'text' || vcat === 'code') ? 'text' : 'file');
+      const themed = isMd || vcat === 'text' || vcat === 'code';
       // 浏览器内建 PDF 阅读器支持 #zoom=page-width / #view=FitH，默认按页宽适配；
-      // 文本/代码走 /api/text（自带深色样式，避免被浏览器自动反色成灰字）
-      openURL(API + vpath + '?path=' + encodeURIComponent(p) + ((vcat === 'text' || vcat === 'code') ? themeQ() : '') + (isPdf ? '#zoom=page-width&view=FitH' : ''), baseName(p));
+      // Markdown 走 /api/markdown 渲染，文本/代码走 /api/text（均自带主题）
+      openURL(API + vpath + '?path=' + encodeURIComponent(p) + (themed ? themeQ() : '') + (isPdf ? '#zoom=page-width&view=FitH' : ''), baseName(p));
     }
   }
   // 飞牛桌面 SPA 的深链：/appview?anchor=<https://appName/tab?params>

@@ -3,7 +3,7 @@ CFLAGS  ?= -O2 -g -std=c11 -Wall -Wextra -Wno-unused-parameter -D_GNU_SOURCE
 LDFLAGS ?=
 LDLIBS  := -pthread
 
-SRC := src/main.c src/util.c src/scan.c src/index.c src/snapshot.c src/query.c src/fsreader_ext4.c src/httpd.c src/live.c src/perm.c src/fsops.c
+SRC := src/main.c src/util.c src/scan.c src/index.c src/snapshot.c src/query.c src/fsreader_ext4.c src/httpd.c src/live.c src/perm.c src/fsops.c src/markdown.c
 OBJ := $(SRC:.c=.o)
 BIN := bin/xuanlan
 
@@ -23,10 +23,14 @@ src/version.h:
 bin:
 	mkdir -p bin
 
-clean:
-	rm -f $(OBJ) $(BIN)
+bin/markdown_test: tests/markdown_test.c src/markdown.o | bin
+	$(CC) $(CFLAGS) -Isrc -o $@ $< src/markdown.o
 
-test: $(BIN)
+clean:
+	rm -f $(OBJ) $(BIN) bin/markdown_test
+
+test: $(BIN) bin/markdown_test
+	./bin/markdown_test
 	./tests/smoke.sh
 	./tests/ext4_image_test.sh
 
