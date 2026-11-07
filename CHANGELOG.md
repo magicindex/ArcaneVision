@@ -1,3 +1,16 @@
+## 0.8.7
+
+- 修复 0.8.6 的越权显示：0.8.6 把 `Administrators` 组按 root 整卷放行后，「检索范围」
+  把其他用户家目录（`/vol1/1001`、`/vol1/1002`…）、`/vol1/docker` 等也标成「可访问」。
+  现在改为只对 **自家目录** `/volN/<uid>` 及其子路径放行读/穿越，其他家目录仍按
+  TrimACL 拒绝
+- 保留 0.8.6 的目标：管理员仍能搜到 `/vol1/1000/NextCloud/data/...` 这类由 www-data
+  持有、只授 owner 的子目录——它位于自己的家目录内，按家目录属主放行；且只放行读，
+  写操作仍按原 ACL
+- 验证：`xuanlan acl 1000 /vol1/1000/NextCloud/data/admin/files` → 1；
+  `xuanlan acl 1000 /vol1/1001` → 0；`xuanlan acl 1000 /vol1/docker` → 0；
+  `/api/acl` 以 uid 1000 只返回 `/vol1/1000`（及同 uid 的其它卷家目录）
+
 ## 0.8.6
 
 - 修复：飞牛管理员（`Administrators` 组成员，如王耀辉 uid 1000）在玄览里搜不到
@@ -6,8 +19,8 @@
   的目录被整棵过滤
 - 现象：以 uid 1000 搜索 `工程施工派工单` 返回 0 条；`uid 0` 直接查索引有 1 条，
   文件本身存在且可读
-- 权限求值现在先判断目标 uid 是否属于 `Administrators` 组（`getgrnam`，与内核实测
-  一致），属于则按 root 语义放行；非管理员（uid 1001、12345 等）仍按原 ACE/POSIX 判定
+- 权限求值增加「家目录属主」放行（0.8.7 收紧为只读/穿越；0.8.6 曾按
+  `Administrators` 组整卷放行，范围过宽）
 - 验证：`xuanlan acl 1000 /vol1/1000/NextCloud/data/admin/files` → 1；
   `xuanlan acl 1001 ...` → 0；unix socket 上 `x-trim-userid: 1000` 搜索返回 1 条
 

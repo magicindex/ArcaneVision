@@ -157,10 +157,11 @@ uid 1000 /vol1/docker/overlay2/…/diff -> 0（0.1.6 为 1，越权）
 
 HTTP 层（`X-Trim-Userid` 取 1000 / 900 / 878，`q=IMG_`）过滤后的归属分布与各自 ACL 一致。
 
-## 0.8.6 修正（Administrators 组）
+## 0.8.6–0.8.7 修正（家目录属主）
 
-实测发现内核还允许 **`Administrators` 组（gid 1000）跨过 TrimACL 读取整卷**，与 root
-类似；这一点此前没有在 `perm.c` 里跟随，导致管理员搜不到自己实际能打开的文件。
+0.8.6 先发现内核对 **`Administrators` 组（gid 1000）** 有整卷放行，于是按 root 语义
+放行管理员组。这个范围过宽：`/api/acl` 把其他用户家目录、`/vol1/docker` 都列成了
+「可访问」，与飞牛文件管理器（`file.ls /vol1/1001` 返回 4100）不一致。
 
 隔离复现（容器里用 `--user UID:GID` 只给单一组，避免继承）：
 
@@ -171,19 +172,24 @@ HTTP 层（`X-Trim-Userid` 取 1000 / 900 / 878，`q=IMG_`）过滤后的归属�
 | 1000:1001 | 拒绝 | 拒绝 | 可读（家目录属主/projid=1000） |
 | 1001:1001 | 拒绝 | 可读 | 拒绝 |
 
-结论：判断依据是进程是否带 **gid 1000**；换成 `1001:1000` 同样全通。`www-data`
-（uid 712）另有系统账号特权，与普通用户无关。
+0.8.7 改为只跟随「家目录属主」这一条：`/volN/<uid>` 及其子路径按家目录属主放行
+**读/穿越**（不授写），其他家目录和卷内系统目录仍走 TrimACL。这样：
 
-修正方式：`perm_check()` / `perm_mode_readable()` 在 uid 0 之外，若目标 uid 属于
-`getgrnam("Administrators")` 的组，也直接放行。非管理员仍走原有 ACE/POSIX 求值。
+- `/vol1/1000/NextCloud/data/...` 可搜到（属于 `/vol1/1000`，内核 projid=1000）；
+- `/vol1/1001`、`/vol1/1002`… 不会出现在 uid 1000 的检索范围；
+- `/vol1/docker` 不再因为管理员组被误标为可访问；
+- 写操作（复制/移动/删除）仍按原 ACL，不因家目录属主放行。
 
 验证：
 
 ```
 xuanlan acl 1000 /vol1/1000/NextCloud/data/admin/files   -> 1
-xuanlan acl 1001 /vol1/1000/NextCloud/data/admin/files   -> 0
-xuanlan acl 12345 /vol1/1000/NextCloud/data/admin/files  -> 0
+xuanlan acl 1000 /vol1/1001                             -> 0
+xuanlan acl 1000 /vol1/docker                           -> 0
+xuanlan acl 1001 /vol1/1001                             -> 1
+xuanlan acl 1001 /vol1/1000/NextCloud/data/admin/files  -> 0
 ```
 
-unix socket 上带 `x-trim-userid: 1000` 查询 `工程施工派工单` 返回 1 条；`1001` 仍为 0 条。
+`/api/acl` 以 uid 1000 只返回 `/vol1/1000`（及同 uid 的其它卷家目录）；unix socket 上
+`x-trim-userid: 1000` 查询 `工程施工派工单` 返回 1 条，`1001` 为 0 条。
 
