@@ -7,6 +7,7 @@
 | 组件 | 版本 | 许可证 | 用途 | 修改 | 位置 |
 |---|---|---|---|---|---|
 | pdf.js (pdfjs-dist) | 4.10.38 | Apache-2.0 | 浏览器内 PDF 渲染（按页宽适配） | 未修改 | `ui/vendor/pdf.min.mjs`、`ui/vendor/pdf.worker.min.mjs`、许可证 `ui/vendor/LICENSE.pdfjs` |
+| fflate | 0.8.2 | MIT | 浏览器内解压 EPUB（ZIP/DEFLATE） | 未修改（UMD 构建） | `ui/vendor/fflate.min.js`、许可证 `ui/vendor/LICENSE.fflate.txt` |
 | Feather Icons | — | MIT | 设置齿轮图标路径（24×24 线框） | 仅引用路径数据 | `ui/index.html`，许可证 `ui/vendor/LICENSE.feather-icons.txt` |
 
 ## 系统库（不随包分发）
@@ -39,4 +40,4 @@
 本项目以 **GPL-3.0** 发布（见 `LICENSE`）。
 
 兼容性说明：GPLv3 与 Apache-2.0（pdf.js）兼容，可从 Apache-2.0 项目取用并整体以 GPLv3 分发；
-MIT（Feather）同样兼容。因此本项目的最终分发物可以合法地以 GPLv3 覆盖，同时保留各第三方组件的原许可声明。
+MIT（fflate、Feather）同样兼容。因此本项目的最终分发物可以合法地以 GPLv3 覆盖，同时保留各第三方组件的原许可声明。

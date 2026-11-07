@@ -35,7 +35,7 @@
    - 边界：以上信息通过实际运行观察（请求头、扩展属性、前端 bundle）获得，未反编译、未复制其程序代码。
    - 声明：本项目与飞牛官方无关联，非官方应用。
 
-4. **Mozilla pdf.js**（Apache-2.0）、**Feather Icons**（MIT）
+4. **Mozilla pdf.js**（Apache-2.0）、**fflate**（MIT）、**Feather Icons**（MIT）
    - 作为第三方组件原样分发，许可证文本随包提供，见 `THIRD_PARTY.md`。
 
 ## 三、商标声明

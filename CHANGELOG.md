@@ -1,3 +1,15 @@
+## 0.8.4
+
+- 新增内置 EPUB 阅读器：fflate 在浏览器内解压，解析 `container.xml` → OPF → spine，
+  目录优先 EPUB3 `nav`、其次 EPUB2 `toc.ncx`；支持目录、上一章/下一章、章节锚点、
+  跨章链接与内嵌图片，纯前端实现，不增加服务端依赖
+- 安全：章节 HTML 白名单清洗（去脚本、iframe、事件属性、外链资源），iframe `sandbox` + CSP；
+  DRM 加密直接拒绝，ZIP 解压总量与生成 HTML 都有上限
+- 修复：0.8.3 将 EPUB 交给飞牛「预览」应用，而该应用前端使用 Chrome 85+ 的 `??=`/`||=`，
+  在 Chrome 83（Android 10 内置 WebView）上语法报错、连文件接口都没有发出；现在 EPUB
+  默认走内置阅读器，不再依赖外部应用
+- 文档：新增 `docs/07-EPUB-预览说明.md`，记录排查证据、实现与安全边界
+
 ## 0.8.3
 
 - 新增 Markdown 预览接口 `GET /api/markdown?path=...`（别名 `/api/md`），
