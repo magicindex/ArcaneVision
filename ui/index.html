@@ -2268,8 +2268,8 @@
     checked = new Set((settings.scope || []).filter(p => p[0] !== '!'));
     excluded = new Set((settings.scope || []).filter(p => p[0] === '!').map(p => p.slice(1)));
     who.textContent = settings.scopeAvailable && settings.scopeAvailable.admin
-      ? '管理员：只列出当前账号可访问的目录；勾选参与检索的目录'
-      : '勾选的目录才会被搜索；点 ▸ 可展开子目录，只勾选需要的子目录即可收窄范围';
+      ? '管理员：只列出当前账号可访问的目录；文件随所在目录一起纳入检索，不单独列出'
+      : '勾选的目录才会被搜索；文件随所在目录一起纳入，不单独列出；点 ▸ 可展开子目录';
     if (!avail.length) { list.innerHTML = '<div>没有可访问目录</div>'; return; }
     list.innerHTML = '';
 
@@ -2338,8 +2338,16 @@
               kids.innerHTML = '<div class="scrow loading" style="padding-left:' + (28 + depth * 20) + 'px">无权查看该目录</div>';
               return;
             }
-            const dirs = (d.entries || []).filter(e => e.dir && !/^[.@]/.test(e.name));
-            if (!dirs.length) { kids.innerHTML = '<div class="scrow loading" style="padding-left:' + (28 + depth * 20) + 'px">没有子目录</div>'; return; }
+            const entries = d.entries || [];
+            const dirs = entries.filter(e => e.dir && !/^[.@]/.test(e.name));
+            const files = entries.filter(e => !e.dir);
+            if (!dirs.length) {
+              const msg = files.length
+                ? '没有子目录（' + files.length + ' 个文件随本目录一起检索）'
+                : '空目录';
+              kids.innerHTML = '<div class="scrow loading" style="padding-left:' + (28 + depth * 20) + 'px">' + msg + '</div>';
+              return;
+            }
             for (const e of dirs) addRow(kids, e.path, null, depth + 1, path);
             if (d.truncated) {
               const tr = document.createElement('div');
