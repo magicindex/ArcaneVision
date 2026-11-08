@@ -10,18 +10,6 @@ LOG_FILE="${DATA_DIR}/logs/xuanlan.log"
 
 mkdir -p "${DATA_DIR}/logs" "${DATA_DIR}/idx" "${ETC_DIR}"
 
-PORT="${TRIM_SERVICE_PORT:-8971}"
-if [ -r "${ETC_DIR}/service_port" ]; then
-    P="$(head -n 1 "${ETC_DIR}/service_port" | tr -d '[:space:]')"
-    case "$P" in ''|*[!0-9]*) ;; *) PORT="$P" ;; esac
-fi
-
-ROOTS="/vol1,/vol2,/vol3,/vol4"
-if [ -r "${ETC_DIR}/xuanlan.conf" ]; then
-    # shellcheck disable=SC1090
-    . "${ETC_DIR}/xuanlan.conf"
-fi
-
 log_msg() { echo "$(date '+%F %T') - $*" >> "${LOG_FILE}"; }
 check_process() { [ -n "${1:-}" ] && kill -0 "${1}" 2>/dev/null; }
 
@@ -65,14 +53,9 @@ start_process() {
     fi
     status && return 0
     rm -f "${APP_DIR}/app.sock"
-    log_msg "starting port=${PORT} roots=${ROOTS}"
+    log_msg "starting via ${APP_DIR}/start.sh"
     cd "${APP_DIR}" || return 1
-    setsid ./bin/xuanlan serve \
-        --port "${PORT}" --bind 127.0.0.1 \
-        --socket "${APP_DIR}/app.sock" \
-        --ui "${APP_DIR}/ui" \
-        --index-dir "${DATA_DIR}/idx" \
-        --roots "${ROOTS}" >> "${LOG_FILE}" 2>&1 &
+    setsid "${APP_DIR}/start.sh" >> "${LOG_FILE}" 2>&1 &
     local pid=$!
     printf '%s' "${pid}" > "${PID_FILE}"
     local i

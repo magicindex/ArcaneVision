@@ -248,8 +248,13 @@ ext4 裸设备读取器已用 `/dev/dm-1` 全卷验证：369 万条记录与 `fi
 ## 服务托管
 
 安装包自带 `xuanlan.service`：首次启动时同步到 `/etc/systemd/system` 并写入 `app.pid`。
-应用中心的 `cmd/main` 把 `status / start / stop` 委派给 `systemctl`，两套入口指向同一个进程，
-不会出现「应用中心显示已退出、实际还在跑」或两个实例抢 socket 的情况。
+`ExecStart` 指向随包安装的 `start.sh`，它在每次启动（含开机自启）时读取
+`/vol1/@appconf/xuanlan/service_port`（安装/配置向导写入的端口）与可选的
+`/vol1/@appconf/xuanlan/xuanlan.conf`（`ROOTS=...` 覆盖索引卷），再把参数交给主程序，
+因此改端口或改索引卷后重启即可生效，不需要改 unit。
+应用中心的 `cmd/main` 把 `status / start / stop` 委派给 `systemctl`，兜底启动同样走
+`start.sh`，两套入口指向同一个进程，不会出现「应用中心显示已退出、实际还在跑」、
+两个实例抢 socket、或开机与手动启动参数不一致的情况。
 
 ```bash
 systemctl status xuanlan      # 查看状态
