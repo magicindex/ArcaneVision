@@ -105,6 +105,7 @@ int  scan_skip_hidden(void);
 int  scan_name_hidden(const char *name);
 /* 可直接用于 getdents/ext4 目录项：name 不要求 NUL 结尾 */
 int  scan_name_skip(const char *name, size_t len);
+void scan_set_progress(volatile uint64_t *p);
 uint32_t store_push_root(xl_store *s, uint8_t flags);
 uint32_t store_push(xl_store *s, uint32_t parent, const char *name, size_t len,
                     uint8_t flags);

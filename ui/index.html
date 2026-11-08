@@ -643,6 +643,7 @@
   <div class="progress hide" id="prog"><i></i></div>
 
   <ul id="list"></ul>
+  <div class="loadmore" id="loadMoreWrap" style="display:none"><button id="loadMore" type="button">加载更多</button></div>
   <div class="empty" id="empty">
     <div class="big">◍</div>
     输入任意字符开始检索<br>
@@ -1979,6 +1980,7 @@
   const spin = $('spin'), prog = $('prog'), dot = $('dot'), stext = $('stext'), scount = $('scount');
   const toast = $('toast');
   let type = '', cat = '', timer = null, seq = 0, sel = -1, items = [], state = {building:false};
+  let searchTotal = 0, searchLoading = false;
 
   function fmtSize(n){
     if (!n) return '';
@@ -2085,6 +2087,7 @@
       frag.appendChild(li);
     });
     list.appendChild(frag);
+    updateMore();
   }
   function paintSel(){
     [...list.children].forEach((el, i) => el.classList.toggle('sel', i === sel));
@@ -2134,7 +2137,8 @@
       .then(d => {
         if (d.error) { list.innerHTML = '<div class="row"><div class="nm">无法列出：' + esc(d.error) + '</div></div>'; return; }
         const items = d.entries || [];
-        crumb.innerHTML = '<b>' + esc(path) + '</b> · ' + (d.count || items.length) + ' 项';
+        crumb.innerHTML = '<b>' + esc(path) + '</b> · ' + (d.count || items.length) + ' 项' +
+          (d.truncated ? '（已截断，仅显示前 4000 项）' : '');
         if (!items.length) { list.innerHTML = '<div class="row"><div class="nm">该文件夹没有可见内容</div></div>'; return; }
         list.innerHTML = '';
         const up = document.createElement('div');
@@ -2337,6 +2341,13 @@
             const dirs = (d.entries || []).filter(e => e.dir && !/^[.@]/.test(e.name));
             if (!dirs.length) { kids.innerHTML = '<div class="scrow loading" style="padding-left:' + (28 + depth * 20) + 'px">没有子目录</div>'; return; }
             for (const e of dirs) addRow(kids, e.path, null, depth + 1, path);
+            if (d.truncated) {
+              const tr = document.createElement('div');
+              tr.className = 'scrow loading';
+              tr.style.paddingLeft = (28 + (depth + 1) * 20) + 'px';
+              tr.textContent = '仅显示前 4000 项';
+              kids.appendChild(tr);
+            }
             refreshInherit();
           }).catch(() => { kids.innerHTML = '<div class="scrow loading">读取失败</div>'; });
         }
@@ -2637,26 +2648,58 @@
     }
   }
 
+  function updateMore(){
+    const wrap = document.getElementById('loadMoreWrap');
+    const btn = document.getElementById('loadMore');
+    if (!wrap || !btn) return;
+    const has = items.length > 0 && items.length < searchTotal;
+    wrap.style.display = has ? '' : 'none';
+    if (has) btn.textContent = '加载更多（已显示 ' + items.length + ' / ≈' + (searchTotal||0).toLocaleString() + '）';
+  }
+
   function search(){
     const term = q.value.trim();
     clearTimeout(timer);
+    searchTotal = 0;
     if (!term) { items = []; render(); meta.textContent = ''; spin.classList.remove('on'); return; }
     if (term.length < 2) { items = []; render(); meta.textContent = '请输入至少 2 个字符'; spin.classList.remove('on'); return; }
     spin.classList.add('on');
     const my = ++seq;
     timer = setTimeout(() => {
-      fetch(API + 'search?q=' + encodeURIComponent(term) + '&limit=200' + (type ? '&type=' + type : '') + (cat ? '&cat=' + cat : ''))
+      fetch(API + 'search?q=' + encodeURIComponent(term) + '&limit=200&offset=0' + (type ? '&type=' + type : '') + (cat ? '&cat=' + cat : ''))
         .then(r => r.json())
         .then(d => {
           if (my !== seq) return;
           spin.classList.remove('on');
           items = d.items || [];
+          searchTotal = d.total || items.length;
           meta.innerHTML = '<b>' + (d.truncated ? '≥' : d.approx ? '≈' : '') + (d.total||0).toLocaleString() + '</b> 项 · ' + (d.ms||0).toFixed(1) + ' ms';
           render();
         })
         .catch(()=>{ if (my===seq){ spin.classList.remove('on'); meta.textContent = '查询失败'; } });
     }, 90);
   }
+
+  document.getElementById('loadMore').onclick = () => {
+    if (searchLoading) return;
+    const term = q.value.trim();
+    if (!term) return;
+    searchLoading = true;
+    spin.classList.add('on');
+    const my = seq;
+    fetch(API + 'search?q=' + encodeURIComponent(term) + '&limit=200&offset=' + items.length +
+          (type ? '&type=' + type : '') + (cat ? '&cat=' + cat : ''))
+      .then(r => r.json())
+      .then(d => {
+        if (my !== seq) return;
+        items = items.concat(d.items || []);
+        searchTotal = d.total || searchTotal;
+        meta.innerHTML = '<b>' + (d.truncated ? '≥' : d.approx ? '≈' : '') + (d.total||0).toLocaleString() + '</b> 项 · ' + (d.ms||0).toFixed(1) + ' ms';
+        render();
+      })
+      .catch(() => {})
+      .finally(() => { searchLoading = false; spin.classList.remove('on'); });
+  };
 
   let lastUsbEnabled = false;
   function status(){

@@ -44,6 +44,40 @@
 typedef struct { char *p; size_t n, cap; } sbuf;
 static void send_simple(int fd, int code, const char *json);
 
+/* 轻量 JSON 语法校验：顶层必须是对象/数组，检查括号配对、字符串闭合与尾部垃圾。
+ * 只用于拒绝明显截断/畸形的请求，不做类型与字段校验。 */
+static int json_ok(const char *s) {
+    const char *p = s;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+    if (*p != '{' && *p != '[') return 0;
+    int stack[64], sp = 0, in_str = 0, esc = 0;
+    for (; *p; p++) {
+        unsigned char c = (unsigned char)*p;
+        if (in_str) {
+            if (esc) { esc = 0; continue; }
+            if (c == '\\') { esc = 1; continue; }
+            if (c == '"') { in_str = 0; continue; }
+            if (c < 0x20) return 0;
+            continue;
+        }
+        if (c == '"') { in_str = 1; continue; }
+        if (c == '{' || c == '[') {
+            if (sp >= (int)(sizeof stack / sizeof stack[0])) return 0;
+            stack[sp++] = c;
+        } else if (c == '}' || c == ']') {
+            if (!sp) return 0;
+            char o = (char)stack[--sp];
+            if ((c == '}' && o != '{') || (c == ']' && o != '[')) return 0;
+            if (!sp) {
+                p++;
+                while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+                return *p == 0;
+            }
+        }
+    }
+    return 0;
+}
+
 static void sb_reserve(sbuf *b, size_t extra) {
     if (b->n + extra + 1 <= b->cap) return;
     size_t want = b->cap ? b->cap : 4096;
@@ -123,9 +157,11 @@ static volatile sig_atomic_t g_stop;
 static int admin_by_uid(int uid) {
     if (uid < 1000) return 0;
     static int cached_first = -2;
+    static time_t cached_at;
     static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
+    time_t now = time(NULL);
     pthread_mutex_lock(&mu);
-    if (cached_first == -2) {
+    if (cached_first == -2 || now - cached_at > 60) {
         int first = -1;
         struct passwd *pw;
         setpwent();
@@ -135,9 +171,16 @@ static int admin_by_uid(int uid) {
         }
         endpwent();
         cached_first = first;
+        cached_at = now;
     }
     pthread_mutex_unlock(&mu);
     return uid == cached_first;
+}
+
+/* USB 外挂盘（/vol00）默认只对管理员账号开放 */
+static int uid_is_admin(int uid) { return uid == 0 || admin_by_uid(uid); }
+static int usb_path_blocked(int uid, const char *p) {
+    return !uid_is_admin(uid) && p && !strncmp(p, "/vol00/", 7);
 }
 static volatile uint64_t g_last_rebuild;
 /* 自动全盘扫描计划：mode 0=关 1=每天 2=每 N 小时 */
@@ -306,6 +349,7 @@ static int build_one(int vi, int verbose) {
 
 static void *build_worker(void *arg) {
     (void)arg;
+    scan_set_progress(&xl_scan_records);
     g_building = 1;
     g_failed = 0;
     g_err[0] = 0;
@@ -514,21 +558,8 @@ static int usb_add_locked(const usb_mount *m) {
     snprintf(v->usb_id, sizeof v->usb_id, "%.*s", (int)(sizeof v->usb_id - 1), m->id);
     usb_idx_file(m->id, v->file, sizeof v->file);
     v->usb = 1;
-    /* 同路径同规则的历史索引可直接复用；否则等重建 */
-    xl_snap sn;
-    if (snapshot_open(v->file, &sn) == 0) {
-        int rules_ok = (sn.h.flags & XL_HDR_SCAN_RULES) != 0;
-        int skip_ok = ((sn.h.flags & XL_HDR_SKIP_HIDDEN) != 0) == scan_skip_hidden();
-        if (rules_ok && skip_ok && !strcmp(sn.root, v->root)) {
-            v->sn = sn;
-            v->ok = 1;
-            v->records = sn.h.rec_count;
-            v->built_at = sn.h.built_at;
-        } else {
-            snapshot_close(&sn);
-            unlink(v->file);
-        }
-    }
+    /* 每次挂载/重启都重建：外接盘可能在别处改过内容，旧快照不可信 */
+    unlink(v->file);
     return g_nvols++;
 }
 
@@ -551,6 +582,8 @@ static void usb_build_finish(usb_job *j, int ok) {
 static void *usb_build_worker(void *arg) {
     usb_job *j = arg;
     xl_store st;
+    volatile uint64_t usb_progress = 0;
+    scan_set_progress(&usb_progress);
     store_init(&st);
     uint64_t t0 = now_ms();
     int rc = scan_tree(j->root, &st, 1, 0);
@@ -1006,6 +1039,7 @@ static char *read_text_file(const char *qs, int uid, size_t *len_out, int *trunc
     if (strncmp(raw, "/vol", 4) || strstr(raw, "..")) { *len_out = (size_t)-1; return NULL; }
     char real[PATH_MAX];
     if (!realpath(raw, real) || strncmp(real, "/vol", 4)) { *len_out = (size_t)-1; return NULL; }
+    if (usb_path_blocked(uid, real)) { *len_out = (size_t)-1; return NULL; }
     if (uid >= 0) {
         char dir[PATH_MAX];
         snprintf(dir, sizeof dir, "%s", real);
@@ -1313,7 +1347,7 @@ static void handle_file(sbuf *out, const char *req, const char *qs, int uid, int
         sb_puts(out, "{\"error\":\"not found\"}");
         return;
     }
-    if (strncmp(real, "/vol", 4) || !strstr(real, "/")) {
+    if (strncmp(real, "/vol", 4) || !strstr(real, "/") || usb_path_blocked(uid, real)) {
         *code = 403;
         sb_puts(out, "{\"error\":\"path not allowed\"}");
         return;
@@ -1602,6 +1636,7 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
     pthread_rwlock_rdlock(&g_rw);
     for (int i = 0; i < g_nvols; i++) {
         if (!g_vols[i].ok) continue;
+        if (g_vols[i].usb && !admin) continue;   /* 外挂盘默认只对管理员可见 */
         uint32_t n = 0;
         int t = 0;
         uint64_t vtotal = 0;
@@ -1684,6 +1719,7 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
             nlen = strlen(name);
             is_dir = (lh[j].flags & XL_F_DIR) != 0;
             is_usb = strncmp(path, "/vol00/", 7) == 0;
+            if (is_usb && !admin) { j++; continue; }
             size = lh[j].size; mtime = lh[j].mtime;
             j++;
         } else {
@@ -1791,7 +1827,7 @@ static void handle_dir(sbuf *out, const char *qs, int uid, int admin) {
             sb_puts(out, "{\"error\":\"not found\",\"entries\":[]}");
             return;
         }
-        if (strncmp(rp, "/vol", 4) != 0) {
+        if (strncmp(rp, "/vol", 4) != 0 || (!admin && !strncmp(rp, "/vol00/", 7))) {
             sb_puts(out, "{\"error\":\"forbidden\",\"entries\":[]}");
             return;
         }
@@ -1824,6 +1860,7 @@ static void handle_dir(sbuf *out, const char *qs, int uid, int admin) {
         for (int vi = 0; vi < g_nvols && shown < MAX_ENT; vi++) {
             vol_t *v = &g_vols[vi];
             if (!v->ok) continue;
+            if (v->usb && !admin) continue;
             uint32_t did;
             int found = !strcmp(dir, v->root) ? snap_root_id(&v->sn, &did)
                                               : dir_find_id(&v->sn, dir, &did);
@@ -1867,6 +1904,7 @@ static void handle_dir(sbuf *out, const char *qs, int uid, int admin) {
         size_t nlh = live_dir(dir, &lh);
         for (size_t li = 0; li < nlh && shown < MAX_ENT; li++) {
             const char *p = lh[li].path;
+            if (!admin && strncmp(p, "/vol00/", 7) == 0) continue;
             const char *bn = strrchr(p, '/');
             bn = bn ? bn + 1 : p;
             int is_dir = (lh[li].flags & XL_F_DIR) != 0;
@@ -2190,6 +2228,7 @@ static int fs_guard(int uid, const char *p, int want_dir, char *err, size_t cap)
     if (g_trash[0] && !strncmp(p, g_trash, strlen(g_trash))) {
         snprintf(err, cap, "回收站内的文件不可操作"); return -1;
     }
+    if (usb_path_blocked(uid, p)) { snprintf(err, cap, "USB 外挂盘仅管理员可操作"); return -1; }
     if (system_path(p)) { snprintf(err, cap, "系统目录不可操作"); return -1; }
 
     struct stat st;
@@ -2253,6 +2292,7 @@ static int json_str_array(const char *body, const char *key, char *out, size_t s
 
 static void handle_fsop(sbuf *out, const char *body, int uid)
 {
+    if (!json_ok(body)) { sb_puts(out, "{\"ok\":false,\"error\":\"bad json\"}"); return; }
     char op[16] = {0}, dest[4200] = {0};
     json_str(body, "\"op\"", op, sizeof op, "");
     json_str(body, "\"dest\"", dest, sizeof dest, "");
@@ -2379,6 +2419,7 @@ static void handle_trash_get(sbuf *out, int uid)
 
 static void handle_trash_post(sbuf *out, const char *body, int uid, int admin)
 {
+    if (!json_ok(body)) { sb_puts(out, "{\"ok\":false,\"error\":\"bad json\"}"); return; }
     char op[16] = {0};
     json_str(body, "\"op\"", op, sizeof op, "");
     if (!strcmp(op, "empty")) {
@@ -2485,7 +2526,7 @@ static void handle_settings_get(sbuf *out, int uid, int admin, int all) {
         pthread_rwlock_rdlock(&g_rw);
         for (int i = g_nvols_local; i < g_nvols; i++) {
             vol_t *v = &g_vols[i];
-            if (!v->usb) continue;
+            if (!v->usb || !admin) continue;
             if (ufirst++) sb_puts(out, ",");
             sb_puts(out, "{\"path\":\"");
             sb_json(out, v->root, strlen(v->root));
@@ -2579,6 +2620,7 @@ static int save_scope_body(const char *body, int uid) {
 
 static void handle_settings_post(sbuf *out, const char *body, int uid, int admin) {
     static _Thread_local char ow_keep[8192];
+    if (!json_ok(body)) { sb_puts(out, "{\"ok\":false,\"error\":\"bad json\"}"); return; }
     /* 全局设置只允许管理员修改；普通用户只能保存自己的检索范围 */
     /* 普通用户只保存自己的检索范围；全局字段忽略，不能因为 UI 一并提交就拒绝 */
     if (!admin) {
@@ -3489,6 +3531,7 @@ static void handle_transcode(int fd, const char *qs, int uid) {
     if (strncmp(raw, "/vol", 4) || strstr(raw, "..")) { send_simple(fd, 403, "{\"error\":\"path not allowed\"}"); return; }
     char real[PATH_MAX];
     if (!realpath(raw, real) || strncmp(real, "/vol", 4)) { send_simple(fd, 404, "{\"error\":\"not found\"}"); return; }
+    if (usb_path_blocked(uid, real)) { send_simple(fd, 403, "{\"error\":\"path not allowed\"}"); return; }
     struct stat tst;
     if (stat(real, &tst) != 0 || !S_ISREG(tst.st_mode)) { send_simple(fd, 403, "{\"error\":\"not a regular file\"}"); return; }
     if (uid >= 0) {

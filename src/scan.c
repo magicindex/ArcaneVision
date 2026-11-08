@@ -98,6 +98,10 @@ void store_shrink(xl_store *s) {
 }
 
 volatile uint64_t xl_scan_records;
+/* 进度计数：默认写全局；具体构建线程可改写到自己的计数器，避免 USB/本地互相串 */
+static _Thread_local volatile uint64_t *g_progress;
+
+void scan_set_progress(volatile uint64_t *p) { g_progress = p; }
 
 /* 根文件系统的 st_dev：进入其它设备的挂载点时不递归（等价 find -xdev） */
 static dev_t g_scan_dev;
@@ -122,7 +126,8 @@ static uint32_t add_rec(xl_store *s, uint32_t parent, const char *name, size_t l
     r->reserved = 0;
     memcpy(s->names + s->names_len, name, len);
     s->names_len += len;
-    xl_scan_records++;
+    if (g_progress) (*g_progress)++;
+    else xl_scan_records++;
     return s->n++;
 }
 
