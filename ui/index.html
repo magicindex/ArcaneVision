@@ -538,6 +538,43 @@
     .setbox .acell{flex-wrap:wrap}
     .setbox .acell select{max-width:100%}
   }
+  /* 设置面板灰度分层：卡片外深一档、卡片内浅一档，仅用中性灰 */
+  .setbox{background:linear-gradient(180deg,#1a1b1d,#121315);border-color:#3a3d41}
+  .setbox .setbody{background:#0e0f10}
+  .setbox .scard{background:#1b1d1f;border-color:#34373b}
+  .setbox h2{color:#e3e5e8}
+  .setbox h3{color:#9aa0a6}
+  .setbox .k,.setbox .acell .k{color:#c9cdd2}
+  .setbox .admrow,.setbox .rbline{color:#b6babf}
+  .setbox .hint{color:#8b9096}
+  .setbox .hint2{color:#797e84}
+  .setbox select{background:#1a1c1f;color:#d6d9dd;border-color:#3a3d41}
+  .setbox .rbline select,.setbox .rbline input{background:#1a1c1f;color:#d6d9dd;border-color:#3a3d41}
+  .setbox .row2:hover,.setbox .acell:hover{background:#232528}
+  .setbox .scrow{background:#232528}
+  .setbox .scrow:hover{background:#2b2e32}
+  .setbox .acl label{background:#232528}
+  .setbox .acl label:hover{background:#2b2e32}
+  .setbox button.act{background:#232528;color:#c9cdd2;border-color:#3a3d41}
+  .setbox button.act.primary{background:#2a2c2f;color:#eceef0;border-color:#5a5e63}
+  html[data-theme="light"] .setbox{background:linear-gradient(180deg,#ffffff,#f2f3f4);border-color:#d3d5d8}
+  html[data-theme="light"] .setbox .setbody{background:#e7e8ea}
+  html[data-theme="light"] .setbox .scard{background:#fbfbfc;border-color:#d1d3d6}
+  html[data-theme="light"] .setbox h2{color:#1d2024}
+  html[data-theme="light"] .setbox h3{color:#6a6e73}
+  html[data-theme="light"] .setbox .k,html[data-theme="light"] .setbox .acell .k{color:#33373c}
+  html[data-theme="light"] .setbox .admrow,html[data-theme="light"] .setbox .rbline{color:#33373c}
+  html[data-theme="light"] .setbox .hint{color:#6a6e73}
+  html[data-theme="light"] .setbox .hint2{color:#878b90}
+  html[data-theme="light"] .setbox select{background:#fff;color:#24282d;border-color:#cfd2d6}
+  html[data-theme="light"] .setbox .rbline select,html[data-theme="light"] .setbox .rbline input{background:#fff;color:#24282d;border-color:#cfd2d6}
+  html[data-theme="light"] .setbox .row2:hover,html[data-theme="light"] .setbox .acell:hover{background:#f0f1f2}
+  html[data-theme="light"] .setbox .scrow{background:#f1f2f3}
+  html[data-theme="light"] .setbox .scrow:hover{background:#e9eaec}
+  html[data-theme="light"] .setbox .acl label{background:#f1f2f3}
+  html[data-theme="light"] .setbox .acl label:hover{background:#e9eaec}
+  html[data-theme="light"] .setbox button.act{background:#f1f2f3;color:#33373c;border-color:#cfd2d6}
+  html[data-theme="light"] .setbox button.act.primary{background:#e9eaec;color:#1d2024;border-color:#9aa0a6}
 </style>
 </head>
 <body>
