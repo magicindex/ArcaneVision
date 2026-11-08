@@ -243,6 +243,9 @@
   .setbox .setbody::-webkit-scrollbar-thumb:hover{background:rgba(120,160,220,.42);background-clip:content-box}
   .setbox h2{margin:0 0 14px;font-size:15px;font-weight:600;color:#dbe8f8;letter-spacing:1px}
   .setbox h3{margin:20px 0 8px;font-size:12.5px;font-weight:500;color:#7f93b4;letter-spacing:1px}
+  .setbox .scard{border:1px solid rgba(120,160,220,.16);border-radius:12px;padding:12px 14px 10px;margin:0 0 12px}
+  .setbox .scard > h3{margin:0 0 10px}
+  html[data-theme="light"] .setbox .scard{border-color:rgba(15,23,42,.14)}
   .setbox .row2{display:flex;align-items:center;gap:12px;padding:9px 10px;border-radius:9px}
   .setbox .agrid{display:grid;grid-template-columns:1fr 1fr;gap:2px 14px}
   .setbox .acell{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:9px}
@@ -2133,13 +2136,13 @@
   const setmask = document.createElement('div');
   setmask.className = 'setmask';
   setmask.innerHTML = '<div class="setbox"><button class="sclose" id="setX" type="button" aria-label="关闭设置">×</button><div class="setbody"><h2>设置</h2>' +
-    '<h3>打开位置</h3><div class="row2"><div class="k">文件与文档打开于</div>' +
+    '<section class="scard"><h3>打开位置</h3><div class="row2"><div class="k">文件与文档打开于</div>' +
     '<select id="openIn"><option value="embed">当前窗口子窗口</option><option value="window">新窗口（新标签页）</option>' +
-    '</select></div>' +
-    '<h3>打开方式关联</h3><div id="assoc"></div>' +
+    '</select></div></section>' +
+    '<section class="scard"><h3>打开方式关联</h3><div id="assoc"></div>' +
     '<div class="hint" id="ooHint"></div>' +
-    '<div class="hint" id="pvHint"></div>' +
-    '<h3>自动全盘扫描</h3>' +
+    '<div class="hint" id="pvHint"></div></section>' +
+    '<section class="scard"><h3>自动全盘扫描</h3>' +
     '<div class="rbline"><select id="rbMode">' +
     '<option value="off">关闭</option><option value="daily">每天定时</option>' +
     '<option value="interval">按间隔</option></select>' +
@@ -2147,21 +2150,21 @@
     '<span id="rbEvery">每 <input type="number" id="rbHours" min="1" max="168" value="6"> 小时</span></div>' +
     '<div class="hint" id="rbHint"></div>' +
     '<label class="admrow" id="hiddenRow"><input type="checkbox" id="skipHidden" checked>忽略隐藏目录与系统杂项' +
-    '<span class="hint2">默认开启；跳过 . / @ 开头目录，以及 Thumbs.db、desktop.ini、__MACOSX 等杂项；保存后自动重建索引</span></label>' +
-    '<h3>USB 外挂设备</h3>' +
+    '<span class="hint2">默认开启；跳过 . / @ 开头目录，以及 Thumbs.db、desktop.ini、__MACOSX 等杂项；保存后自动重建索引</span></label></section>' +
+    '<section class="scard"><h3>USB 外挂设备</h3>' +
     '<label class="admrow" id="usbRow"><input type="checkbox" id="usbEnabled">启用 USB 外挂设备检索' +
     '<span class="hint2">默认关闭；只索引 /vol00 下的外挂挂载，使用独立索引，设备失效不影响本地索引</span></label>' +
     '<label class="admrow" id="usbWatchRow"><input type="checkbox" id="usbWatch" checked>USB 挂载路径检测' +
     '<span class="hint2">掉线自动关闭检索并清理旧索引；挂载点变化自动重建</span></label>' +
     '<div class="hint" id="usbHint"></div>' +
-    '<div class="hint" id="usbRebuildRow"><a href="#" id="usbRebuild" style="color:#59d3c8">立即重建 USB 索引</a></div>' +
-    '<h3>检索范围</h3><div class="hint" id="aclWho"></div>' +
+    '<div class="hint" id="usbRebuildRow"><a href="#" id="usbRebuild" style="color:#59d3c8">立即重建 USB 索引</a></div></section>' +
+    '<section class="scard"><h3>检索范围</h3><div class="hint" id="aclWho"></div>' +
     '<label class="admrow" id="strictRow"><input type="checkbox" id="strictHome" checked>严格模式' +
     '<span class="hint2">默认开启；家目录内忽略「所有人」授权，只认属主与指定用户/组</span></label>' +
     '<div class="hint" id="strictHint" style="display:none">严格模式：位于 /volN/&lt;用户&gt;/ 下的目录，即使带「所有人」读写权限，也只有属主和显式授权的用户/组可见；关闭后按文件权限原样判定（who 777 就谁都能看到）。</div>' +
     '<label class="admrow" id="allRow"><input type="checkbox" id="showAll">全盘视角（管理员）' +
     '<span class="hint2">默认关闭；开启后可选择任意目录</span></label>' +
-    '<div class="acl" id="aclList"></div></div>' +
+    '<div class="acl" id="aclList"></div></section></div>' +
     '<div class="foot"><button class="act" id="setClose">关闭</button>' +
     '<button class="act primary" id="setSave">保存</button></div></div>';
   document.body.appendChild(setmask);
