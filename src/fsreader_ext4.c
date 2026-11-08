@@ -441,8 +441,9 @@ int fsreader_ext4_scan(const char *dev, const char *mount_root, xl_store *s,
     size_t ndirs = 0, nmeta = 0;
     collect_dir_inodes(&fs, &dirs, &ndirs, &meta, &nmeta, verbose);
 
-    blockref *blocks = xmalloc((size_t)ndirs * 2 * sizeof(blockref) + 16);
-    size_t nb = 0, bcap = (size_t)ndirs * 2 + 16;
+    size_t bcap = (size_t)ndirs * 2 + 16;
+    blockref *blocks = xmalloc(bcap * sizeof(blockref));
+    size_t nb = 0;
 
     for (size_t i = 0; i < ndirs; i++) {
         uint32_t nblk = (dirs[i].size + fs.block_size - 1) / fs.block_size;

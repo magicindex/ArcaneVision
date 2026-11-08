@@ -39,8 +39,14 @@ static int mkdir_p(const char *p, mode_t mode)
 
 static int copy_file(const char *src, const char *dst, char *err, size_t cap)
 {
-    int in = open(src, O_RDONLY | O_NOFOLLOW);
+    int in = open(src, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
     if (in < 0) { set_err(err, cap, "打不开源文件: %s", src); return -1; }
+    struct stat sst;
+    if (fstat(in, &sst) != 0 || !S_ISREG(sst.st_mode)) {
+        close(in);
+        set_err(err, cap, "不支持的文件类型: %s", src);
+        return -1;
+    }
     /* O_EXCL|O_NOFOLLOW：避免并发替换目标为软链造成越界覆盖 */
     int out = open(dst, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0644);
     if (out < 0) { close(in); set_err(err, cap, "无法写入目标: %s", dst); return -1; }
@@ -125,6 +131,20 @@ int fs_copy_path(const char *src, const char *dst, uid_t uid, char *err, size_t 
     if (!src || !dst || !*src || !*dst) { set_err(err, cap, "参数为空", NULL); return -1; }
     struct stat st;
     if (lstat(src, &st) != 0) { set_err(err, cap, "源不存在: %s", src); return -1; }
+    /* 目标目录不能在源目录内部，否则递归复制会自我放大直到磁盘写满 */
+    {
+        char rsrc[PATH_MAX], rdir[PATH_MAX], dp[PATH_MAX];
+        if (!realpath(src, rsrc)) { set_err(err, cap, "源路径无法解析: %s", src); return -1; }
+        snprintf(dp, sizeof dp, "%s", dst);
+        char *sl = strrchr(dp, '/');
+        if (!sl || sl == dp) { set_err(err, cap, "目标路径非法: %s", dst); return -1; }
+        *sl = 0;
+        if (!realpath(dp, rdir)) { set_err(err, cap, "目标目录无法解析: %s", dp); return -1; }
+        size_t rl = strlen(rsrc);
+        if (!strncmp(rdir, rsrc, rl) && (rdir[rl] == '/' || rdir[rl] == 0)) {
+            set_err(err, cap, "不能复制到源目录内部", NULL); return -1;
+        }
+    }
     return copy_tree(src, dst, uid, err, cap);
 }
 

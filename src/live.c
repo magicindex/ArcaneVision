@@ -400,6 +400,9 @@ static void *reader(void *arg) {
                             L.q[L.qt].mask = m->mask;
                             L.qt = nxt;
                             pthread_cond_signal(&L.cv);
+                        } else {
+                            /* 内部队列也满：事件被丢弃，必须触发整卷重建兜底 */
+                            __atomic_store_n(&L.fatal, 1, __ATOMIC_RELAXED);
                         }
                         pthread_mutex_unlock(&L.mu);
                     }

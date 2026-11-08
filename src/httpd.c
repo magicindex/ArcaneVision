@@ -35,12 +35,14 @@
 #include <unistd.h>
 
 #define MAX_VOL   8
+#define SCOPE_MAX 512   /* 每个用户的检索范围条目上限（含排除项） */
 #define N_WORKERS 4
 #define Q_CAP     128
-#define REQ_MAX   16384
+#define REQ_MAX   131072   /* 头 + body；设置里的检索范围可能较大 */
 
 /* ---------- 动态缓冲 ---------- */
 typedef struct { char *p; size_t n, cap; } sbuf;
+static void send_simple(int fd, int code, const char *json);
 
 static void sb_reserve(sbuf *b, size_t extra) {
     if (b->n + extra + 1 <= b->cap) return;
@@ -112,6 +114,7 @@ static int  g_usb_had;
 static char g_usb_msg[1024] = "USB 检索未开启";
 static char g_usb_sig[4096];
 static uint64_t g_usb_last_tick;
+static int  g_usb_missing_ticks;
 static pthread_rwlock_t g_rw = PTHREAD_RWLOCK_INITIALIZER;
 
 static volatile sig_atomic_t g_stop;
@@ -612,15 +615,21 @@ static void usb_drop_locked(void) {
 static void usb_sync(void) {
     usb_mount cur[MAX_USB];
     int cn = g_usb_enabled ? usb_collect(cur, MAX_USB) : 0;
-    int path_changed = 0, added = 0;
+    int path_changed = 0, path_ignored = 0, added = 0;
     pthread_rwlock_wrlock(&g_rw);
     for (int i = g_nvols - 1; i >= g_nvols_local; i--) {
         vol_t *v = &g_vols[i];
         if (!v->usb) continue;
         int k = -1;
         for (int j = 0; j < cn; j++) if (!strcmp(cur[j].id, v->usb_id)) { k = j; break; }
-        if (k < 0) { usb_remove_locked(i); continue; }
+        if (k < 0) {
+            /* 路径检测关闭时保留旧索引，由用户手动处理；关闭检索时照常清理 */
+            if (g_usb_enabled && !g_usb_watch) { path_ignored = 1; continue; }
+            usb_remove_locked(i);
+            continue;
+        }
         if (strcmp(cur[k].root, v->root) != 0) {
+            if (g_usb_enabled && !g_usb_watch) { path_ignored = 1; continue; }
             path_changed = 1;
             usb_remove_locked(i);        /* 旧挂载路径索引作废 */
         }
@@ -637,14 +646,26 @@ static void usb_sync(void) {
     int any = 0;
     for (int i = g_nvols_local; i < g_nvols; i++) if (g_vols[i].usb) any = 1;
     if (any) g_usb_had = 1;
+    if (cn > 0) g_usb_missing_ticks = 0;
     if (g_usb_enabled && cn == 0 && g_usb_watch && g_usb_had) {
-        usb_drop_locked();
-        g_usb_enabled = 0;
-        g_usb_had = 0;
-        snprintf(g_usb_msg, sizeof g_usb_msg, "USB 设备已断开，旧索引已清理，已自动关闭 USB 检索");
-        usb_cfg_save();
+        /* 连续两次（约 4 秒）都检测不到才关闭，避免 U 盘重新挂载瞬间被误判 */
+        if (++g_usb_missing_ticks >= 2) {
+            usb_drop_locked();
+            g_usb_enabled = 0;
+            g_usb_had = 0;
+            g_usb_missing_ticks = 0;
+            snprintf(g_usb_msg, sizeof g_usb_msg,
+                     "USB 设备已断开，旧索引已清理，已自动关闭 USB 检索");
+            usb_cfg_save();
+        } else {
+            snprintf(g_usb_msg, sizeof g_usb_msg,
+                     "USB 设备暂时不可用，等待恢复（%d/2）", g_usb_missing_ticks);
+        }
     } else if (path_changed) {
         snprintf(g_usb_msg, sizeof g_usb_msg, "USB 挂载点已变化，正在按新路径重建索引");
+    } else if (path_ignored) {
+        snprintf(g_usb_msg, sizeof g_usb_msg,
+                 "USB 状态已变化；路径检测已关闭，未自动清理或重建索引");
     } else if (added) {
         snprintf(g_usb_msg, sizeof g_usb_msg, "已检测到 USB 设备，正在建索引");
     } else if (!g_usb_enabled) {
@@ -666,6 +687,7 @@ static void usb_tick(void) {
     char sig[4096];
     usb_sig_of(cur, cn, sig, sizeof sig);
     if (strcmp(sig, g_usb_sig) != 0) { usb_sync(); return; }
+    if (g_usb_missing_ticks > 0) { usb_sync(); return; }
     int retry = 0;
     pthread_rwlock_rdlock(&g_rw);
     for (int i = g_nvols_local; i < g_nvols; i++)
@@ -682,11 +704,13 @@ static void usb_enable(int on) {
         usb_drop_locked();
         g_usb_had = 0;
         g_usb_sig[0] = 0;
+        g_usb_missing_ticks = 0;
         snprintf(g_usb_msg, sizeof g_usb_msg, "USB 检索已关闭，旧索引已清理");
         pthread_rwlock_unlock(&g_rw);
     } else {
         g_usb_had = 0;
         g_usb_sig[0] = 0;
+        g_usb_missing_ticks = 0;
         usb_sync();
     }
     usb_cfg_save();
@@ -994,8 +1018,9 @@ static char *read_text_file(const char *qs, int uid, size_t *len_out, int *trunc
     }
     struct stat st;
     if (stat(real, &st) != 0 || !S_ISREG(st.st_mode)) { *len_out = (size_t)-1; return NULL; }
-    int fd = open(real, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    int fd = open(real, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
     if (fd < 0) { *len_out = (size_t)-1; return NULL; }
+    { struct stat fst; if (fstat(fd, &fst) != 0 || !S_ISREG(fst.st_mode)) { close(fd); *len_out = (size_t)-1; return NULL; } }
     size_t want = (size_t)st.st_size < CAP ? (size_t)st.st_size : CAP;
     char *buf = malloc(want + 1);
     if (!buf) { close(fd); *len_out = (size_t)-1; return NULL; }
@@ -1311,7 +1336,7 @@ static void handle_file(sbuf *out, const char *req, const char *qs, int uid, int
             return;
         }
     }
-    int fd = open(real, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    int fd = open(real, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
     if (fd < 0) {
         *code = 404;
         sb_puts(out, "{\"error\":\"not found\"}");
@@ -1564,9 +1589,9 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
     if (!strcmp(type, "dir")) o.dirs_only = 1;
     else if (!strcmp(type, "file")) o.files_only = 1;
 
-    char (*sc)[512] = xmalloc(sizeof(char[512]) * 64);
+    char (*sc)[512] = xmalloc(sizeof(char[512]) * SCOPE_MAX);
     int nsc = -1;
-    if (uid >= 0) nsc = scope_load(uid, sc, 64);
+    if (uid >= 0) nsc = scope_load(uid, sc, SCOPE_MAX);
 
     uint64_t t0 = now_ms();
     ref_t *refs = NULL;
@@ -2489,11 +2514,11 @@ static void handle_settings_get(sbuf *out, int uid, int admin, int all) {
                       : 0), g_building ? "true" : "false");
     }
     /* 当前用户的检索范围 */
-    char (*sc)[512] = xmalloc(sizeof(char[512]) * 64);
+    char (*sc)[512] = xmalloc(sizeof(char[512]) * SCOPE_MAX);
     int sn = -1;
     if (uid >= 0) {
-        sn = scope_load(uid, sc, 64);
-        if (sn < 0) sn = scope_default(uid, sc, 64);
+        sn = scope_load(uid, sc, SCOPE_MAX);
+        if (sn < 0) sn = scope_default(uid, sc, SCOPE_MAX);
     }
     sb_puts(out, ",\"scope\":[");
     for (int i = 0; i < sn; i++) {
@@ -2515,45 +2540,51 @@ static void handle_settings_get(sbuf *out, int uid, int admin, int all) {
     free(buf);
 }
 
-static void save_scope_body(const char *body, int uid) {
-    if (uid < 0) return;
+/* 保存检索范围；返回 0=成功，-1=条目过多，-2=格式错误/被截断 */
+static int save_scope_body(const char *body, int uid) {
+    if (uid < 0) return 0;
     const char *sp = strstr(body, "\"scope\"");
-    if (!sp) return;
+    if (!sp) return 0;                     /* 没提交 scope：保持原值 */
     const char *lb = strchr(sp, '[');
-    const char *rb = lb ? strchr(lb, ']') : NULL;
-    if (!lb || !rb) return;
-    char (*sc)[512] = xmalloc(sizeof(char[512]) * 64);
-    int n = 0;
+    if (!lb) return -2;
+    const char *rb = strchr(lb, ']');
+    if (!rb) return -2;                    /* body 被截断 */
+    char (*sc)[512] = xmalloc(sizeof(char[512]) * SCOPE_MAX);
+    int n = 0, overflow = 0;
     const char *q = lb;
-    while (n < 64 && (q = strchr(q, '"')) != NULL && q < rb) {
+    while ((q = strchr(q, '"')) != NULL && q < rb) {
         q++;
         const char *e2 = strchr(q, '"');
         if (!e2 || e2 > rb) break;
         size_t pl = (size_t)(e2 - q);
         if (pl > 0 && pl < 512) {
-            memcpy(sc[n], q, pl);
-            sc[n][pl] = 0;
-            if (sc[n][0] == '/' || (sc[n][0] == '!' && sc[n][1] == '/')) n++;
+            int valid = (q[0] == '/') || (q[0] == '!' && pl > 1 && q[1] == '/');
+            if (valid) {
+                if (n < SCOPE_MAX) {
+                    memcpy(sc[n], q, pl);
+                    sc[n][pl] = 0;
+                    n++;
+                } else {
+                    overflow = 1;
+                }
+            }
         }
         q = e2 + 1;
     }
-    scope_save(uid, sc, n);
+    int rc = overflow ? -1 : 0;
+    if (!rc) scope_save(uid, sc, n);
     free(sc);
+    return rc;
 }
 
 static void handle_settings_post(sbuf *out, const char *body, int uid, int admin) {
     static _Thread_local char ow_keep[8192];
     /* 全局设置只允许管理员修改；普通用户只能保存自己的检索范围 */
-    int has_global = body && (strstr(body, "\"openWith\"") || strstr(body, "\"openIn\"") ||
-                              strstr(body, "\"strictHome\"") || strstr(body, "\"rebuild\"") ||
-                              strstr(body, "\"skipHidden\"") || strstr(body, "\"usbEnabled\"") ||
-                              strstr(body, "\"usbWatch\""));
-    if (has_global && !admin) {
-        sb_puts(out, "{\"ok\":false,\"error\":\"需要管理员权限\"}");
-        return;
-    }
+    /* 普通用户只保存自己的检索范围；全局字段忽略，不能因为 UI 一并提交就拒绝 */
     if (!admin) {
-        save_scope_body(body, uid);
+        int sr = save_scope_body(body, uid);
+        if (sr == -1) { sb_puts(out, "{\"ok\":false,\"error\":\"检索范围最多 512 项\"}"); return; }
+        if (sr == -2) { sb_puts(out, "{\"ok\":false,\"error\":\"设置内容格式错误或已被截断\"}"); return; }
         sb_puts(out, "{\"ok\":true}");
         return;
     }
@@ -2620,6 +2651,12 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
         pthread_mutex_unlock(&g_rcfg_mu);
     }
 
+    {
+        int sr = save_scope_body(body, uid);
+        if (sr == -1) { sb_puts(out, "{\"ok\":false,\"error\":\"检索范围最多 512 项\"}"); return; }
+        if (sr == -2) { sb_puts(out, "{\"ok\":false,\"error\":\"设置内容格式错误或已被截断\"}"); return; }
+    }
+
     int strict_home = json_bool_def(body, "\"strictHome\"", perm_strict_home);
     perm_set_strict_home(strict_home);
 
@@ -2647,7 +2684,6 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
         return;
     }
 
-    save_scope_body(body, uid);
     if (skip_hidden != scan_skip_hidden()) {
         scan_set_skip_hidden(skip_hidden);
         fprintf(stderr, "xuanlan serve: skipHidden=%d，触发全盘重建\n", skip_hidden);
@@ -3106,6 +3142,13 @@ static void handle_client(int fd) {
     }
     if (!n) { close(fd); return; }
     req[n] = 0;
+    if (!strstr(req, "\r\n\r\n")) {
+        send_simple(fd, n + 1 >= sizeof(req) ? 431 : 400,
+                    n + 1 >= sizeof(req) ? "{\"error\":\"headers too large\"}"
+                                         : "{\"error\":\"bad request\"}");
+        close(fd);
+        return;
+    }
 
     /* 头部可能先到、正文后到：按 Content-Length 继续读；chunked 则读到结束块 */
     size_t hdr_end = 0;
@@ -3136,7 +3179,17 @@ static void handle_client(int fd) {
                     n += (size_t)r;
                     req[n] = 0;
                 }
+                if (n + 1 >= sizeof(req) && !memmem(req + hdr_end, n - hdr_end, "\r\n0\r\n", 5)) {
+                    send_simple(fd, 413, "{\"error\":\"request too large\"}");
+                    close(fd);
+                    return;
+                }
             } else if (clen) {
+                if (clen > sizeof(req) - 1 - hdr_end) {
+                    send_simple(fd, 413, "{\"error\":\"request too large\"}");
+                    close(fd);
+                    return;
+                }
                 size_t need = hdr_end + clen;
                 while (n < need && n + 1 < sizeof(req)) {
                     if (now_ms() > rdl) break;
@@ -3190,7 +3243,11 @@ static void handle_client(int fd) {
             q = e + 2;
             if (sz == 0) break;
             if (q + sz > end) sz = (size_t)(end - q);
-            if (o + sz >= sizeof(bodybuf)) sz = sizeof(bodybuf) - 1 - o;
+            if (o + sz >= sizeof(bodybuf)) {
+                send_simple(fd, 413, "{\"error\":\"request too large\"}");
+                close(fd);
+                return;
+            }
             memcpy(bodybuf + o, q, sz);
             o += sz;
             q += sz;

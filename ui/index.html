@@ -2546,6 +2546,7 @@
     const ow = {};
     setmask.querySelectorAll('#assoc select').forEach(sel => { ow[sel.dataset.k] = sel.value; });
     const scope = Array.from(checked).concat(Array.from(excluded).map(p => '!' + p));
+    if (scope.length > 512) { alert('检索范围最多 512 项（含排除项），当前 ' + scope.length + ' 项，请减少勾选。'); return; }
     if (!checked.size && !confirm('没有勾选任何目录，保存后将检索不到结果（只能浏览）。仍要保存吗？')) return;
     const rbMode = setmask.querySelector('#rbMode').value;
     const tm = (setmask.querySelector('#rbTime').value || '03:00').split(':');
