@@ -572,7 +572,7 @@ static void usb_build_finish(usb_job *j, int ok) {
         g_vols[i].building = 0;
         if (!ok) {
             g_vols[i].ok = 0;
-            snprintf(g_usb_msg, sizeof g_usb_msg, "USB 索引构建失败：%s", j->root);
+            snprintf(g_usb_msg, sizeof g_usb_msg, "USB 索引构建失败");
         }
     }
     pthread_rwlock_unlock(&g_rw);
@@ -616,8 +616,8 @@ static void *usb_build_worker(void *arg) {
         v->build_ms = ms;
         v->building = 0;
         installed = 1;
-        snprintf(g_usb_msg, sizeof g_usb_msg, "USB 设备在线：%s（%llu 条）",
-                 v->root, (unsigned long long)v->records);
+        snprintf(g_usb_msg, sizeof g_usb_msg, "USB 设备在线（已索引 %llu 条）",
+                 (unsigned long long)v->records);
     }
     pthread_rwlock_unlock(&g_rw);
     if (!installed) snapshot_close(&ns);
