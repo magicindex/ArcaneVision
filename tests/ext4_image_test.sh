@@ -32,6 +32,11 @@ mkdir -p /mnt/xl/@eaDir /mnt/xl/中文目录/深层/.cache
 echo meta > /mnt/xl/@eaDir/meta.txt
 echo hidden > "/mnt/xl/中文目录/深层/.cache/x.txt"
 echo dot > /mnt/xl/.hiddenfile
+# 系统杂项：默认也应跳过
+echo t > /mnt/xl/Thumbs.db
+echo t > "/mnt/xl/中文目录/深层/desktop.ini"
+mkdir -p "/mnt/xl/中文目录/深层/__MACOSX"
+echo m > "/mnt/xl/中文目录/深层/__MACOSX/a.txt"
 find /mnt/xl | sort > /w/build/ext4test/find.txt
 /w/bin/xuanlan build --root /mnt/xl --out /w/build/ext4test/getdents.idx --include-hidden >/dev/null 2>&1
 umount /mnt/xl
@@ -61,8 +66,8 @@ esac
 IDX_S="$TMP/skip.idx"
 ./bin/xuanlan build --device "$IMG" --root /mnt/xl --out "$IDX_S" >/dev/null 2>&1
 ./bin/xuanlan dump --index "$IDX_S" > "$TMP/skip.dump"
-if grep -qE '/(@eaDir|\.cache|\.hiddenfile)' "$TMP/skip.dump"; then
-    echo "FAIL: 默认未跳过隐藏项"; grep -E '/(@eaDir|\.cache|\.hiddenfile)' "$TMP/skip.dump" | head; exit 1
+if grep -qiE '/(@eaDir|\.cache|\.hiddenfile|Thumbs\.db|desktop\.ini|__MACOSX)' "$TMP/skip.dump"; then
+    echo "FAIL: 默认未跳过隐藏/杂项"; grep -iE '/(@eaDir|\.cache|\.hiddenfile|Thumbs\.db|desktop\.ini|__MACOSX)' "$TMP/skip.dump" | head; exit 1
 fi
 n_skip=$(wc -l < "$TMP/skip.dump")
 echo "skip-hidden=$n_skip full=$n_raw"

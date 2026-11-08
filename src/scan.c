@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -50,6 +51,22 @@ void scan_set_skip_hidden(int on) { g_skip_hidden = on ? 1 : 0; }
 int  scan_skip_hidden(void) { return g_skip_hidden; }
 int  scan_name_hidden(const char *name) {
     return name && (name[0] == '.' || name[0] == '@');
+}
+
+/* 系统杂项：Windows/macOS 目录元数据与回收站，大小写不敏感 */
+static const char *const g_junk_names[] = {
+    "Thumbs.db", "ehthumbs.db", "ehthumbs_vista.db",
+    "desktop.ini", "__MACOSX", "$RECYCLE.BIN", "System Volume Information",
+};
+
+int scan_name_skip(const char *name, size_t len) {
+    if (!name || !len) return 0;
+    if (name[0] == '.' || name[0] == '@') return 1;
+    for (size_t i = 0; i < sizeof(g_junk_names) / sizeof(g_junk_names[0]); i++) {
+        size_t jl = strlen(g_junk_names[i]);
+        if (jl == len && strncasecmp(name, g_junk_names[i], len) == 0) return 1;
+    }
+    return 0;
 }
 
 static int excluded(const char *path) {
@@ -145,9 +162,9 @@ static int walk(xl_store *s, uint32_t self, const char *path, int want_stat,
             const char *name = d->d_name;
             if (name[0] == '.' && (name[1] == 0 || (name[1] == '.' && name[2] == 0)))
                 continue;
-            if (g_skip_hidden && scan_name_hidden(name))
-                continue;
             size_t nlen = strlen(name);
+            if (g_skip_hidden && scan_name_skip(name, nlen))
+                continue;
             if (nlen == 0 || nlen > XL_NAME_MAX) continue;
 
             uint8_t flags = 0;

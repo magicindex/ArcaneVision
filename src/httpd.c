@@ -3369,6 +3369,8 @@ int httpd_serve(const xl_svc_opts *o) {
         /* 旧快照（或切换 skipHidden 后）与当前扫描设置不一致时重建一次 */
         int built_skip = (g_vols[i].sn.h.flags & XL_HDR_SKIP_HIDDEN) != 0;
         if (built_skip != scan_skip_hidden()) need_build = 1;
+        /* 旧版本快照没有杂项过滤，需要按新规则重建一次 */
+        if (!(g_vols[i].sn.h.flags & XL_HDR_SCAN_RULES)) need_build = 1;
     }
     if (need_build) start_build();
 

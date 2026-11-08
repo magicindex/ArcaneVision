@@ -17,6 +17,7 @@
 /* v2：记录内 size/mtime 为真实值；旧索引启动时重建 */
 #define XL_VERSION     2u
 #define XL_HDR_SKIP_HIDDEN 1u   /* 快照头 flags 位：建索引时跳过了 . / @ 隐藏项 */
+#define XL_HDR_SCAN_RULES  2u   /* 快照头 flags 位：使用含 Thumbs.db/desktop.ini 等杂项过滤的扫描规则 */
 #define XL_HDR_SIZE    128u
 #define XL_ALIGN       4096u
 #define XL_BLOCK       128u   /* 倒排块内条目数 */
@@ -97,10 +98,13 @@ void store_free(xl_store *s);
 int  scan_tree(const char *root, xl_store *s, int want_stat, int verbose);
 void scan_add_exclude(const char *prefix);
 int  scan_has_exclude(void);
-/* 忽略 . / @ 开头的隐藏目录与文件（默认开启；由设置 skipHidden 控制） */
+/* 忽略 . / @ 开头的隐藏项，以及 Thumbs.db、desktop.ini 等系统杂项（默认开启；
+ * 由设置 skipHidden 控制） */
 void scan_set_skip_hidden(int on);
 int  scan_skip_hidden(void);
 int  scan_name_hidden(const char *name);
+/* 可直接用于 getdents/ext4 目录项：name 不要求 NUL 结尾 */
+int  scan_name_skip(const char *name, size_t len);
 uint32_t store_push_root(xl_store *s, uint8_t flags);
 uint32_t store_push(xl_store *s, uint32_t parent, const char *name, size_t len,
                     uint8_t flags);

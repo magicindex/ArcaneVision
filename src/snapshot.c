@@ -34,7 +34,7 @@ int snapshot_save(const char *path, const xl_store *s, const xl_index *ix,
     memset(&h, 0, sizeof(h));
     memcpy(h.magic, XL_MAGIC, 8);
     h.version = XL_VERSION;
-    h.flags = scan_skip_hidden() ? XL_HDR_SKIP_HIDDEN : 0;
+    h.flags = XL_HDR_SCAN_RULES | (scan_skip_hidden() ? XL_HDR_SKIP_HIDDEN : 0);
     h.rec_count = s->n;
     h.names_bytes = s->names_len;
     h.tri_count = ix->tri_count;
