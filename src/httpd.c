@@ -2022,6 +2022,20 @@ static int json_bool_def(const char *buf, const char *key, int def) {
     return def;
 }
 
+/* 扫描设置：skipHidden 默认开启（忽略 . / @ 开头的隐藏目录与文件） */
+static void scan_cfg_load(void) {
+    char sp[1200];
+    settings_path(sp, sizeof sp);
+    scan_set_skip_hidden(1);
+    FILE *f = fopen(sp, "r");
+    if (!f) return;
+    char buf[16384];
+    size_t n = fread(buf, 1, sizeof buf - 1, f);
+    fclose(f);
+    buf[n] = 0;
+    scan_set_skip_hidden(json_bool_def(buf, "\"skipHidden\"", 1));
+}
+
 static void handle_settings_get(sbuf *out, int uid, int admin, int all) {
     char sp[1200];
     settings_path(sp, sizeof sp);
@@ -2052,6 +2066,7 @@ static void handle_settings_get(sbuf *out, int uid, int admin, int all) {
     }
     sb_printf(out, ",\"strictHome\":%s",
               json_bool_def(buf, "\"strictHome\"", 1) ? "true" : "false");
+    sb_printf(out, ",\"skipHidden\":%s", scan_skip_hidden() ? "true" : "false");
     sb_puts(out, ",\"onlyoffice\":");
     onlyoffice_probe(out);
     sb_puts(out, ",\"preview\":");
@@ -2126,7 +2141,8 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
     static _Thread_local char ow_keep[8192];
     /* 全局设置只允许管理员修改；普通用户只能保存自己的检索范围 */
     int has_global = body && (strstr(body, "\"openWith\"") || strstr(body, "\"openIn\"") ||
-                              strstr(body, "\"strictHome\"") || strstr(body, "\"rebuild\""));
+                              strstr(body, "\"strictHome\"") || strstr(body, "\"rebuild\"") ||
+                              strstr(body, "\"skipHidden\""));
     if (has_global && !admin) {
         sb_puts(out, "{\"ok\":false,\"error\":\"需要管理员权限\"}");
         return;
@@ -2202,6 +2218,9 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
     int strict_home = json_bool_def(body, "\"strictHome\"", perm_strict_home);
     perm_set_strict_home(strict_home);
 
+    /* 隐藏目录开关：默认开启；改变后立即重建索引（旧快照里可能仍有 @eaDir 等条目） */
+    int skip_hidden = json_bool_def(body, "\"skipHidden\"", scan_skip_hidden());
+
     char sp[1200], tmp[1300];
     settings_path(sp, sizeof sp);
     snprintf(tmp, sizeof tmp, "%s.tmp", sp);
@@ -2210,8 +2229,10 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
     fchmod(fileno(f), 0600);
     const char *m = rc.mode == 1 ? "daily" : (rc.mode == 2 ? "interval" : "off");
     fprintf(f, "{\"settingsVersion\":2,\"openWith\":%.*s,\"openIn\":\"%s\",\"strictHome\":%s,"
+               "\"skipHidden\":%s,"
                "\"rebuild\":{\"mode\":\"%s\",\"hour\":%d,\"minute\":%d,\"hours\":%d}}",
             (int)len, b, open_in, strict_home ? "true" : "false",
+            skip_hidden ? "true" : "false",
             m, rc.hour, rc.minute, rc.hours);
     fflush(f);
     fsync(fileno(f));
@@ -2222,6 +2243,11 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
     }
 
     save_scope_body(body, uid);
+    if (skip_hidden != scan_skip_hidden()) {
+        scan_set_skip_hidden(skip_hidden);
+        fprintf(stderr, "xuanlan serve: skipHidden=%d，触发全盘重建\n", skip_hidden);
+        start_build();
+    }
     sb_puts(out, "{\"ok\":true}");
 }
 
@@ -3331,14 +3357,19 @@ int httpd_serve(const xl_svc_opts *o) {
 
     g_last_rebuild = now_ms();
     rebuild_cfg_load();
+    scan_cfg_load();
     if (live_start(o->roots, 1) == 0)
         fprintf(stderr, "xuanlan serve: fanotify 实时增量已启用\n");
     else
         fprintf(stderr, "xuanlan serve: fanotify 不可用（需 root/CAP_SYS_ADMIN），仅周期对账\n");
 
     int need_build = 0;
-    for (int i = 0; i < g_nvols; i++)
-        if (!g_vols[i].ok) need_build = 1;
+    for (int i = 0; i < g_nvols; i++) {
+        if (!g_vols[i].ok) { need_build = 1; continue; }
+        /* 旧快照（或切换 skipHidden 后）与当前扫描设置不一致时重建一次 */
+        int built_skip = (g_vols[i].sn.h.flags & XL_HDR_SKIP_HIDDEN) != 0;
+        if (built_skip != scan_skip_hidden()) need_build = 1;
+    }
     if (need_build) start_build();
 
     struct pollfd pfd[2];

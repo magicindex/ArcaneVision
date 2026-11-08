@@ -392,7 +392,10 @@ static int read_dir_blocks(ext4_fs *fs, blockref *v, size_t n,
                     const char *nm = (const char *)(blk + off + 8);
                     int dot = (name_len == 1 && nm[0] == '.') ||
                               (name_len == 2 && nm[0] == '.' && nm[1] == '.');
-                    if (!dot) {
+                    /* 默认跳过 . / @ 开头的隐藏项；不产生边，子树自然也不会被 DFS 展开 */
+                    int hidden = scan_skip_hidden() && name_len > 0 &&
+                                 (nm[0] == '.' || nm[0] == '@');
+                    if (!dot && !hidden) {
                         if (*names_len + name_len > *names_cap) {
                             while (*names_len + name_len > *names_cap) *names_cap *= 2;
                             *names = xrealloc(*names, *names_cap);

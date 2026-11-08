@@ -42,6 +42,16 @@ void scan_add_exclude(const char *prefix) {
 
 int scan_has_exclude(void) { return g_excl_n > 0; }
 
+/* 隐藏项：. 开头（.DS_Store、.recycle）或 @ 开头（@eaDir 等群晖/fnOS 元数据目录）。
+ * 默认跳过；设置页「忽略隐藏目录」关闭后可重新纳入索引。 */
+static int g_skip_hidden = 1;
+
+void scan_set_skip_hidden(int on) { g_skip_hidden = on ? 1 : 0; }
+int  scan_skip_hidden(void) { return g_skip_hidden; }
+int  scan_name_hidden(const char *name) {
+    return name && (name[0] == '.' || name[0] == '@');
+}
+
 static int excluded(const char *path) {
     for (size_t i = 0; i < g_excl_n; i++) {
         size_t n = strlen(g_excl[i]);
@@ -134,6 +144,8 @@ static int walk(xl_store *s, uint32_t self, const char *path, int want_stat,
             off += d->d_reclen;
             const char *name = d->d_name;
             if (name[0] == '.' && (name[1] == 0 || (name[1] == '.' && name[2] == 0)))
+                continue;
+            if (g_skip_hidden && scan_name_hidden(name))
                 continue;
             size_t nlen = strlen(name);
             if (nlen == 0 || nlen > XL_NAME_MAX) continue;

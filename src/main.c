@@ -39,7 +39,7 @@ static char *mount_for(const char *dev) {
 static void usage(void) {
     fputs("玄览 / Arcane Vision — 全盘文件索引\n"
           "用法:\n"
-          "  xuanlan build --root DIR --out FILE [--exclude DIR]... [--no-stat] [-v]\n"
+          "  xuanlan build --root DIR --out FILE [--exclude DIR]... [--include-hidden] [--no-stat] [-v]\n"
           "  xuanlan query --index FILE [-n N] [--json] [--dirs|--files] TERM\n"
           "  xuanlan info  --index FILE\n"
           "  xuanlan dump  --index FILE\n"
@@ -61,6 +61,7 @@ int main(int argc, char **argv) {
             else if ((!strcmp(argv[i], "--device") || !strcmp(argv[i], "--raw")) && i + 1 < argc)
                 device = argv[++i];
             else if (!strcmp(argv[i], "--exclude") && i + 1 < argc) scan_add_exclude(argv[++i]);
+            else if (!strcmp(argv[i], "--include-hidden")) scan_set_skip_hidden(0);
             else if (!strcmp(argv[i], "--stat")) want_stat = 1;
             else if (!strcmp(argv[i], "--no-stat")) want_stat = 0;
             else if (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--verbose")) verbose = 1;

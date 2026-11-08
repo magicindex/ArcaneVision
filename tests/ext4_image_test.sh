@@ -27,12 +27,17 @@ echo hello > "/mnt/xl/with space.txt"
 echo hi > /mnt/xl/a/b/c/deep.txt
 ln -s /etc/passwd /mnt/xl/link_to_passwd
 ln -s . /mnt/xl/loop_self
+# 隐藏项：默认应被跳过（--include-hidden 时与 find 对齐）
+mkdir -p /mnt/xl/@eaDir /mnt/xl/中文目录/深层/.cache
+echo meta > /mnt/xl/@eaDir/meta.txt
+echo hidden > "/mnt/xl/中文目录/深层/.cache/x.txt"
+echo dot > /mnt/xl/.hiddenfile
 find /mnt/xl | sort > /w/build/ext4test/find.txt
-/w/bin/xuanlan build --root /mnt/xl --out /w/build/ext4test/getdents.idx >/dev/null 2>&1
+/w/bin/xuanlan build --root /mnt/xl --out /w/build/ext4test/getdents.idx --include-hidden >/dev/null 2>&1
 umount /mnt/xl
 '
 
-./bin/xuanlan build --device "$IMG" --root /mnt/xl --out "$IDX_R" -v
+./bin/xuanlan build --device "$IMG" --root /mnt/xl --out "$IDX_R" --include-hidden -v
 ./bin/xuanlan dump --index "$IDX_G" | sort > "$TMP/getdents.dump"
 ./bin/xuanlan dump --index "$IDX_R" | sort > "$TMP/raw.dump"
 
@@ -52,4 +57,15 @@ case "$raw_meta" in
     *'"mtime":0'*) echo "FAIL raw mtime missing"; exit 1 ;;
 esac
 
-echo "OK: 裸设备扫描结果与 getdents 完全一致"
+# 默认（skipHidden=on）：裸扫也不应出现 . / @ 隐藏项
+IDX_S="$TMP/skip.idx"
+./bin/xuanlan build --device "$IMG" --root /mnt/xl --out "$IDX_S" >/dev/null 2>&1
+./bin/xuanlan dump --index "$IDX_S" > "$TMP/skip.dump"
+if grep -qE '/(@eaDir|\.cache|\.hiddenfile)' "$TMP/skip.dump"; then
+    echo "FAIL: 默认未跳过隐藏项"; grep -E '/(@eaDir|\.cache|\.hiddenfile)' "$TMP/skip.dump" | head; exit 1
+fi
+n_skip=$(wc -l < "$TMP/skip.dump")
+echo "skip-hidden=$n_skip full=$n_raw"
+[ "$n_skip" -lt "$n_raw" ] || { echo "FAIL: 跳过隐藏后记录数未减少"; exit 1; }
+
+echo "OK: 裸设备扫描结果与 getdents 完全一致（--include-hidden 全量对齐）"

@@ -246,12 +246,28 @@ static void add_tree(const char *path, int ri, int depth) {
         if (de->d_name[0] == '.' &&
             (de->d_name[1] == 0 || (de->d_name[1] == '.' && de->d_name[2] == 0)))
             continue;
+        if (scan_skip_hidden() && scan_name_hidden(de->d_name))
+            continue;
         int n = snprintf(child, sizeof(child), "%s/%s", path, de->d_name);
         if (n <= 0 || (size_t)n >= sizeof(child)) continue;
         add_tree(child, ri, depth + 1);
         if (L.adds_n >= LV_MAX_ADDS) break;
     }
     closedir(d);
+}
+
+/* 路径中任一层以 . 或 @ 开头即视为隐藏项（与建索引时的规则一致） */
+static int path_hidden(const char *path) {
+    const char *p = path;
+    while (*p) {
+        while (*p == '/') p++;
+        const char *e = strchr(p, '/');
+        size_t n = e ? (size_t)(e - p) : strlen(p);
+        if (n && (p[0] == '.' || p[0] == '@')) return 1;
+        if (!e) break;
+        p = e + 1;
+    }
+    return 0;
 }
 
 static void apply_one(const char *dir, const char *name, uint32_t mask) {
@@ -261,6 +277,7 @@ static void apply_one(const char *dir, const char *name, uint32_t mask) {
     char path[PATH_MAX];
     int cl = snprintf(path, sizeof(path), "%s/%s", dir, name);
     if (cl <= 0 || (size_t)cl >= sizeof(path)) return;
+    if (scan_skip_hidden() && path_hidden(path)) return;
 
     if (mask & (FAN_DELETE | FAN_MOVED_FROM)) {
         del_put2(path, (mask & FAN_ONDIR) != 0);

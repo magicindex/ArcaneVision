@@ -2140,6 +2140,8 @@
     '<span id="rbDaily"><input type="time" id="rbTime" value="03:00"></span>' +
     '<span id="rbEvery">每 <input type="number" id="rbHours" min="1" max="168" value="6"> 小时</span></div>' +
     '<div class="hint" id="rbHint"></div>' +
+    '<label class="admrow" id="hiddenRow"><input type="checkbox" id="skipHidden" checked>忽略隐藏目录' +
+    '<span class="hint2">默认开启；跳过 . 或 @ 开头的目录/文件（如 @eaDir）；保存后自动重建索引</span></label>' +
     '<h3>检索范围</h3><div class="hint" id="aclWho"></div>' +
     '<label class="admrow" id="strictRow"><input type="checkbox" id="strictHome" checked>严格模式' +
     '<span class="hint2">默认开启；家目录内忽略「所有人」授权，只认属主与指定用户/组</span></label>' +
@@ -2381,6 +2383,15 @@
       }
     }
     {
+      const hcb = setmask.querySelector('#skipHidden');
+      if (hcb) {
+        hcb.checked = settings.skipHidden !== false;
+        const hrow = setmask.querySelector('#hiddenRow');
+        const isAdmin = !!(settings.scopeAvailable && settings.scopeAvailable.admin);
+        if (hrow) hrow.style.display = isAdmin ? '' : 'none';
+      }
+    }
+    {
       const allRow = setmask.querySelector('#allRow');
       const cbAll = setmask.querySelector('#showAll');
       const isAdmin = !!(settings.scopeAvailable && settings.scopeAvailable.admin);
@@ -2445,14 +2456,16 @@
     };
     const oi = setmask.querySelector('#openIn').value;
     const strictHome = !!setmask.querySelector('#strictHome').checked;
+    const skipHidden = !!setmask.querySelector('#skipHidden').checked;
     fetch(API + 'settings', { method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ openWith: ow, openIn: oi, strictHome, scope, rebuild, settingsVersion: 2 }) })
+      body: JSON.stringify({ openWith: ow, openIn: oi, strictHome, skipHidden, scope, rebuild, settingsVersion: 2 }) })
       .then(r => r.json()).then(d => {
         if (d && d.ok === false) {
           alert('保存失败：' + (d.error || '未知错误'));
           return;
         }
-        settings.openWith = ow; settings.scope = scope; settings.settingsVersion = 2; openIn = oi; settings.strictHome = strictHome;
+        settings.openWith = ow; settings.scope = scope; settings.settingsVersion = 2; openIn = oi;
+        settings.strictHome = strictHome; settings.skipHidden = skipHidden;
         setmask.classList.remove('on');
         search();
       }).catch(e => alert('保存失败：' + (e && e.message || e)));
