@@ -2748,7 +2748,7 @@ static void handle_acl_list(sbuf *out, int uid, int admin, int all) {
         /* 管理员全盘视角：直接给卷根，展开时不再过滤 */
         pthread_rwlock_rdlock(&g_rw);
         for (int vi = 0; vi < g_nvols; vi++) {
-            if (!g_vols[vi].ok || g_vols[vi].usb) continue;
+            if (!g_vols[vi].ok) continue;
             if (shown++) sb_puts(out, ",");
             sb_puts(out, "{\"path\":\"");
             sb_json(out, g_vols[vi].root, strlen(g_vols[vi].root));
@@ -2764,6 +2764,15 @@ static void handle_acl_list(sbuf *out, int uid, int admin, int all) {
     for (int vi = 0; vi < g_nvols && shown < 200; vi++) {
         vol_t *v = &g_vols[vi];
         if (!v->ok) continue;
+        if (v->usb) {
+            /* 外接分区作为单一根节点，子目录展开时再列，不要把分区内容平铺到顶层 */
+            if (!admin) continue;
+            if (shown++) sb_puts(out, ",");
+            sb_puts(out, "{\"path\":\"");
+            sb_json(out, v->root, strlen(v->root));
+            sb_puts(out, "\",\"kind\":\"accessible\"}");
+            continue;
+        }
         uint32_t rootid = XL_ROOT;
         for (uint32_t i = 0; i < (uint32_t)v->sn.h.rec_count; i++)
             if (v->sn.recs[i].parent == XL_ROOT) { rootid = i; break; }

@@ -108,7 +108,7 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
 
 ## 现在是什么状态
 
-当前版本 **0.8.20**，更新记录见 [CHANGELOG.md](CHANGELOG.md)，本次发布说明见
+当前版本 **0.8.21**，更新记录见 [CHANGELOG.md](CHANGELOG.md)，本次发布说明见
 [RELEASE_NOTES.md](RELEASE_NOTES.md)。支持明暗双主题，默认使用飞牛账号身份与系统目录授权。
 
 ### 0.8.9–0.8.17 更新内容
