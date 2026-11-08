@@ -2235,15 +2235,18 @@
       cb.onchange = () => {
         const pre = path + '/';
         if (cb.checked) {
-          /* 选中 = 整棵子树纳入：清掉该子树下的排除项 */
+          /* 选中 = 整棵子树纳入：清掉该子树下的排除项与重复子项 */
           excluded.delete(path); checked.add(path);
           for (const e of Array.from(excluded)) if (e.startsWith(pre)) excluded.delete(e);
+          for (const c of Array.from(checked)) if (c !== path && c.startsWith(pre)) checked.delete(c);
         } else {
+          const parentOn = parentPath ? effOn(parentPath) : false;
           checked.delete(path);
-          if (parentPath && checked.has(parentPath)) excluded.add(path);
-          else excluded.delete(path);
-          /* 取消 = 该子树下显式勾选一并取消 */
+          /* 取消 = 该子树下显式勾选与排除项一并取消 */
           for (const c of Array.from(checked)) if (c.startsWith(pre)) checked.delete(c);
+          for (const e of Array.from(excluded)) if (e.startsWith(pre)) excluded.delete(e);
+          if (parentOn) excluded.add(path);
+          else excluded.delete(path);
         }
         refreshInherit();
       };
@@ -2269,6 +2272,7 @@
             const dirs = (d.entries || []).filter(e => e.dir && !/^[.@]/.test(e.name));
             if (!dirs.length) { kids.innerHTML = '<div class="scrow loading" style="padding-left:' + (28 + depth * 20) + 'px">没有子目录</div>'; return; }
             for (const e of dirs) addRow(kids, e.path, null, depth + 1, path);
+            refreshInherit();
           }).catch(() => { kids.innerHTML = '<div class="scrow loading">读取失败</div>'; });
         }
       };
@@ -2280,59 +2284,80 @@
         if (/\/\d+$/.test(it.path) || it.kind === 'granted') checked.add(it.path);
       }
     }
+    /* 与后端 scope_allows 一致：最长前缀命中，排除串更深才算排除；更深路径可重新包含 */
+    function depthIn(set, path){
+      let d = -1;
+      for (const s of set) if ((path === s || path.startsWith(s + '/')) && s.length > d) d = s.length;
+      return d;
+    }
+    function effOn(path){ return depthIn(checked, path) > depthIn(excluded, path); }
     function refreshInherit(){
-      const rows = list.querySelectorAll('.scrow');
-      rows.forEach(x => {
-        if (!x.dataset.parent) return;
-        const inp = x.querySelector('input');
-        const path = x.dataset.path;
-        const inh = checked.has(x.dataset.parent);
-        inp.checked = checked.has(path) || (inh && !excluded.has(path));
-        inp.title = (inh && !excluded.has(path)) ? '随上级目录包含；取消勾选可单独排除' : '';
-        const xt = x.querySelector('.xtag');
-        if (xt) xt.style.display = (inh && excluded.has(path)) ? '' : 'none';
-      });
-      /* 上级显示半选：子树里有排除项，或有未随上级勾选的子项 */
-      rows.forEach(x => {
-        const inp = x.querySelector('input');
-        const path = x.dataset.path;
-        if (!inp || !path) return;
-        const pre = path + '/';
-        let partial = false;
-        if (inp.checked) {
-          for (const e of excluded) if (e.startsWith(pre)) { partial = true; break; }
-        } else {
-          for (const c of checked) if (c.startsWith(pre)) { partial = true; break; }
-        }
-        inp.indeterminate = partial;
-      });
-      /* 自下而上：上级状态由已展开的子目录决定——全未选则上级不选，部分选中则半选 */
+      const rows = Array.from(list.querySelectorAll('.scrow')).filter(x => x.dataset.path);
+      /* 直接子节点索引：三态推导与“是否已展开”都基于它 */
       const kids = new Map();
       rows.forEach(x => {
         const p = x.dataset.parent;
         if (p) { if (!kids.has(p)) kids.set(p, []); kids.get(p).push(x); }
       });
+      /* 1) 有效状态：祖先勾选可逐级传递，排除按最深前缀判定 */
+      rows.forEach(x => {
+        const inp = x.querySelector('input');
+        const path = x.dataset.path;
+        const on = effOn(path);
+        inp.checked = on;
+        inp.title = (on && !checked.has(path)) ? '随上级目录包含；取消勾选可单独排除' : '';
+        const xt = x.querySelector('.xtag');
+        if (xt) xt.style.display = (excluded.has(path) && !on) ? '' : 'none';
+      });
+      /* 2) 折叠/未展开的行按前缀判断：有更深层勾选或被排除 → 半选（-），不再是空框 */
+      rows.forEach(x => {
+        const path = x.dataset.path;
+        if (kids.has(path)) return;
+        const inp = x.querySelector('input');
+        const pre = path + '/';
+        let partial = false;
+        if (inp.checked) {
+          for (const e of excluded) if (e.startsWith(pre) && !effOn(e)) { partial = true; break; }
+        } else {
+          for (const c of checked) if (c.startsWith(pre) && effOn(c)) { partial = true; break; }
+        }
+        /* 半选时置 checked=false：再点一下即“全选”，而不是误取消 */
+        if (partial) { inp.checked = false; inp.indeterminate = true; }
+        else inp.indeterminate = false;
+      });
+      /* 3) 自下而上：上级状态由已展开的子目录决定。全选才勾，部分选中半选 */
       for (let i = rows.length - 1; i >= 0; i--) {
         const x = rows[i], path = x.dataset.path, ch = kids.get(path);
         if (!ch || !ch.length) continue;
         const inp = x.querySelector('input');
-        let any = false, all = true;
+        let any = false, all = true, ind = false;
         ch.forEach(k => {
           const ki = k.querySelector('input');
-          const on = ki.checked || ki.indeterminate;
-          if (on) any = true; else all = false;
+          if (ki.checked || ki.indeterminate) any = true; else all = false;
+          if (ki.indeterminate) ind = true;
         });
-        if (all) all = any ? true : false;
-        inp.checked = any;
-        inp.indeterminate = any && !all;
-        /* 子级全取消 → 上级同步退出检索范围 */
+        const pre = path + '/';
         if (!any) {
+          const wasOn = effOn(path);
+          inp.checked = false; inp.indeterminate = false;
+          /* 子级全取消 → 上级同步退出检索范围 */
           checked.delete(path);
-          if (x.dataset.parent && checked.has(x.dataset.parent)) excluded.add(path);
+          for (const e of Array.from(excluded)) if (e.startsWith(pre)) excluded.delete(e);
+          excluded.delete(path);
+          if (wasOn && x.dataset.parent && effOn(x.dataset.parent)) excluded.add(path);
+        } else if (all && !ind) {
+          inp.checked = true; inp.indeterminate = false;
+          /* 子级全选等价于整棵子树纳入：收敛为上级路径，避免保存一堆重复子项 */
+          for (const c of Array.from(checked)) if (c !== path && c.startsWith(pre)) checked.delete(c);
+          for (const e of Array.from(excluded)) if (e === path || e.startsWith(pre)) excluded.delete(e);
+          checked.add(path);
+        } else {
+          inp.checked = false; inp.indeterminate = true;
         }
       }
     }
     for (const it of avail) addRow(list, it.path, it.kind, 0);
+    refreshInherit();
     function setChecked(fn){
       const next = new Set();
       avail.forEach(a => { if (fn(a.path, a.kind)) next.add(a.path); });
@@ -2340,6 +2365,7 @@
       const snapshot = new Set(checked);
       list.innerHTML = '';
       for (const it of avail) addRow(list, it.path, it.kind, 0);
+      refreshInherit();
       // 恢复子目录勾选状态不需要深展开，父级已覆盖
       void snapshot;
     }
