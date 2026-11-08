@@ -263,6 +263,8 @@
   .setbox .rbline select,.setbox .rbline input{background:#0d1526;color:#cfe0f5;border:1px solid #1e2a44;border-radius:7px;padding:4px 8px;font-size:12.5px}
   .setbox .rbline input[type=number]{width:64px}
   .setbox .hint2{font-size:11px;color:#5d6c8a}
+  .setbox .admrow.disabled{opacity:.45;cursor:not-allowed}
+  .setbox .admrow.disabled input{cursor:not-allowed}
   .setbox .acl{display:flex;flex-direction:column;gap:3px}
   .setbox .acl > div{display:block}
   .usb-tag{display:inline-block;font-size:10px;line-height:1;padding:2px 5px;margin-right:6px;
@@ -2414,7 +2416,14 @@
       if (ucb) ucb.checked = settings.usbEnabled === true;
       if (wcb) wcb.checked = settings.usbWatch !== false;
       const urb = setmask.querySelector('#usbRebuildRow');
-      if (urb) urb.style.display = (isAdmin && settings.usbEnabled) ? '' : 'none';
+      const syncUsbRows = () => {
+        const on = !!(ucb && ucb.checked);
+        if (wcb) wcb.disabled = !on;
+        if (wrow) wrow.classList.toggle('disabled', !on);
+        if (urb) urb.style.display = (isAdmin && on) ? '' : 'none';
+      };
+      syncUsbRows();
+      if (ucb) ucb.onchange = syncUsbRows;
       if (uh) {
         let txt = settings.usbMessage || 'USB 检索未开启';
         const ms = settings.usbMounts || [];
