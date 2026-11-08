@@ -9,6 +9,7 @@
 
 #include <arpa/inet.h>
 #include <ctype.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
@@ -92,6 +93,9 @@ typedef struct {
     char     file[1024];
     xl_snap  sn;
     int      ok;
+    int      building;
+    int      usb;                 /* 1 = USB 外挂卷，独立快照 */
+    char     usb_id[128];         /* 文件系统 UUID（挂载名变化时用来认同一设备） */
     uint64_t records;
     uint64_t built_at;
     uint64_t build_ms;
@@ -99,6 +103,15 @@ typedef struct {
 
 static vol_t g_vols[MAX_VOL];
 static int   g_nvols;
+static int   g_nvols_local;       /* 前 g_nvols_local 个是 /volN 本地卷 */
+
+/* USB 外挂设备检索（默认关闭，单独索引，/vol00 挂载） */
+static int  g_usb_enabled;
+static int  g_usb_watch = 1;
+static int  g_usb_had;
+static char g_usb_msg[1024] = "USB 检索未开启";
+static char g_usb_sig[4096];
+static uint64_t g_usb_last_tick;
 static pthread_rwlock_t g_rw = PTHREAD_RWLOCK_INITIALIZER;
 
 static volatile sig_atomic_t g_stop;
@@ -295,7 +308,7 @@ static void *build_worker(void *arg) {
     g_err[0] = 0;
     g_build_start = now_ms();
     live_clear();                      /* 基线即将重建，旧 delta 作废 */
-    for (int i = 0; i < g_nvols && !g_stop; i++) {
+    for (int i = 0; i < g_nvols_local && !g_stop; i++) {
         g_cur_vol = i;
         g_floor_after = 0;
         xl_scan_records = 0;
@@ -320,6 +333,373 @@ static void start_build(void) {
         return;
     }
     pthread_detach(th);
+}
+
+
+/* ---------- USB 外挂设备（fnOS 外接存储挂载在 /vol00/ 下） ---------- */
+#define MAX_USB 8
+
+typedef struct { char root[512]; char dev[256]; char id[128]; } usb_mount;
+
+static int usb_json_bool(const char *b, const char *key, int def) {
+    if (!b) return def;
+    const char *k = strstr(b, key);
+    if (!k) return def;
+    const char *c = strchr(k + strlen(key), ':');
+    if (!c) return def;
+    c++;
+    while (*c == ' ' || *c == '\t' || *c == '\n' || *c == '\r') c++;
+    if (!strncmp(c, "true", 4)) return 1;
+    if (!strncmp(c, "false", 5)) return 0;
+    return def;
+}
+
+static void usb_unescape(const char *in, char *out, size_t cap) {
+    size_t o = 0;
+    for (size_t i = 0; in[i] && o + 1 < cap; i++) {
+        if (in[i] == '\\' && in[i+1] >= '0' && in[i+1] <= '7' &&
+            in[i+2] >= '0' && in[i+2] <= '7' && in[i+3] >= '0' && in[i+3] <= '7') {
+            out[o++] = (char)(((in[i+1]-'0') << 6) | ((in[i+2]-'0') << 3) | (in[i+3]-'0'));
+            i += 3;
+        } else out[o++] = in[i];
+    }
+    out[o] = 0;
+}
+
+static void usb_safe_id(const char *in, char *out, size_t cap) {
+    size_t o = 0;
+    for (const char *p = in; *p && o + 1 < cap; p++) {
+        unsigned char c = (unsigned char)*p;
+        out[o++] = (isalnum(c) || c == '-' || c == '_' || c == '.') ? (char)c : '-';
+    }
+    out[o] = 0;
+    if (!o) snprintf(out, cap, "usbdisk");
+}
+
+static void usb_cfg_path(char *out, size_t cap) {
+    char tmp[1200];
+    snprintf(tmp, sizeof tmp, "%s", g_idx_dir);
+    char *sl = strrchr(tmp, '/');
+    if (sl) *sl = 0;
+    snprintf(out, cap, "%s/usb.conf", tmp);
+}
+
+static void usb_cfg_save(void) {
+    char p[1300], t[1400];
+    usb_cfg_path(p, sizeof p);
+    snprintf(t, sizeof t, "%s.tmp", p);
+    FILE *f = fopen(t, "w");
+    if (!f) return;
+    fprintf(f, "{\"enabled\":%s,\"watch\":%s}\n",
+            g_usb_enabled ? "true" : "false", g_usb_watch ? "true" : "false");
+    fflush(f);
+    fsync(fileno(f));
+    fclose(f);
+    rename(t, p);
+}
+
+static void usb_cfg_load(void) {
+    char p[1300];
+    usb_cfg_path(p, sizeof p);
+    g_usb_enabled = 0;
+    g_usb_watch = 1;
+    FILE *f = fopen(p, "r");
+    if (!f) return;
+    char b[1024];
+    size_t n = fread(b, 1, sizeof b - 1, f);
+    fclose(f);
+    b[n] = 0;
+    g_usb_enabled = usb_json_bool(b, "\"enabled\"", 0);
+    g_usb_watch = usb_json_bool(b, "\"watch\"", 1);
+}
+
+/* 用 /dev/disk/by-uuid 认文件系统，挂载名变化时仍能认出同一设备 */
+static void usb_id_for(const char *dev, char *out, size_t cap) {
+    const char *base = strrchr(dev, '/');
+    base = base ? base + 1 : dev;
+    snprintf(out, cap, "%.*s", (int)(cap - 1), base);
+    DIR *d = opendir("/dev/disk/by-uuid");
+    if (!d) return;
+    struct dirent *de;
+    char link[600], tgt[600];
+    while ((de = readdir(d)) != NULL) {
+        if (de->d_name[0] == '.') continue;
+        snprintf(link, sizeof link, "/dev/disk/by-uuid/%s", de->d_name);
+        ssize_t l = readlink(link, tgt, sizeof tgt - 1);
+        if (l <= 0) continue;
+        tgt[l] = 0;
+        const char *tb = strrchr(tgt, '/');
+        tb = tb ? tb + 1 : tgt;
+        if (!strcmp(tb, base)) { snprintf(out, cap, "%.*s", (int)(cap - 1), de->d_name); break; }
+    }
+    closedir(d);
+}
+
+static int usb_collect(usb_mount *out, int cap) {
+    FILE *f = fopen("/proc/self/mounts", "r");
+    if (!f) return 0;
+    char line[4096];
+    int n = 0;
+    while (fgets(line, sizeof line, f) && n < cap) {
+        char dev[1024], mnt[2048], fst[128];
+        if (sscanf(line, "%1023s %2047s %127s", dev, mnt, fst) != 3) continue;
+        char m[2048];
+        usb_unescape(mnt, m, sizeof m);
+        if (strncmp(m, "/vol00/", 7) != 0) continue;
+        struct stat st;
+        if (stat(m, &st) != 0 || !S_ISDIR(st.st_mode)) continue;
+        int dup = 0;
+        for (int i = 0; i < n; i++) if (!strcmp(out[i].root, m)) dup = 1;
+        if (dup) continue;
+        snprintf(out[n].root, sizeof out[n].root, "%.*s", (int)(sizeof out[n].root - 1), m);
+        char dv[1024];
+        usb_unescape(dev, dv, sizeof dv);
+        snprintf(out[n].dev, sizeof out[n].dev, "%.*s", (int)(sizeof out[n].dev - 1), dv);
+        usb_id_for(dv, out[n].id, sizeof out[n].id);
+        n++;
+    }
+    fclose(f);
+    return n;
+}
+
+static void usb_sig_of(const usb_mount *m, int n, char *out, size_t cap) {
+    usb_mount tmp[MAX_USB];
+    int k = n < MAX_USB ? n : MAX_USB;
+    for (int i = 0; i < k; i++) tmp[i] = m[i];
+    for (int i = 0; i < k; i++)
+        for (int j = i + 1; j < k; j++)
+            if (strcmp(tmp[j].id, tmp[i].id) < 0) { usb_mount t = tmp[i]; tmp[i] = tmp[j]; tmp[j] = t; }
+    size_t o = 0;
+    out[0] = 0;
+    for (int i = 0; i < k; i++) {
+        int w = snprintf(out + o, cap - o, "%s|%s;", tmp[i].id, tmp[i].root);
+        if (w < 0 || (size_t)w >= cap - o) break;
+        o += (size_t)w;
+    }
+}
+
+static void usb_idx_file(const char *id, char *out, size_t cap) {
+    char safe[160], buf[1300];
+    usb_safe_id(id, safe, sizeof safe);
+    int w = snprintf(buf, sizeof buf, "%s/usb-%s.idx", g_idx_dir, safe);
+    if (w < 0) { out[0] = 0; return; }
+    if ((size_t)w >= cap) w = (int)cap - 1;
+    memcpy(out, buf, (size_t)w);
+    out[w] = 0;
+}
+
+static int usb_find_locked(const char *id) {
+    for (int i = g_nvols_local; i < g_nvols; i++)
+        if (g_vols[i].usb && !strcmp(g_vols[i].usb_id, id)) return i;
+    return -1;
+}
+
+static void usb_remove_locked(int i) {
+    if (i < g_nvols_local || i >= g_nvols) return;
+    vol_t *v = &g_vols[i];
+    if (v->ok) { snapshot_close(&v->sn); v->ok = 0; }
+    unlink(v->file);                     /* 旧路径索引一并清理，避免残留 */
+    memmove(&g_vols[i], &g_vols[i+1], (size_t)(g_nvols - i - 1) * sizeof(vol_t));
+    g_nvols--;
+}
+
+static int usb_add_locked(const usb_mount *m) {
+    if (g_nvols >= MAX_VOL) return -1;
+    vol_t *v = &g_vols[g_nvols];
+    memset(v, 0, sizeof *v);
+    snprintf(v->root, sizeof v->root, "%.*s", (int)(sizeof v->root - 1), m->root);
+    snprintf(v->usb_id, sizeof v->usb_id, "%.*s", (int)(sizeof v->usb_id - 1), m->id);
+    usb_idx_file(m->id, v->file, sizeof v->file);
+    v->usb = 1;
+    /* 同路径同规则的历史索引可直接复用；否则等重建 */
+    xl_snap sn;
+    if (snapshot_open(v->file, &sn) == 0) {
+        int rules_ok = (sn.h.flags & XL_HDR_SCAN_RULES) != 0;
+        int skip_ok = ((sn.h.flags & XL_HDR_SKIP_HIDDEN) != 0) == scan_skip_hidden();
+        if (rules_ok && skip_ok && !strcmp(sn.root, v->root)) {
+            v->sn = sn;
+            v->ok = 1;
+            v->records = sn.h.rec_count;
+            v->built_at = sn.h.built_at;
+        } else {
+            snapshot_close(&sn);
+            unlink(v->file);
+        }
+    }
+    return g_nvols++;
+}
+
+typedef struct { char root[512]; char file[1100]; char id[128]; } usb_job;
+
+static void usb_build_finish(usb_job *j, int ok) {
+    pthread_rwlock_wrlock(&g_rw);
+    int i = usb_find_locked(j->id);
+    if (i >= 0 && !strcmp(g_vols[i].root, j->root)) {
+        g_vols[i].building = 0;
+        if (!ok) {
+            g_vols[i].ok = 0;
+            snprintf(g_usb_msg, sizeof g_usb_msg, "USB 索引构建失败：%s", j->root);
+        }
+    }
+    pthread_rwlock_unlock(&g_rw);
+    free(j);
+}
+
+static void *usb_build_worker(void *arg) {
+    usb_job *j = arg;
+    xl_store st;
+    store_init(&st);
+    uint64_t t0 = now_ms();
+    int rc = scan_tree(j->root, &st, 1, 0);
+    if (rc < 0 && st.n < 2) { store_free(&st); usb_build_finish(j, 0); return NULL; }
+    store_shrink(&st);
+    xl_index ix;
+    index_init(&ix);
+    index_build(&ix, &st, 0);
+    char tmp[1200];
+    snprintf(tmp, sizeof tmp, "%s.tmp", j->file);
+    int ok = snapshot_save(tmp, &st, &ix, j->root, 0) == 0;
+    if (ok && rename(tmp, j->file) != 0) ok = 0;
+    if (!ok) unlink(tmp);
+    uint64_t ms = now_ms() - t0;
+    store_free(&st);
+    index_free(&ix);
+    if (!ok) { usb_build_finish(j, 0); return NULL; }
+    xl_snap ns;
+    if (snapshot_open(j->file, &ns) < 0) { usb_build_finish(j, 0); return NULL; }
+    int installed = 0;
+    pthread_rwlock_wrlock(&g_rw);
+    int i = usb_find_locked(j->id);
+    if (i >= 0 && !strcmp(g_vols[i].root, j->root)) {
+        vol_t *v = &g_vols[i];
+        if (v->ok) snapshot_close(&v->sn);
+        v->sn = ns;
+        v->ok = 1;
+        v->records = ns.h.rec_count;
+        v->built_at = (uint64_t)time(NULL);
+        v->build_ms = ms;
+        v->building = 0;
+        installed = 1;
+        snprintf(g_usb_msg, sizeof g_usb_msg, "USB 设备在线：%s（%llu 条）",
+                 v->root, (unsigned long long)v->records);
+    }
+    pthread_rwlock_unlock(&g_rw);
+    if (!installed) snapshot_close(&ns);
+    free(j);
+    return NULL;
+}
+
+static void usb_spawn_build_locked(int i) {
+    usb_job *j = xmalloc(sizeof *j);
+    memset(j, 0, sizeof *j);
+    snprintf(j->root, sizeof j->root, "%.*s", (int)(sizeof j->root - 1), g_vols[i].root);
+    snprintf(j->file, sizeof j->file, "%.*s", (int)(sizeof j->file - 1), g_vols[i].file);
+    snprintf(j->id, sizeof j->id, "%.*s", (int)(sizeof j->id - 1), g_vols[i].usb_id);
+    g_vols[i].building = 1;
+    pthread_t th;
+    if (pthread_create(&th, NULL, usb_build_worker, j) != 0) {
+        g_vols[i].building = 0;
+        free(j);
+    } else pthread_detach(th);
+}
+
+static void usb_drop_locked(void) {
+    for (int i = g_nvols - 1; i >= g_nvols_local; i--)
+        if (g_vols[i].usb) usb_remove_locked(i);
+}
+
+/* 对齐当前挂载：新增/移除/路径变化；掉线时按开关自动关闭检索 */
+static void usb_sync(void) {
+    usb_mount cur[MAX_USB];
+    int cn = g_usb_enabled ? usb_collect(cur, MAX_USB) : 0;
+    int path_changed = 0, added = 0;
+    pthread_rwlock_wrlock(&g_rw);
+    for (int i = g_nvols - 1; i >= g_nvols_local; i--) {
+        vol_t *v = &g_vols[i];
+        if (!v->usb) continue;
+        int k = -1;
+        for (int j = 0; j < cn; j++) if (!strcmp(cur[j].id, v->usb_id)) { k = j; break; }
+        if (k < 0) { usb_remove_locked(i); continue; }
+        if (strcmp(cur[k].root, v->root) != 0) {
+            path_changed = 1;
+            usb_remove_locked(i);        /* 旧挂载路径索引作废 */
+        }
+    }
+    for (int k = 0; k < cn; k++) {
+        int i = usb_find_locked(cur[k].id);
+        if (i < 0) {
+            i = usb_add_locked(&cur[k]);
+            if (i < 0) continue;
+            added = 1;
+        }
+        if (!g_vols[i].ok && !g_vols[i].building) usb_spawn_build_locked(i);
+    }
+    int any = 0;
+    for (int i = g_nvols_local; i < g_nvols; i++) if (g_vols[i].usb) any = 1;
+    if (any) g_usb_had = 1;
+    if (g_usb_enabled && cn == 0 && g_usb_watch && g_usb_had) {
+        usb_drop_locked();
+        g_usb_enabled = 0;
+        g_usb_had = 0;
+        snprintf(g_usb_msg, sizeof g_usb_msg, "USB 设备已断开，旧索引已清理，已自动关闭 USB 检索");
+        usb_cfg_save();
+    } else if (path_changed) {
+        snprintf(g_usb_msg, sizeof g_usb_msg, "USB 挂载点已变化，正在按新路径重建索引");
+    } else if (added) {
+        snprintf(g_usb_msg, sizeof g_usb_msg, "已检测到 USB 设备，正在建索引");
+    } else if (!g_usb_enabled) {
+        snprintf(g_usb_msg, sizeof g_usb_msg, "USB 检索未开启");
+    } else if (cn == 0) {
+        snprintf(g_usb_msg, sizeof g_usb_msg, "未检测到 USB 设备（插上后自动索引）");
+    }
+    usb_sig_of(cur, cn, g_usb_sig, sizeof g_usb_sig);
+    pthread_rwlock_unlock(&g_rw);
+}
+
+static void usb_tick(void) {
+    uint64_t now = now_ms();
+    if (now - g_usb_last_tick < 2000) return;
+    g_usb_last_tick = now;
+    if (!g_usb_enabled) return;
+    usb_mount cur[MAX_USB];
+    int cn = usb_collect(cur, MAX_USB);
+    char sig[4096];
+    usb_sig_of(cur, cn, sig, sizeof sig);
+    if (strcmp(sig, g_usb_sig) != 0) { usb_sync(); return; }
+    int retry = 0;
+    pthread_rwlock_rdlock(&g_rw);
+    for (int i = g_nvols_local; i < g_nvols; i++)
+        if (g_vols[i].usb && !g_vols[i].ok && !g_vols[i].building) retry = 1;
+    pthread_rwlock_unlock(&g_rw);
+    if (retry) usb_sync();
+}
+
+static void usb_enable(int on) {
+    if ((on ? 1 : 0) == g_usb_enabled) return;
+    g_usb_enabled = on ? 1 : 0;
+    if (!on) {
+        pthread_rwlock_wrlock(&g_rw);
+        usb_drop_locked();
+        g_usb_had = 0;
+        g_usb_sig[0] = 0;
+        snprintf(g_usb_msg, sizeof g_usb_msg, "USB 检索已关闭，旧索引已清理");
+        pthread_rwlock_unlock(&g_rw);
+    } else {
+        g_usb_had = 0;
+        g_usb_sig[0] = 0;
+        usb_sync();
+    }
+    usb_cfg_save();
+}
+
+/* 隐藏项规则变化后，USB 索引也需要按新规则重建 */
+static void usb_rebuild_all(void) {
+    if (!g_usb_enabled) return;
+    pthread_rwlock_wrlock(&g_rw);
+    usb_drop_locked();
+    g_usb_sig[0] = 0;
+    pthread_rwlock_unlock(&g_rw);
+    usb_sync();
 }
 
 /* ---------- 查询 ---------- */
@@ -1270,6 +1650,7 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
         else take_live = lh[j].mtime > g_vols[refs[i].vol].sn.recs[refs[i].id].mtime;
 
         int is_dir; uint32_t size, mtime; const char *name; size_t nlen;
+        int is_usb = 0;
         if (take_live) {
             path[0] = 0;
             snprintf(path, sizeof(path), "%s", lh[j].path);
@@ -1277,6 +1658,7 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
             name = b ? b + 1 : path;
             nlen = strlen(name);
             is_dir = (lh[j].flags & XL_F_DIR) != 0;
+            is_usb = strncmp(path, "/vol00/", 7) == 0;
             size = lh[j].size; mtime = lh[j].mtime;
             j++;
         } else {
@@ -1288,6 +1670,7 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
             name = v->sn.names + r->name_off;
             nlen = r->name_len;
             is_dir = (r->flags & XL_F_DIR) != 0;
+            is_usb = v->usb;
             size = r->size; mtime = r->mtime;
         }
         if (uid >= 0) {
@@ -1300,7 +1683,7 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
             if (sl == pd) sl[1] = 0; else *sl = 0;
             if (!admin && system_path(path)) continue;
             if (!perm_cache_check(pcache, pd, (uid_t)uid)) continue;
-            if (nsc >= 0 && !scope_allows(sc, nsc, path)) continue;
+            if (nsc >= 0 && strncmp(path, "/vol00/", 7) != 0 && !scope_allows(sc, nsc, path)) continue;
         }
         {
             struct stat lst;
@@ -1317,9 +1700,10 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
         sb_json(out, path, strlen(path));
         sb_puts(out, "\",\"name\":\"");
         sb_json(out, name, nlen);
-        sb_printf(out, "\",\"dir\":%s,\"size\":%u,\"mtime\":%u,\"cat\":\"%s\"}",
+        sb_printf(out, "\",\"dir\":%s,\"size\":%u,\"mtime\":%u,\"cat\":\"%s\",\"usb\":%s}",
                   is_dir ? "true" : "false", size, mtime,
-                  is_dir ? "dir" : cat_key(cat_of_name(name, nlen)));
+                  is_dir ? "dir" : cat_key(cat_of_name(name, nlen)),
+                  is_usb ? "true" : "false");
         shown++;
     }
     sb_printf(out, "],\"ms\":%.1f}", (double)(now_ms() - t0));
@@ -2067,6 +2451,26 @@ static void handle_settings_get(sbuf *out, int uid, int admin, int all) {
     sb_printf(out, ",\"strictHome\":%s",
               json_bool_def(buf, "\"strictHome\"", 1) ? "true" : "false");
     sb_printf(out, ",\"skipHidden\":%s", scan_skip_hidden() ? "true" : "false");
+    sb_printf(out, ",\"usbEnabled\":%s,\"usbWatch\":%s,\"usbMessage\":\"",
+              g_usb_enabled ? "true" : "false", g_usb_watch ? "true" : "false");
+    sb_json(out, g_usb_msg, strlen(g_usb_msg));
+    sb_puts(out, "\",\"usbMounts\":[");
+    {
+        int ufirst = 0;
+        pthread_rwlock_rdlock(&g_rw);
+        for (int i = g_nvols_local; i < g_nvols; i++) {
+            vol_t *v = &g_vols[i];
+            if (!v->usb) continue;
+            if (ufirst++) sb_puts(out, ",");
+            sb_puts(out, "{\"path\":\"");
+            sb_json(out, v->root, strlen(v->root));
+            sb_printf(out, "\",\"records\":%llu,\"ok\":%s,\"building\":%s}",
+                      (unsigned long long)v->records, v->ok ? "true" : "false",
+                      v->building ? "true" : "false");
+        }
+        pthread_rwlock_unlock(&g_rw);
+    }
+    sb_puts(out, "]");
     sb_puts(out, ",\"onlyoffice\":");
     onlyoffice_probe(out);
     sb_puts(out, ",\"preview\":");
@@ -2142,7 +2546,8 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
     /* 全局设置只允许管理员修改；普通用户只能保存自己的检索范围 */
     int has_global = body && (strstr(body, "\"openWith\"") || strstr(body, "\"openIn\"") ||
                               strstr(body, "\"strictHome\"") || strstr(body, "\"rebuild\"") ||
-                              strstr(body, "\"skipHidden\""));
+                              strstr(body, "\"skipHidden\"") || strstr(body, "\"usbEnabled\"") ||
+                              strstr(body, "\"usbWatch\""));
     if (has_global && !admin) {
         sb_puts(out, "{\"ok\":false,\"error\":\"需要管理员权限\"}");
         return;
@@ -2247,6 +2652,13 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
         scan_set_skip_hidden(skip_hidden);
         fprintf(stderr, "xuanlan serve: skipHidden=%d，触发全盘重建\n", skip_hidden);
         start_build();
+        usb_rebuild_all();
+    }
+    {
+        int usb_watch = usb_json_bool(body, "\"usbWatch\"", g_usb_watch);
+        int usb_on = usb_json_bool(body, "\"usbEnabled\"", g_usb_enabled);
+        if (usb_watch != g_usb_watch) { g_usb_watch = usb_watch; usb_cfg_save(); }
+        usb_enable(usb_on);
     }
     sb_puts(out, "{\"ok\":true}");
 }
@@ -2258,7 +2670,7 @@ static void handle_acl_list(sbuf *out, int uid, int admin, int all) {
         /* 管理员全盘视角：直接给卷根，展开时不再过滤 */
         pthread_rwlock_rdlock(&g_rw);
         for (int vi = 0; vi < g_nvols; vi++) {
-            if (!g_vols[vi].ok) continue;
+            if (!g_vols[vi].ok || g_vols[vi].usb) continue;
             if (shown++) sb_puts(out, ",");
             sb_puts(out, "{\"path\":\"");
             sb_json(out, g_vols[vi].root, strlen(g_vols[vi].root));
@@ -2378,12 +2790,14 @@ static void handle_status(sbuf *out) {
         if (i) sb_puts(out, ",");
         sb_puts(out, "{\"root\":\"");
         sb_json(out, v->root, strlen(v->root));
-        sb_printf(out, "\",\"ok\":%s,\"records\":%llu,\"built_at\":%llu,\"build_ms\":%llu,\"building\":%s}",
+        sb_printf(out, "\",\"ok\":%s,\"records\":%llu,\"built_at\":%llu,\"build_ms\":%llu,\"building\":%s,\"usb\":%s}",
                   v->ok ? "true" : "false",
                   (unsigned long long)v->records,
                   (unsigned long long)v->built_at,
                   (unsigned long long)v->build_ms,
-                  (g_building && cur_vol == i) ? "true" : "false");
+                  v->usb ? (v->building ? "true" : "false")
+                         : ((g_building && cur_vol == i) ? "true" : "false"),
+                  v->usb ? "true" : "false");
     }
     pthread_rwlock_unlock(&g_rw);
     sb_printf(out, "],\"records\":%llu,\"building\":%s,\"progress\":{\"root\":\"",
@@ -2399,6 +2813,16 @@ static void handle_status(sbuf *out) {
               adds, dels, live_overflowed() ? "true" : "false");
     sb_printf(out, ",\"transcode\":{\"ok\":%s,\"nvenc\":%s}",
               g_have_ffmpeg ? "true" : "false", g_have_nvenc ? "true" : "false");
+    {
+        int nusb = 0;
+        pthread_rwlock_rdlock(&g_rw);
+        for (int i = g_nvols_local; i < g_nvols; i++) if (g_vols[i].usb) nusb++;
+        pthread_rwlock_unlock(&g_rw);
+        sb_printf(out, ",\"usb\":{\"enabled\":%s,\"watch\":%s,\"mounts\":%d,\"message\":\"",
+                  g_usb_enabled ? "true" : "false", g_usb_watch ? "true" : "false", nusb);
+        sb_json(out, g_usb_msg, strlen(g_usb_msg));
+        sb_puts(out, "\"}");
+    }
     sb_puts(out, ",\"version\":\"");
     sb_puts(out, XL_APP_VERSION);
     sb_puts(out, "\"}");
@@ -2849,7 +3273,8 @@ static void handle_client(int fd) {
             code = 415;
             sb_puts(&body, "{\"error\":\"use application/json\"}");
         } else {
-            start_build();
+            if (req_body && strstr(req_body, "\"usb\":true")) usb_rebuild_all();
+            else start_build();
             sb_puts(&body, "{\"ok\":true}");
         }
     } else if (!strcmp(pathonly, "/api/clientlog")) {
@@ -3323,6 +3748,7 @@ int httpd_serve(const xl_svc_opts *o) {
         }
         g_nvols++;
     }
+    g_nvols_local = g_nvols;
     if (!g_nvols) {
         fprintf(stderr, "xuanlan serve: 没有挂载点\n");
         return 2;
@@ -3358,13 +3784,15 @@ int httpd_serve(const xl_svc_opts *o) {
     g_last_rebuild = now_ms();
     rebuild_cfg_load();
     scan_cfg_load();
+    usb_cfg_load();
+    if (g_usb_enabled) usb_sync();
     if (live_start(o->roots, 1) == 0)
         fprintf(stderr, "xuanlan serve: fanotify 实时增量已启用\n");
     else
         fprintf(stderr, "xuanlan serve: fanotify 不可用（需 root/CAP_SYS_ADMIN），仅周期对账\n");
 
     int need_build = 0;
-    for (int i = 0; i < g_nvols; i++) {
+    for (int i = 0; i < g_nvols_local; i++) {
         if (!g_vols[i].ok) { need_build = 1; continue; }
         /* 旧快照（或切换 skipHidden 后）与当前扫描设置不一致时重建一次 */
         int built_skip = (g_vols[i].sn.h.flags & XL_HDR_SKIP_HIDDEN) != 0;
@@ -3401,6 +3829,7 @@ int httpd_serve(const xl_svc_opts *o) {
                 start_build();
             }
         }
+        usb_tick();
     }
     for (int i = 0; i < nls; i++) close(ls[i]);
     if (o->sock_path[0]) unlink(o->sock_path);

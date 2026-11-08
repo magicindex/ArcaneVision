@@ -265,6 +265,9 @@
   .setbox .hint2{font-size:11px;color:#5d6c8a}
   .setbox .acl{display:flex;flex-direction:column;gap:3px}
   .setbox .acl > div{display:block}
+  .usb-tag{display:inline-block;font-size:10px;line-height:1;padding:2px 5px;margin-right:6px;
+    border-radius:4px;vertical-align:1px;letter-spacing:.5px;border:1px solid rgba(120,170,255,.45);
+    color:#8fb8ff;font-weight:600}
   .setbox .tag{font-size:10.5px;padding:1px 7px;border-radius:20px;letter-spacing:.5px;
     border:1px solid rgba(90,200,190,.35);color:#59d3c8}
   .setbox .tag.g{border-color:rgba(220,180,90,.4);color:#d9b45a}
@@ -407,6 +410,7 @@
   html[data-theme="light"] .setbox .admrow,html[data-theme="light"] .setbox .rbline{color:#33415a}
   html[data-theme="light"] .setbox .rbline select,html[data-theme="light"] .setbox .rbline input{background:#fff;color:#1f2c44;border-color:rgba(15,23,42,.16)}
   html[data-theme="light"] .setbox .tag{color:#0b6b60;border-color:rgba(15,156,140,.4)}
+  html[data-theme="light"] .usb-tag{color:#1f5fbf;border-color:rgba(31,95,191,.4)}
   html[data-theme="light"] .setbox .tag.g{color:#a2610f;border-color:rgba(190,140,40,.45)}
   html[data-theme="light"] .setbox button.act{background:#f2f5fa;color:#33415a;border-color:rgba(15,23,42,.16)}
   html[data-theme="light"] .setbox button.act.primary{background:rgba(15,156,140,.12);color:#0b4a44;border-color:rgba(15,156,140,.5)}
@@ -2002,7 +2006,7 @@
         '<input type="checkbox" class="ck"' + (picked.has(it.path) ? ' checked' : '') + '>' +
         '<div class="ico' + (it.dir ? ' dir' : '') + '">' + catIcon(it.dir ? 'dir' : (it.cat || 'other')) + '</div>' +
         '<div class="body">' +
-          '<div class="name">' + hi(it.name, q.value.trim()) + '</div>' +
+          '<div class="name">' + (it.usb ? '<span class="usb-tag">USB</span>' : '') + hi(it.name, q.value.trim()) + '</div>' +
           '<div class="path"><span>' + esc(parentPath(it.path)) + '</span></div>' +
         '</div>' +
         '<div class="meta-i" style="font-size:11.5px;color:#6e7891;flex:none">' + [fmtSize(it.size), fmtTime(it.mtime)].filter(Boolean).join(' · ') + '</div>' +
@@ -2142,6 +2146,13 @@
     '<div class="hint" id="rbHint"></div>' +
     '<label class="admrow" id="hiddenRow"><input type="checkbox" id="skipHidden" checked>忽略隐藏目录与系统杂项' +
     '<span class="hint2">默认开启；跳过 . / @ 开头目录，以及 Thumbs.db、desktop.ini、__MACOSX 等杂项；保存后自动重建索引</span></label>' +
+    '<h3>USB 外挂设备</h3>' +
+    '<label class="admrow" id="usbRow"><input type="checkbox" id="usbEnabled">启用 USB 外挂设备检索' +
+    '<span class="hint2">默认关闭；只索引 /vol00 下的外挂挂载，使用独立索引，设备失效不影响本地索引</span></label>' +
+    '<label class="admrow" id="usbWatchRow"><input type="checkbox" id="usbWatch" checked>USB 挂载路径检测' +
+    '<span class="hint2">掉线自动关闭检索并清理旧索引；挂载点变化自动重建</span></label>' +
+    '<div class="hint" id="usbHint"></div>' +
+    '<div class="hint" id="usbRebuildRow"><a href="#" id="usbRebuild" style="color:#59d3c8">立即重建 USB 索引</a></div>' +
     '<h3>检索范围</h3><div class="hint" id="aclWho"></div>' +
     '<label class="admrow" id="strictRow"><input type="checkbox" id="strictHome" checked>严格模式' +
     '<span class="hint2">默认开启；家目录内忽略「所有人」授权，只认属主与指定用户/组</span></label>' +
@@ -2392,6 +2403,27 @@
       }
     }
     {
+      const urow = setmask.querySelector('#usbRow');
+      const ucb = setmask.querySelector('#usbEnabled');
+      const wcb = setmask.querySelector('#usbWatch');
+      const uh = setmask.querySelector('#usbHint');
+      const isAdmin = !!(settings.scopeAvailable && settings.scopeAvailable.admin);
+      if (urow) urow.style.display = isAdmin ? '' : 'none';
+      const wrow = setmask.querySelector('#usbWatchRow');
+      if (wrow) wrow.style.display = isAdmin ? '' : 'none';
+      if (ucb) ucb.checked = settings.usbEnabled === true;
+      if (wcb) wcb.checked = settings.usbWatch !== false;
+      const urb = setmask.querySelector('#usbRebuildRow');
+      if (urb) urb.style.display = (isAdmin && settings.usbEnabled) ? '' : 'none';
+      if (uh) {
+        let txt = settings.usbMessage || 'USB 检索未开启';
+        const ms = settings.usbMounts || [];
+        if (ms.length) txt += ' · ' + ms.map(m => (m.ok ? '已索引 ' : '建索引中 ') + m.path +
+                                '（' + (m.records || 0).toLocaleString() + ' 条）').join('；');
+        uh.textContent = txt;
+      }
+    }
+    {
       const allRow = setmask.querySelector('#allRow');
       const cbAll = setmask.querySelector('#showAll');
       const isAdmin = !!(settings.scopeAvailable && settings.scopeAvailable.admin);
@@ -2440,6 +2472,16 @@
   }
   setmask.addEventListener('click', e => { if (e.target === setmask) setmask.classList.remove('on'); });
   setmask.querySelector('#setClose').onclick = () => setmask.classList.remove('on');
+  setmask.querySelector('#usbRebuild').onclick = (e) => {
+    e.preventDefault();
+    if (!confirm('重新扫描当前 USB 挂载并重建 USB 索引？')) return;
+    fetch(API + 'rebuild', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: '{"usb":true}' })
+      .then(r => r.json()).then(() => {
+        const h = setmask.querySelector('#usbHint');
+        if (h) h.textContent = '已开始重建 USB 索引…';
+      }).catch(() => alert('请求失败'));
+  };
   setmask.querySelector('#setX').onclick = () => setmask.classList.remove('on');
   setmask.querySelector('#setSave').onclick = () => {
     const ow = {};
@@ -2457,8 +2499,11 @@
     const oi = setmask.querySelector('#openIn').value;
     const strictHome = !!setmask.querySelector('#strictHome').checked;
     const skipHidden = !!setmask.querySelector('#skipHidden').checked;
+    const usbEnabled = !!setmask.querySelector('#usbEnabled').checked;
+    const usbWatch = !!setmask.querySelector('#usbWatch').checked;
     fetch(API + 'settings', { method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ openWith: ow, openIn: oi, strictHome, skipHidden, scope, rebuild, settingsVersion: 2 }) })
+      body: JSON.stringify({ openWith: ow, openIn: oi, strictHome, skipHidden, usbEnabled, usbWatch,
+                             scope, rebuild, settingsVersion: 2 }) })
       .then(r => r.json()).then(d => {
         if (d && d.ok === false) {
           alert('保存失败：' + (d.error || '未知错误'));
@@ -2466,6 +2511,7 @@
         }
         settings.openWith = ow; settings.scope = scope; settings.settingsVersion = 2; openIn = oi;
         settings.strictHome = strictHome; settings.skipHidden = skipHidden;
+        settings.usbEnabled = usbEnabled; settings.usbWatch = usbWatch;
         setmask.classList.remove('on');
         search();
       }).catch(e => alert('保存失败：' + (e && e.message || e)));
@@ -2552,12 +2598,17 @@
     }, 90);
   }
 
+  let lastUsbEnabled = false;
   function status(){
     fetch(API + 'status').then(r=>r.json()).then(d=>{
       state = d;
       const recs = d.records || 0;
+      const u = d.usb || {};
+      if (lastUsbEnabled && !u.enabled && (u.message || '').indexOf('断开') >= 0) say(u.message);
+      lastUsbEnabled = !!u.enabled;
       scount.textContent = ' · ' + recs.toLocaleString() + ' 条';
-      $('foot').textContent = recs.toLocaleString() + ' 条索引';
+      $('foot').textContent = recs.toLocaleString() + ' 条索引' +
+        (u.enabled ? ' · USB ' + (u.mounts || 0) + ' 个' : '');
       const v = $('ver'); if (v && d.version) v.textContent = 'v' + d.version;
       if (d.building) {
         dot.className = 'dot busy';
