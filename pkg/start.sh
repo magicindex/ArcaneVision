@@ -6,6 +6,7 @@
 #   ${TRIM_PKGETC}/service_port   端口（单行数字）
 #   ${TRIM_PKGETC}/xuanlan.conf   可选，shell 片段，可覆盖 ROOTS
 # 读取配置后再 exec 主程序。
+# 未配置 ROOTS 时自动探测 /vol1–/vol8 中实际存在的目录（GitHub #2）。
 set -u
 
 SELF_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
@@ -26,7 +27,16 @@ if [ -r "${ETC_DIR}/service_port" ]; then
     esac
 fi
 
-ROOTS="/vol1,/vol2,/vol3,/vol4"
+# 自动探测 /vol1–/vol8，避免只认前四个卷；xuanlan.conf 里的 ROOTS 优先级更高
+ROOTS=""
+for i in 1 2 3 4 5 6 7 8; do
+    # 只认真实挂载点；/vol6、/vol7 这类残留空目录不算卷
+    if [ -d "/vol${i}" ] && grep -q " /vol${i} " /proc/self/mounts; then
+        ROOTS="${ROOTS:+${ROOTS},}/vol${i}"
+    fi
+done
+[ -n "${ROOTS}" ] || ROOTS="/vol1,/vol2,/vol3,/vol4"
+
 if [ -r "${ETC_DIR}/xuanlan.conf" ]; then
     # shellcheck disable=SC1090
     . "${ETC_DIR}/xuanlan.conf"

@@ -48,6 +48,38 @@ static void usage(void) {
           "                [--roots /vol1,/vol3,...] [--exclude DIR]...\n", stderr);
 }
 
+/* 默认索引卷：只取 /proc/self/mounts 里实际挂载的 /vol1–/vol8，避免把残留空目录当卷 */
+static void detect_default_roots(char *out, size_t cap) {
+    int seen[9] = {0};
+    size_t n = 0;
+    out[0] = 0;
+    FILE *f = fopen("/proc/self/mounts", "r");
+    if (f) {
+        char line[2048];
+        while (fgets(line, sizeof line, f)) {
+            char *sp = strchr(line, ' ');
+            if (!sp) continue;
+            char *mnt = sp + 1;
+            char *e = strchr(mnt, ' ');
+            if (!e) continue;
+            *e = 0;
+            if (strncmp(mnt, "/vol", 4) != 0) continue;
+            char *p = mnt + 4;
+            if (*p < '1' || *p > '8') continue;      /* 排除 /vol0、/vol00、/vol02 */
+            int idx = *p - '0';
+            p++;
+            if (*p) continue;                        /* 排除 /vol10 及更长名字 */
+            if (seen[idx]) continue;
+            seen[idx] = 1;
+            int w = snprintf(out + n, cap - n, "%s/vol%d", n ? "," : "", idx);
+            if (w < 0 || (size_t)w >= cap - n) break;
+            n += (size_t)w;
+        }
+        fclose(f);
+    }
+    if (!n) snprintf(out, cap, "/vol1,/vol2,/vol3,/vol4");
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) { usage(); return 2; }
     const char *cmd = argv[1];
@@ -128,7 +160,11 @@ int main(int argc, char **argv) {
         o.port = sport ? atoi(sport) : 0;
         if (o.port <= 0) o.port = 8971;
         snprintf(o.bind_addr, sizeof(o.bind_addr), "127.0.0.1");
-        snprintf(o.roots, sizeof(o.roots), "/vol1,/vol2,/vol3,/vol4");
+        {
+            char roots[1024];
+            detect_default_roots(roots, sizeof roots);
+            snprintf(o.roots, sizeof(o.roots), "%s", roots);
+        }
         o.rebuild_hours = 6;
         if (appdir) {
             snprintf(o.sock_path, sizeof(o.sock_path), "%s/app.sock", appdir);
