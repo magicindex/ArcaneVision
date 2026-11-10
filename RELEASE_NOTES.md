@@ -1,9 +1,17 @@
-# 玄览 0.8.25 发布说明
+# 玄览 0.8.26 发布说明
 
 > 发布：2026-11-10 · 适用于飞牛 fnOS（amd64）
 
-0.8.25 汇总 0.8.17 审查后的 P0/P1 修复与 P2/P3 改进，并包含 0.8.3 以来的索引维护、权限、
+0.8.26 汇总 0.8.17 审查后的 P0/P1 修复与 P2/P3 改进，并包含 0.8.3 以来的索引维护、权限、
 预览、隐藏项过滤、USB 外挂检索与设置页改动。
+
+## 0.8.26
+
+- systemd unit 改为按实际安装路径生成：不再随包提供写死 `/vol1` 的 `xuanlan.service`，
+  `cmd/main` 按 `TRIM_APPDEST/TRIM_PKGVAR/TRIM_PKGETC` 与端口生成 `/etc/systemd/system/xuanlan.service`
+- 目录子项索引：启动/重建时按 parent 建一次 child 链表，`/api/dir` 与检索范围展开只遍历
+  直接子项，不再每次扫全量记录；卷根/路径查找按分量走 child 链表
+- 安装向导文案改为自动探测 `/vol1–/vol8`
 
 ## 0.8.25
 
@@ -91,15 +99,13 @@
 
 ## 软件包
 
-- 文件：`xuanlan_0.8.25_amd64.fpk`
-- 大小：926,250 字节（约 905 KB）
-- MD5：`db3abfe01d9304b42ce307047bf37262`
-- SHA-256：`51b974d691416d46925f6f83791d3e924b9cc2541ad51d28fd6715b9a6b80649`
+- 文件：`xuanlan_0.8.26_amd64.fpk`
+- 大小：928,294 字节（约 907 KB）
+- MD5：`fdce961d3f93f86cf6d881bfd2b4d3fc`
+- SHA-256：`cbf660ef9f430be091a11b55aa50c0b2340e6f7b86b4dc27ececac6c18ed6ab2`
 
 ## 下一步计划
 
-- 安装路径解耦：systemd unit / 应用中心路径不再写死 `/vol1`，支持装到其他卷
-- 目录列举与检索范围展开 O(N) 优化（目录/子项索引）
 - unix socket 对端校验收紧、管理员判定改为以网关头为准
 - 工程化：HTTP API、USB 挂载模拟、ASan 回归接入 CI，更新过期截图
 

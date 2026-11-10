@@ -1,3 +1,11 @@
+## 0.8.26
+
+- systemd unit 改为按实际安装路径生成：不再随包提供写死 `/vol1` 的 `xuanlan.service`，
+  `cmd/main` 按 `TRIM_APPDEST/TRIM_PKGVAR/TRIM_PKGETC` 与端口生成 `/etc/systemd/system/xuanlan.service`
+- 目录子项索引：启动/重建时按 parent 建一次 child 链表，`/api/dir` 与「检索范围」展开只遍历
+  直接子项，不再每次扫全量记录；卷根/路径查找按分量走 child 链表
+- 安装向导文案改为自动探测 `/vol1–/vol8`
+
 ## 0.8.25
 
 - USB 设备校验：结合 `/sys/block/*/removable` 与 USB 设备路径，非 USB 的 bind/内部盘挂到

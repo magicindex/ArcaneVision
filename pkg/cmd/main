@@ -2,8 +2,9 @@
 # 玄览 / Arcane Vision — 服务控制（fnOS cmd 入口）
 set -u
 
-APP_DIR="${TRIM_APPDEST:-/vol1/@appcenter/xuanlan}"
-DATA_DIR="${TRIM_PKGVAR:-/vol1/@appdata/xuanlan}"
+SELF_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+APP_DIR="${TRIM_APPDEST:-$(dirname -- "${SELF_DIR}")}"
+DATA_DIR="${TRIM_PKGVAR:-${APP_DIR}/data}"
 ETC_DIR="${TRIM_PKGETC:-${DATA_DIR}/etc}"
 PID_FILE="${DATA_DIR}/app.pid"
 LOG_FILE="${DATA_DIR}/logs/xuanlan.log"
@@ -14,18 +15,56 @@ log_msg() { echo "$(date '+%F %T') - $*" >> "${LOG_FILE}"; }
 check_process() { [ -n "${1:-}" ] && kill -0 "${1}" 2>/dev/null; }
 
 UNIT="xuanlan.service"
-UNIT_DST="/etc/systemd/system/${UNIT}"
+UNIT_DST="${XL_UNIT_DST:-/etc/systemd/system/${UNIT}}"
 have_systemd() { [ -d /run/systemd/system ]; }
 
-# 把随包安装的 unit 同步到系统（首次安装或升级后）
+port_value() {
+    local p="${TRIM_SERVICE_PORT:-8971}" v
+    if [ -r "${ETC_DIR}/service_port" ]; then
+        v="$(head -n 1 "${ETC_DIR}/service_port" | tr -d '[:space:]')"
+        case "$v" in
+            ''|*[!0-9]*) ;;
+            *) [ "$v" -ge 1024 ] 2>/dev/null && [ "$v" -le 65535 ] 2>/dev/null && p="$v" ;;
+        esac
+    fi
+    printf '%s' "$p"
+}
+
+# 按实际安装位置生成 unit：不再依赖随包写死 /vol1 的 xuanlan.service
 ensure_unit() {
     have_systemd || return 1
-    local src="${APP_DIR}/${UNIT}"
-    [ -r "${src}" ] || return 1
-    if ! cmp -s "${src}" "${UNIT_DST}" 2>/dev/null; then
-        install -m 644 "${src}" "${UNIT_DST}" || return 1
+    local port tmp
+    port="$(port_value)"
+    tmp="$(mktemp)" || return 1
+    cat >"$tmp" <<EOF
+[Unit]
+Description=Xuanlan (玄览) local file index service
+After=network.target local-fs.target
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=${APP_DIR}
+Environment=TRIM_PKGVAR=${DATA_DIR}
+Environment=TRIM_PKGETC=${ETC_DIR}
+Environment=TRIM_APPDEST=${APP_DIR}
+Environment=TRIM_SERVICE_PORT=${port}
+ExecStart=${APP_DIR}/start.sh
+ExecStartPost=/bin/sh -c 'echo \$MAINPID > ${DATA_DIR}/app.pid'
+ExecStopPost=/bin/sh -c 'rm -f ${DATA_DIR}/app.pid'
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    if ! cmp -s "$tmp" "$UNIT_DST" 2>/dev/null; then
+        if ! install -m 644 "$tmp" "$UNIT_DST"; then rm -f "$tmp"; return 1; fi
         systemctl daemon-reload >/dev/null 2>&1 || true
     fi
+    rm -f "$tmp"
     return 0
 }
 

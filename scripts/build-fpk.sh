@@ -2,7 +2,7 @@
 # 打包 fnOS 应用：dist/xuanlan_<version>_amd64.fpk
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="${VERSION:-0.8.25}"
+VERSION="${VERSION:-0.8.26}"
 PORT="${PORT:-8971}"
 STAGE="$ROOT/build/fpk"
 PAYLOAD="$STAGE/payload"
@@ -33,10 +33,9 @@ install -m 0644 "$ROOT/THIRD_PARTY.md" "$PAYLOAD/ui/THIRD_PARTY.md"
 install -m 0644 "$ROOT/NOTICE.md" "$PAYLOAD/ui/NOTICE.md"
 install -m 0644 "$ROOT/pkg/config/privilege" "$PAYLOAD/config/privilege"
 install -m 0644 "$ROOT/pkg/config/resource" "$PAYLOAD/config/resource"
-install -m 0644 "$ROOT/pkg/xuanlan.service" "$PAYLOAD/xuanlan.service"
 install -m 0755 "$ROOT/pkg/start.sh" "$PAYLOAD/start.sh"
 
-tar -czf "$STAGE/app.tgz" -C "$PAYLOAD" bin ui config xuanlan.service start.sh
+tar -czf "$STAGE/app.tgz" -C "$PAYLOAD" bin ui config start.sh
 CHECKSUM="$(md5sum "$STAGE/app.tgz" | cut -d' ' -f1)"
 
 # ---- 包根 ----

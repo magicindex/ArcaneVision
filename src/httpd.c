@@ -135,7 +135,15 @@ typedef struct {
     uint64_t records;
     uint64_t built_at;
     uint64_t build_ms;
+    /* 目录子项索引：parent -> 子记录链表，避免每次列目录扫全量记录 */
+    uint32_t *dir_head;
+    uint32_t *dir_next;
+    uint32_t root_id;
+    int      dir_ready;
 } vol_t;
+
+static void dir_index_free(vol_t *v);
+static void dir_index_build(vol_t *v);
 
 static vol_t g_vols[MAX_VOL];
 static int   g_nvols;
@@ -354,12 +362,13 @@ static int build_one(int vi, int verbose) {
         return -1;
     }
     pthread_rwlock_wrlock(&g_rw);
-    if (v->ok) snapshot_close(&v->sn);
+    if (v->ok) { dir_index_free(v); snapshot_close(&v->sn); }
     v->sn = ns;
     v->ok = 1;
     v->records = ns.h.rec_count;
     v->built_at = (uint64_t)time(NULL);
     v->build_ms = now_ms() - t0;
+    dir_index_build(v);
     pthread_rwlock_unlock(&g_rw);
     return 0;
 }
@@ -593,7 +602,7 @@ static int usb_find_locked(const char *id) {
 static void usb_remove_locked(int i) {
     if (i < g_nvols_local || i >= g_nvols) return;
     vol_t *v = &g_vols[i];
-    if (v->ok) { snapshot_close(&v->sn); v->ok = 0; }
+    if (v->ok) { dir_index_free(v); snapshot_close(&v->sn); v->ok = 0; }
     unlink(v->file);                     /* 旧路径索引一并清理，避免残留 */
     memmove(&g_vols[i], &g_vols[i+1], (size_t)(g_nvols - i - 1) * sizeof(vol_t));
     g_nvols--;
@@ -657,13 +666,14 @@ static void *usb_build_worker(void *arg) {
     int i = usb_find_locked(j->id);
     if (i >= 0 && !strcmp(g_vols[i].root, j->root)) {
         vol_t *v = &g_vols[i];
-        if (v->ok) snapshot_close(&v->sn);
+        if (v->ok) { dir_index_free(v); snapshot_close(&v->sn); }
         v->sn = ns;
         v->ok = 1;
         v->records = ns.h.rec_count;
         v->built_at = (uint64_t)time(NULL);
         v->build_ms = ms;
         v->building = 0;
+        dir_index_build(v);
         installed = 1;
         usb_msg_set( "USB 设备在线（已索引 %llu 条）",
                  (unsigned long long)v->records);
@@ -1858,6 +1868,71 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
 
 
 
+static int dir_find_id(const xl_snap *sn, const char *dir, uint32_t *id_out);
+
+/* ---- 目录子项索引 ----
+ * 启动/重建后一次性按 parent 建 child 链表，列目录只遍历直接子项；
+ * 子项按记录号升序（DFS 顺序），与原来的全量扫描顺序一致。 */
+static void dir_index_free(vol_t *v) {
+    free(v->dir_head);
+    free(v->dir_next);
+    v->dir_head = v->dir_next = NULL;
+    v->root_id = UINT32_MAX;
+    v->dir_ready = 0;
+}
+
+static void dir_index_build(vol_t *v) {
+    dir_index_free(v);
+    if (!v->ok) return;
+    uint32_t n = (uint32_t)v->sn.h.rec_count;
+    if (!n) return;
+    v->dir_head = xmalloc((size_t)n * sizeof(uint32_t));
+    v->dir_next = xmalloc((size_t)n * sizeof(uint32_t));
+    for (uint32_t i = 0; i < n; i++) {
+        v->dir_head[i] = UINT32_MAX;
+        v->dir_next[i] = UINT32_MAX;
+    }
+    v->root_id = UINT32_MAX;
+    for (uint32_t i = n; i-- > 0;) {
+        const xl_rec *r = &v->sn.recs[i];
+        if (r->parent == XL_ROOT) {
+            if (r->name_len == 0) v->root_id = i;
+        } else if (r->parent < n) {
+            v->dir_next[i] = v->dir_head[r->parent];
+            v->dir_head[r->parent] = i;
+        }
+    }
+    v->dir_ready = (v->root_id != UINT32_MAX);
+}
+
+/* 从卷根按路径分量查找目录；未建索引时回退到线性扫描 */
+static int dir_lookup(const vol_t *v, const char *dir, uint32_t *id_out) {
+    if (!v->dir_ready) return dir_find_id(&v->sn, dir, id_out);
+    if (!strcmp(dir, v->root)) { *id_out = v->root_id; return 1; }
+    size_t rl = strlen(v->root);
+    if (strncmp(dir, v->root, rl) != 0 || dir[rl] != '/') return 0;
+    const char *p = dir + rl;
+    uint32_t cur = v->root_id;
+    while (*p) {
+        while (*p == '/') p++;
+        if (!*p) break;
+        const char *e = p;
+        while (*e && *e != '/') e++;
+        size_t len = (size_t)(e - p);
+        uint32_t next = UINT32_MAX;
+        for (uint32_t i = v->dir_head[cur]; i != UINT32_MAX; i = v->dir_next[i]) {
+            const xl_rec *r = &v->sn.recs[i];
+            if (!(r->flags & XL_F_DIR) || r->name_len != len) continue;
+            if (memcmp(v->sn.names + r->name_off, p, len) == 0) { next = i; break; }
+        }
+        if (next == UINT32_MAX) return 0;
+        cur = next;
+        p = e;
+    }
+    *id_out = cur;
+    return 1;
+}
+
 /* ---- 目录列表：用于"定位到文件夹"的站内视图 ---- */
 static int dir_find_id(const xl_snap *sn, const char *dir, uint32_t *id_out) {
     const char *slash = strrchr(dir, '/');
@@ -1875,13 +1950,6 @@ static int dir_find_id(const xl_snap *sn, const char *dir, uint32_t *id_out) {
     return 0;
 }
 
-static int snap_root_id(const xl_snap *sn, uint32_t *id_out) {
-    for (uint32_t i = 0; i < (uint32_t)sn->h.rec_count; i++) {
-        const xl_rec *r = &sn->recs[i];
-        if (r->name_len == 0 && r->parent == XL_ROOT) { *id_out = i; return 1; }
-    }
-    return 0;
-}
 
 static int is_volroot(const char *d) {
     if (d[0] != '/' || strncmp(d + 1, "vol", 3) != 0) return 0;
@@ -1942,12 +2010,20 @@ static void handle_dir(sbuf *out, const char *qs, int uid, int admin) {
             if (!v->ok) continue;
             if (v->usb && !admin) continue;
             uint32_t did;
-            int found = !strcmp(dir, v->root) ? snap_root_id(&v->sn, &did)
-                                              : dir_find_id(&v->sn, dir, &did);
-            if (!found) continue;
-            for (uint32_t i = 0; i < (uint32_t)v->sn.h.rec_count && shown < MAX_ENT; i++) {
+            if (!dir_lookup(v, dir, &did)) continue;
+            uint32_t ci = v->dir_ready ? v->dir_head[did] : 0;
+            while (shown < MAX_ENT) {
+                uint32_t i;
+                if (v->dir_ready) {
+                    i = ci;
+                    if (i == UINT32_MAX) break;
+                    ci = v->dir_next[i];
+                } else {
+                    while (ci < (uint32_t)v->sn.h.rec_count && v->sn.recs[ci].parent != did) ci++;
+                    if (ci >= (uint32_t)v->sn.h.rec_count) break;
+                    i = ci++;
+                }
                 const xl_rec *r = &v->sn.recs[i];
-                if (r->parent != did) continue;
                 int is_dir = (r->flags & XL_F_DIR) != 0;
                 if (pass == 0 && !is_dir) continue;
                 if (pass == 1 && is_dir) continue;
@@ -2853,15 +2929,12 @@ static void handle_acl_list(sbuf *out, int uid, int admin, int all) {
             sb_puts(out, "\",\"kind\":\"accessible\"}");
             continue;
         }
-        uint32_t rootid = XL_ROOT;
-        for (uint32_t i = 0; i < (uint32_t)v->sn.h.rec_count; i++)
-            if (v->sn.recs[i].parent == XL_ROOT) { rootid = i; break; }
+        uint32_t rootid = v->dir_ready ? v->root_id : XL_ROOT;
         if (rootid == XL_ROOT) continue;
         char p[4096];
         for (int pass = 0; pass < 2; pass++) {
-            for (uint32_t i = 0; i < (uint32_t)v->sn.h.rec_count && shown < 200; i++) {
+            for (uint32_t i = v->dir_head[rootid]; i != UINT32_MAX && shown < 200; i = v->dir_next[i]) {
                 const xl_rec *r = &v->sn.recs[i];
-                if (r->parent != rootid) continue;
                 if (!(r->flags & XL_F_DIR)) continue;
                 snap_path(&v->sn, i, p, sizeof p);
                 {
@@ -2878,9 +2951,9 @@ static void handle_acl_list(sbuf *out, int uid, int admin, int all) {
                 if (pass == 1 && ok) continue;
                 if (pass == 1) {
                     /* 父目录不可见，再看下一层是否有显式授权 */
-                    for (uint32_t j = 0; j < (uint32_t)v->sn.h.rec_count && shown < 200; j++) {
+                    for (uint32_t j = v->dir_head[i]; j != UINT32_MAX && shown < 200; j = v->dir_next[j]) {
                         const xl_rec *c = &v->sn.recs[j];
-                        if (c->parent != i || !(c->flags & XL_F_DIR)) continue;
+                        if (!(c->flags & XL_F_DIR)) continue;
                         char cp[4096];
                         snap_path(&v->sn, j, cp, sizeof cp);
                         {
@@ -3934,6 +4007,7 @@ int httpd_serve(const xl_svc_opts *o) {
             v->ok = 1;
             v->records = v->sn.h.rec_count;
             v->built_at = v->sn.h.built_at;
+            dir_index_build(v);
         }
         g_nvols++;
     }

@@ -108,7 +108,7 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
 
 ## 现在是什么状态
 
-当前版本 **0.8.25**，更新记录见 [CHANGELOG.md](CHANGELOG.md)，本次发布说明见
+当前版本 **0.8.26**，更新记录见 [CHANGELOG.md](CHANGELOG.md)，本次发布说明见
 [RELEASE_NOTES.md](RELEASE_NOTES.md)。支持明暗双主题，默认使用飞牛账号身份与系统目录授权。
 
 ### 0.8.9–0.8.17 更新内容
@@ -122,7 +122,7 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
   自动重建，结果带 `USB` 标记
 - 设置页：功能区卡片化、卡片内外灰度分层、右上角关闭按钮重做
 
-### 0.8.18–0.8.25 更新内容
+### 0.8.18–0.8.26 更新内容
 
 - 0.8.18：修复 ext4 裸扫目录块堆越界；设置请求上限 128 KiB、检索范围上限 512；普通用户
   可保存自己的 scope；拒绝复制到自身子目录与 FIFO 阻塞；fanotify 队列满触发重建；
@@ -137,13 +137,15 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
   不会被误当卷
 - 0.8.25：USB 设备 sysfs 校验、搜索按 uid 限流、USB 状态消息加锁、快照记录边界校验、
   复制不再保留 setuid/setgid
+- 0.8.26：systemd unit 按实际安装路径生成（不再写死 `/vol1`）；目录/检索范围展开改用
+  parent→child 索引，只遍历直接子项
 
 ### 问题清单与下一步计划
 
-> 更新：2026-11-10 · 状态以 `main`（0.8.25）为准。来源：0.8.17 代码审查、真机 U 盘测试、
+> 更新：2026-11-10 · 状态以 `main`（0.8.26）为准。来源：0.8.17 代码审查、真机 U 盘测试、
 > GitHub Issues #1/#2、README 已知限制。
 
-#### 已完成（0.8.18–0.8.25）
+#### 已完成（0.8.18–0.8.26）
 
 - [x] P0：ext4 裸扫目录块数组堆越界（ASan + 64 MiB 镜像可复现）— 0.8.18
 - [x] 设置 POST 超 16 KiB 静默截断、检索范围 64 项硬上限 — 0.8.18（128 KiB / 512 项，超限报错）
@@ -165,13 +167,13 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
 - [x] USB 状态消息并发写 — 0.8.25 加锁
 - [x] 快照逐记录边界校验 — 0.8.25 打开时校验 `name_off/name_len/parent`
 - [x] 复制保留 setgid/setuid — 0.8.25 只保留 `0777` 权限
+- [x] systemd unit / 应用中心路径写死 `/vol1` — 0.8.26 按实际安装路径生成 unit
+- [x] 目录列举与检索范围展开 O(N) — 0.8.26 建立 parent→child 索引
 
 #### 待处理
 
 | 优先级 | 问题 | 状态 | 计划 |
 |---|---|---|---|
-| **P2** | systemd unit / 应用中心路径写死 `/vol1` | ⬜ 待办 | 安装期生成 unit，支持装到其他卷 |
-| **P2** | 目录列举与检索范围展开 O(N)，单目录 4000 项上限 | ⬜ 待办 | 目录/子项索引；保留 `truncated` 提示 |
 | **P3** | unix socket 对端校验接受 www-data 组，而非仅 uid | ⬜ 待办 | 收紧为 root / geteuid / www-data uid |
 | **P3** | `admin_by_uid` 仍以最小 uid≥1000 兜底 | ⬜ 待办 | 以网关头 `x-trim-isadmin` 为准，兜底可配置 |
 | **P3** | README 截图过期、无 CI/HTTP API 测试 | ⬜ 待办 | 更新截图；ASan、HTTP API、USB 模拟挂载接入 CI |
@@ -330,7 +332,9 @@ ext4 裸设备读取器已用 `/dev/dm-1` 全卷验证：369 万条记录与 `fi
 
 ## 服务托管
 
-安装包自带 `xuanlan.service`：首次启动时同步到 `/etc/systemd/system` 并写入 `app.pid`。
+首次启动时由 `cmd/main` 按实际 `TRIM_APPDEST` / `TRIM_PKGVAR` / `TRIM_PKGETC` 与端口生成
+`/etc/systemd/system/xuanlan.service`，不再随包提供写死 `/vol1` 的 unit；装到其他卷也能正常
+开机自启，unit 里的路径与 pid 文件都指向实际位置。
 `ExecStart` 指向随包安装的 `start.sh`，它在每次启动（含开机自启）时读取
 `/vol1/@appconf/xuanlan/service_port`（安装/配置向导写入的端口）与可选的
 `/vol1/@appconf/xuanlan/xuanlan.conf`（`ROOTS=...` 覆盖索引卷），再把参数交给主程序，
@@ -430,12 +434,12 @@ scripts/build-fpk.sh      打包装包
 
 ## 版本与安装包
 
-- 最新版本：**0.8.25**（2026-11-10）
-- 安装包：`xuanlan_0.8.25_amd64.fpk`（926,250 字节）
-- MD5：`db3abfe01d9304b42ce307047bf37262`
-- SHA-256：`51b974d691416d46925f6f83791d3e924b9cc2541ad51d28fd6715b9a6b80649`
-- 发布页：[GitHub](https://github.com/magicindex/ArcaneVision/releases/tag/v0.8.25) ·
-  [Gitea](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.8.25)
+- 最新版本：**0.8.26**（2026-11-10）
+- 安装包：`xuanlan_0.8.26_amd64.fpk`（928,294 字节）
+- MD5：`fdce961d3f93f86cf6d881bfd2b4d3fc`
+- SHA-256：`cbf660ef9f430be091a11b55aa50c0b2340e6f7b86b4dc27ececac6c18ed6ab2`
+- 发布页：[GitHub](https://github.com/magicindex/ArcaneVision/releases/tag/v0.8.26) ·
+  [Gitea](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.8.26)
 
 ## 路线图
 
@@ -448,7 +452,7 @@ scripts/build-fpk.sh      打包装包
   服务生命周期与应用中心状态对齐
 - **P6 已完成（0.8.9–0.8.17）**：开机自启参数化、目录树三态、隐藏/杂项过滤、USB 外挂检索、
   设置页视觉整理
-- **P7 已完成（0.8.18–0.8.25）**：P0 越界与设置/文件操作安全加固、搜索分页、USB 真机适配、
+- **P7 已完成（0.8.18–0.8.26）**：P0 越界与设置/文件操作安全加固、搜索分页、USB 真机适配、
   分区根节点与目录树深度整理
 - **P6 已完成（0.8.0）**：索引 v2 记录真实 `size/mtime` 并按真实时间排序；目录增量子树；
   fail-closed 身份与文件级读写权限；HDR/纯音频转码；`--no-tcp`；查询 Top-K 与快照加固
