@@ -2678,6 +2678,7 @@
         .then(d => {
           if (my !== seq) return;
           spin.classList.remove('on');
+          if (d.error) { items = []; searchTotal = 0; render(); meta.textContent = d.error === 'rate limited' ? '查询过于频繁，请稍后再试' : ('查询失败：' + d.error); return; }
           items = d.items || [];
           searchTotal = d.total || items.length;
           meta.innerHTML = '<b>' + (d.truncated ? '≥' : d.approx ? '≈' : '') + (d.total||0).toLocaleString() + '</b> 项 · ' + (d.ms||0).toFixed(1) + ' ms';
@@ -2699,6 +2700,7 @@
       .then(r => r.json())
       .then(d => {
         if (my !== seq) return;
+        if (d.error) { meta.textContent = d.error === 'rate limited' ? '查询过于频繁，请稍后再试' : ('查询失败：' + d.error); return; }
         items = items.concat(d.items || []);
         searchTotal = d.total || searchTotal;
         meta.innerHTML = '<b>' + (d.truncated ? '≥' : d.approx ? '≈' : '') + (d.total||0).toLocaleString() + '</b> 项 · ' + (d.ms||0).toFixed(1) + ' ms';

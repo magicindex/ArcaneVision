@@ -66,7 +66,7 @@ static int copy_file(const char *src, const char *dst, char *err, size_t cap)
     if (r < 0 && !ok) { set_err(err, cap, "读取失败: %s", src); ok = -1; }
     struct stat st;
     if (fstat(in, &st) == 0) {
-        if (!ok) fchmod(out, st.st_mode & 07777);
+        if (!ok) fchmod(out, st.st_mode & 0777);
         if (geteuid() == 0) fchown(out, st.st_uid, st.st_gid);
         struct timespec ts[2] = { st.st_atim, st.st_mtim };
         futimens(out, ts);
@@ -101,7 +101,7 @@ static int copy_tree(const char *src, const char *dst, uid_t uid, char *err, siz
         return 0;
     }
     if (S_ISDIR(st.st_mode)) {
-        if (mkdir(dst, st.st_mode & 07777) != 0 && errno != EEXIST) {
+        if (mkdir(dst, st.st_mode & 0777) != 0 && errno != EEXIST) {
             set_err(err, cap, "创建目录失败: %s", dst);
             return -1;
         }
@@ -118,7 +118,7 @@ static int copy_tree(const char *src, const char *dst, uid_t uid, char *err, siz
         }
         closedir(d);
         if (geteuid() == 0) chown(dst, st.st_uid, st.st_gid);
-        chmod(dst, st.st_mode & 07777);
+        chmod(dst, st.st_mode & 0777);
         struct timespec ts[2] = { st.st_atim, st.st_mtim };
         utimensat(AT_FDCWD, dst, ts, 0);
         return rc;

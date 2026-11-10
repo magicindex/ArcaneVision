@@ -146,6 +146,23 @@ static int  g_usb_enabled;
 static int  g_usb_watch = 1;
 static int  g_usb_had;
 static char g_usb_msg[1024] = "USB 检索未开启";
+static pthread_mutex_t g_usb_msg_mu = PTHREAD_MUTEX_INITIALIZER;
+static void usb_msg_set(const char *fmt, ...) {
+    char tmp[1024];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(tmp, sizeof tmp, fmt, ap);
+    va_end(ap);
+    pthread_mutex_lock(&g_usb_msg_mu);
+    memcpy(g_usb_msg, tmp, sizeof g_usb_msg);
+    g_usb_msg[sizeof g_usb_msg - 1] = 0;
+    pthread_mutex_unlock(&g_usb_msg_mu);
+}
+static void usb_msg_get(char *out, size_t cap) {
+    pthread_mutex_lock(&g_usb_msg_mu);
+    snprintf(out, cap, "%s", g_usb_msg);
+    pthread_mutex_unlock(&g_usb_msg_mu);
+}
 static char g_usb_sig[4096];
 static uint64_t g_usb_last_tick;
 static int  g_usb_missing_ticks;
@@ -482,6 +499,37 @@ static void usb_id_for(const char *dev, char *out, size_t cap) {
     closedir(d);
 }
 
+/* 判断 /dev/sdX / mmcblk / nvme 是否真的来自 USB/可移动介质；
+ * 无法确认（sysfs 不存在、mapper 等）时保守接受，避免误伤 fnOS 的其他挂载方式。 */
+static int usb_dev_external(const char *dev) {
+    if (strncmp(dev, "/dev/", 5) != 0) return 1;
+    const char *base = dev + 5;
+    char disk[64];
+    if (snprintf(disk, sizeof disk, "%s", base) >= (int)sizeof disk) return 1;
+    char *pp = strrchr(disk, 'p');
+    if (pp && pp > disk && pp[1] >= '0' && pp[1] <= '9' &&
+        pp[-1] >= '0' && pp[-1] <= '9') {
+        *pp = 0;                                  /* mmcblk0p1 / nvme0n1p1 */
+    } else {
+        char *e = disk + strlen(disk);
+        while (e > disk && e[-1] >= '0' && e[-1] <= '9') e--;
+        *e = 0;                                   /* sdj1 -> sdj */
+    }
+    char path[256], buf[16], link[PATH_MAX];
+    snprintf(path, sizeof path, "/sys/block/%s/removable", disk);
+    FILE *f = fopen(path, "r");
+    int has_sys = f != NULL, removable = 0;
+    if (f) {
+        if (fgets(buf, sizeof buf, f) && buf[0] == '1') removable = 1;
+        fclose(f);
+    }
+    snprintf(path, sizeof path, "/sys/block/%s", disk);
+    int usb = realpath(path, link) && strstr(link, "/usb");
+    if (usb || removable) return 1;
+    if (!has_sys) return 1;                       /* 无法判断时不要误伤 */
+    return 0;
+}
+
 static int usb_collect(usb_mount *out, int cap) {
     FILE *f = fopen("/proc/self/mounts", "r");
     if (!f) return 0;
@@ -501,6 +549,7 @@ static int usb_collect(usb_mount *out, int cap) {
         snprintf(out[n].root, sizeof out[n].root, "%.*s", (int)(sizeof out[n].root - 1), m);
         char dv[1024];
         usb_unescape(dev, dv, sizeof dv);
+        if (!usb_dev_external(dv)) continue;
         snprintf(out[n].dev, sizeof out[n].dev, "%.*s", (int)(sizeof out[n].dev - 1), dv);
         usb_id_for(dv, out[n].id, sizeof out[n].id);
         n++;
@@ -572,7 +621,7 @@ static void usb_build_finish(usb_job *j, int ok) {
         g_vols[i].building = 0;
         if (!ok) {
             g_vols[i].ok = 0;
-            snprintf(g_usb_msg, sizeof g_usb_msg, "USB 索引构建失败");
+            usb_msg_set( "USB 索引构建失败");
         }
     }
     pthread_rwlock_unlock(&g_rw);
@@ -616,7 +665,7 @@ static void *usb_build_worker(void *arg) {
         v->build_ms = ms;
         v->building = 0;
         installed = 1;
-        snprintf(g_usb_msg, sizeof g_usb_msg, "USB 设备在线（已索引 %llu 条）",
+        usb_msg_set( "USB 设备在线（已索引 %llu 条）",
                  (unsigned long long)v->records);
     }
     pthread_rwlock_unlock(&g_rw);
@@ -687,24 +736,24 @@ static void usb_sync(void) {
             g_usb_enabled = 0;
             g_usb_had = 0;
             g_usb_missing_ticks = 0;
-            snprintf(g_usb_msg, sizeof g_usb_msg,
+            usb_msg_set(
                      "USB 设备已断开，旧索引已清理，已自动关闭 USB 检索");
             usb_cfg_save();
         } else {
-            snprintf(g_usb_msg, sizeof g_usb_msg,
+            usb_msg_set(
                      "USB 设备暂时不可用，等待恢复（%d/2）", g_usb_missing_ticks);
         }
     } else if (path_changed) {
-        snprintf(g_usb_msg, sizeof g_usb_msg, "USB 挂载点已变化，正在按新路径重建索引");
+        usb_msg_set( "USB 挂载点已变化，正在按新路径重建索引");
     } else if (path_ignored) {
-        snprintf(g_usb_msg, sizeof g_usb_msg,
+        usb_msg_set(
                  "USB 状态已变化；路径检测已关闭，未自动清理或重建索引");
     } else if (added) {
-        snprintf(g_usb_msg, sizeof g_usb_msg, "已检测到 USB 设备，正在建索引");
+        usb_msg_set( "已检测到 USB 设备，正在建索引");
     } else if (!g_usb_enabled) {
-        snprintf(g_usb_msg, sizeof g_usb_msg, "USB 检索未开启");
+        usb_msg_set( "USB 检索未开启");
     } else if (cn == 0) {
-        snprintf(g_usb_msg, sizeof g_usb_msg, "未检测到 USB 设备（插上后自动索引）");
+        usb_msg_set( "未检测到 USB 设备（插上后自动索引）");
     }
     usb_sig_of(cur, cn, g_usb_sig, sizeof g_usb_sig);
     pthread_rwlock_unlock(&g_rw);
@@ -738,7 +787,7 @@ static void usb_enable(int on) {
         g_usb_had = 0;
         g_usb_sig[0] = 0;
         g_usb_missing_ticks = 0;
-        snprintf(g_usb_msg, sizeof g_usb_msg, "USB 检索已关闭，旧索引已清理");
+        usb_msg_set( "USB 检索已关闭，旧索引已清理");
         pthread_rwlock_unlock(&g_rw);
     } else {
         g_usb_had = 0;
@@ -1585,6 +1634,33 @@ static void perm_cache_free(perm_cache_ent *c) {
     for (int i = 0; i < PCACHE_N; i++) free(c[i].dir);
 }
 
+/* 搜索限流：每 uid 每秒 20 次，其中 2 字符查询每秒 5 次，避免拖慢 4 个 worker */
+#define RL_MAX 64
+static int rate_allow(int uid, int is_short) {
+    static struct { int key; uint64_t win; int total, shortn; } t[RL_MAX];
+    static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
+    static unsigned rr;
+    uint64_t win = now_ms() / 1000;
+    int key = uid + 1, slot = -1, ok = 0;
+    pthread_mutex_lock(&mu);
+    for (int i = 0; i < RL_MAX; i++) if (t[i].key == key) { slot = i; break; }
+    if (slot < 0) {
+        slot = (int)(rr++ % RL_MAX);
+        t[slot].key = key;
+        t[slot].win = 0;
+        t[slot].total = t[slot].shortn = 0;
+    }
+    if (t[slot].win != win) {
+        t[slot].win = win;
+        t[slot].total = t[slot].shortn = 0;
+    }
+    t[slot].total++;
+    if (is_short) t[slot].shortn++;
+    ok = t[slot].total <= 20 && (!is_short || t[slot].shortn <= 5);
+    pthread_mutex_unlock(&mu);
+    return ok;
+}
+
 static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
     char q[512] = "", s_limit[32] = "", s_off[32] = "", type[16] = "", s_cat[24] = "";
     param(qs, "q", q, sizeof(q));
@@ -1604,6 +1680,10 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
             if ((*p & 0xC0) != 0x80) chars++;
         if (chars < 2) {
             sb_puts(out, "{\"error\":\"query too short\"}");
+            return;
+        }
+        if (!rate_allow(uid, chars == 2)) {
+            sb_puts(out, "{\"error\":\"rate limited\"}");
             return;
         }
     }
@@ -2519,7 +2599,7 @@ static void handle_settings_get(sbuf *out, int uid, int admin, int all) {
     sb_printf(out, ",\"skipHidden\":%s", scan_skip_hidden() ? "true" : "false");
     sb_printf(out, ",\"usbEnabled\":%s,\"usbWatch\":%s,\"usbMessage\":\"",
               g_usb_enabled ? "true" : "false", g_usb_watch ? "true" : "false");
-    sb_json(out, g_usb_msg, strlen(g_usb_msg));
+    char umsg[1024]; usb_msg_get(umsg, sizeof umsg); sb_json(out, umsg, strlen(umsg));
     sb_puts(out, "\",\"usbMounts\":[");
     {
         int ufirst = 0;
@@ -2907,7 +2987,7 @@ static void handle_status(sbuf *out) {
         pthread_rwlock_unlock(&g_rw);
         sb_printf(out, ",\"usb\":{\"enabled\":%s,\"watch\":%s,\"mounts\":%d,\"message\":\"",
                   g_usb_enabled ? "true" : "false", g_usb_watch ? "true" : "false", nusb);
-        sb_json(out, g_usb_msg, strlen(g_usb_msg));
+        char umsg[1024]; usb_msg_get(umsg, sizeof umsg); sb_json(out, umsg, strlen(umsg));
         sb_puts(out, "\"}");
     }
     sb_puts(out, ",\"version\":\"");

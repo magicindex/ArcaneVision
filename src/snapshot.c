@@ -129,6 +129,15 @@ int snapshot_open(const char *path, xl_snap *sn) {
     sn->tri_ranges = (xl_range *)(base + sn->h.tri_ranges_off);
     sn->postings = base + sn->h.postings_off;
     sn->root = (const char *)(base + sn->h.root_off);
+    /* 逐条校验名称偏移与父节点，损坏索引不能把越界值带进查询 */
+    for (uint32_t i = 0; i < sn->h.rec_count; i++) {
+        const xl_rec *r = &sn->recs[i];
+        if ((uint64_t)r->name_off + (uint64_t)r->name_len > sn->h.names_bytes ||
+            (r->parent != XL_ROOT && r->parent >= sn->h.rec_count)) {
+            fprintf(stderr, "xuanlan: index record out of range (#%u)\n", i);
+            goto bad;
+        }
+    }
     return 0;
 
 bad:
