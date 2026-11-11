@@ -172,6 +172,35 @@
   .openwin .ppages{flex:1;overflow:auto;display:flex;justify-content:center;padding:14px 12px 24px;min-height:0}
   .openwin .ppages canvas{display:block;box-shadow:0 6px 26px rgba(0,0,0,.55);border-radius:2px;background:#fff}
   .openwin .phint{color:#7f93b3;font-size:12.5px;padding:30px 0}
+  /* 图片预览：全屏查看、左右切换、键盘操作；列表来自当前搜索 items，不重新请求 */
+  .imgview{position:fixed;top:0;right:0;bottom:0;left:0;z-index:260;display:none;
+    flex-direction:column;background:rgba(4,7,12,.95);color:#d9e5f5}
+  .imgview.on{display:flex}
+  .imgview .ivbar{display:flex;align-items:center;gap:8px;padding:9px 12px;font-size:12.5px;
+    color:#9fb3d1;border-bottom:1px solid rgba(120,160,220,.16);flex:none}
+  .imgview .ivbar #ivtitle{font-weight:600;color:#dce8f8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:52vw}
+  .imgview .ivbar #ivcount{font-size:11.5px;color:#7f93b3;flex:none}
+  .imgview .ivbar .sp{flex:1}
+  .imgview .ivbar button{font-size:11.5px;padding:5px 11px;border-radius:7px;cursor:pointer;
+    background:rgba(255,255,255,.05);border:1px solid rgba(120,160,220,.24);color:#b9c9e2}
+  .imgview .ivbar button:hover{color:#cdf3ee;border-color:rgba(90,200,190,.45)}
+  .imgview .ivbody{flex:1;position:relative;min-height:0;display:flex;align-items:center;justify-content:center}
+  .imgview img{display:block;max-width:calc(100% - 96px);max-height:calc(100% - 24px);object-fit:contain;
+    border-radius:4px;box-shadow:0 10px 40px rgba(0,0,0,.5);background:#0b1119}
+  .imgview .ivnav{position:absolute;top:50%;transform:translateY(-50%);z-index:2;width:44px;height:64px;
+    display:flex;align-items:center;justify-content:center;border:1px solid rgba(120,160,220,.22);
+    background:rgba(15,23,36,.72);color:#cfe0f5;font-size:30px;line-height:1;border-radius:10px;cursor:pointer}
+  .imgview .ivnav.prev{left:12px}.imgview .ivnav.next{right:12px}
+  .imgview .ivnav:hover{color:#8ff0e4;border-color:rgba(90,200,190,.5)}
+  .imgview .ivnav:disabled{opacity:.2;cursor:default}
+  .imgview .ivhint{position:absolute;bottom:8px;left:0;right:0;text-align:center;font-size:11px;color:#6f819d;pointer-events:none}
+  @media(max-width:620px),(pointer:coarse){
+    .imgview img{max-width:calc(100% - 16px);max-height:calc(100% - 8px)}
+    .imgview .ivnav{width:36px;height:54px;font-size:24px}
+    .imgview .ivnav.prev{left:4px}.imgview .ivnav.next{right:4px}
+    .imgview .ivbar #ivtitle{max-width:44vw}
+  }
+
   .openwin .rsz{position:absolute;right:0;bottom:0;width:18px;height:18px;cursor:nwse-resize;z-index:3}
   .openwin .rsz:after{content:'';position:absolute;right:4px;bottom:4px;width:8px;height:8px;
     border-right:2px solid rgba(140,190,210,.45);border-bottom:2px solid rgba(140,190,210,.45)}
@@ -1943,6 +1972,7 @@
     const it = ctxItem;
     if (a === 'open') {
       if (it.dir) showDir(it.path, null);
+      else if (isImage(it)) openImageViewer(it, pickViewerSource(it));
       else openWithAssoc(it.path, ctxHow || assocFor(extOf(it.path)));
     } else if (a === 'raw') {
       openURL(API + 'file?path=' + encodeURIComponent(it.path), baseName(it.path));
@@ -1980,6 +2010,93 @@
   const spin = $('spin'), prog = $('prog'), dot = $('dot'), stext = $('stext'), scount = $('scount');
   const toast = $('toast');
   let type = '', cat = '', timer = null, seq = 0, sel = -1, items = [], state = {building:false};
+
+  // ---- 图片预览 ----
+  let finderItems = [];
+  let ivList = [], ivPos = 0, ivOpen = false, ivTouchX = 0;
+  const imgview = document.createElement('div');
+  imgview.className = 'imgview';
+  imgview.setAttribute('role', 'dialog');
+  imgview.setAttribute('aria-modal', 'true');
+  imgview.innerHTML = '<div class="ivbar"><span id="ivtitle"></span><span id="ivcount"></span>' +
+    '<span class="sp"></span><button id="ivdl">下载</button><button id="ivclose">关闭</button></div>' +
+    '<div class="ivbody"><button class="ivnav prev" id="ivprev" aria-label="上一张">‹</button>' +
+    '<img id="ivimg" alt="">' +
+    '<button class="ivnav next" id="ivnext" aria-label="下一张">›</button>' +
+    '<div class="ivhint">← → 切换 · Esc 关闭 · 点击背景关闭</div></div>';
+  document.body.appendChild(imgview);
+  const ivImg = imgview.querySelector('#ivimg');
+  const ivTitle = imgview.querySelector('#ivtitle');
+  const ivCount = imgview.querySelector('#ivcount');
+  const ivPrev = imgview.querySelector('#ivprev');
+  const ivNext = imgview.querySelector('#ivnext');
+
+  function isImage(it){
+    if (!it || it.dir) return false;
+    if (it.cat === 'img' || it.cat === 'image') return true;
+    const c = catOfExt(extOf(it.path));
+    return c === 'img' || c === 'image';
+  }
+  function pickViewerSource(it){
+    if (items.some(x => x.path === it.path)) return items;
+    if (finderItems.some(x => x.path === it.path)) return finderItems;
+    return items;
+  }
+  function ivShow(){
+    const it = ivList[ivPos];
+    if (!it) return;
+    ivTitle.textContent = it.name || baseName(it.path);
+    ivTitle.title = it.path;
+    ivCount.textContent = (ivPos + 1) + ' / ' + ivList.length;
+    ivPrev.disabled = ivPos <= 0;
+    ivNext.disabled = ivPos >= ivList.length - 1;
+    ivImg.onerror = () => { ivTitle.textContent = '无法加载图片 · ' + (it.name || baseName(it.path)); };
+    ivImg.onload = () => { ivTitle.textContent = it.name || baseName(it.path); };
+    ivImg.src = API + 'file?dl=0&path=' + encodeURIComponent(it.path);
+  }
+  function ivMove(d){
+    const n = ivPos + d;
+    if (n < 0 || n >= ivList.length) return;
+    ivPos = n; ivShow();
+  }
+  function openImageViewer(it, source){
+    if (!isImage(it)) return;
+    const list = (source && source.length ? source : items).filter(isImage);
+    let pos = list.findIndex(x => x.path === it.path);
+    if (pos < 0) { list.unshift(it); pos = 0; }
+    ivList = list; ivPos = pos; ivOpen = true;
+    imgview.classList.add('on');
+    ivShow();
+  }
+  function closeImageViewer(){
+    ivOpen = false;
+    imgview.classList.remove('on');
+    ivImg.removeAttribute('src');
+  }
+  ivPrev.onclick = () => ivMove(-1);
+  ivNext.onclick = () => ivMove(1);
+  imgview.querySelector('#ivclose').onclick = closeImageViewer;
+  imgview.querySelector('#ivdl').onclick = () => { const it = ivList[ivPos]; if (it) downloadFile(it.path); };
+  imgview.addEventListener('click', e => {
+    if (e.target === imgview || e.target.classList.contains('ivbody')) closeImageViewer();
+  });
+  imgview.addEventListener('touchstart', e => {
+    if (e.touches.length === 1 && !e.target.closest('button')) ivTouchX = e.touches[0].clientX;
+  }, { passive: true });
+  imgview.addEventListener('touchend', e => {
+    if (!e.changedTouches.length || e.target.closest('button')) return;
+    const dx = e.changedTouches[0].clientX - ivTouchX;
+    if (Math.abs(dx) > 45) ivMove(dx > 0 ? -1 : 1);
+  }, { passive: true });
+  document.addEventListener('keydown', e => {
+    if (!ivOpen) return;
+    if (e.key === 'Escape') closeImageViewer();
+    else if (e.key === 'ArrowLeft') ivMove(-1);
+    else if (e.key === 'ArrowRight') ivMove(1);
+    else return;
+    e.preventDefault(); e.stopImmediatePropagation();
+  }, true);
+
   let searchTotal = 0, searchLoading = false;
 
   function fmtSize(n){
@@ -2076,10 +2193,11 @@
       li.onclick = e => {
         if (e.target.closest('button, input')) return;
         sel = idx; paintSel();
+        if (isImage(it)) { openImageViewer(it, items); return; }
         if (coarse) openEntry(it);
       };
       li.ondblclick = e => {
-        if (coarse || e.target.closest('button, input')) return;
+        if (coarse || e.target.closest('button, input') || isImage(it)) return;
         sel = idx; paintSel();
         openEntry(it);
       };
@@ -2098,7 +2216,7 @@
   (function(){
     const layers = () => [document.querySelector('.openwin'), document.querySelector('.finder'),
                            document.querySelector('.setmask'), document.querySelector('.trashbox'),
-                           document.querySelector('.destpick')].filter(Boolean);
+                           document.querySelector('.destpick'), document.querySelector('.imgview')].filter(Boolean);
     const sync = () => {
       const any = layers().some(e => e.classList.contains('on'));
       document.documentElement.classList.toggle('lock', any);
@@ -2121,8 +2239,9 @@
   finder.addEventListener('click', e => { if (e.target === finder) closeFinder(); });
   finder.querySelector('.x').onclick = closeFinder;
 
-  function openEntry(it){
+  function openEntry(it, source){
     if (it.dir) showDir(it.path, null);
+    else if (isImage(it)) openImageViewer(it, source && source.length ? source : items);
     else openWithAssoc(it.path, assocFor(extOf(it.path)));
   }
   function showDir(path, focus){
@@ -2137,6 +2256,7 @@
       .then(d => {
         if (d.error) { list.innerHTML = '<div class="row"><div class="nm">无法列出：' + esc(d.error) + '</div></div>'; return; }
         const items = d.entries || [];
+        finderItems = items;
         crumb.innerHTML = '<b>' + esc(path) + '</b> · ' + (d.count || items.length) + ' 项' +
           (d.truncated ? '（已截断，仅显示前 4000 项）' : '');
         if (!items.length) { list.innerHTML = '<div class="row"><div class="nm">该文件夹没有可见内容</div></div>'; return; }
@@ -2152,7 +2272,7 @@
           row.innerHTML = '<div class="ic">' + catIcon(it.dir ? 'dir' : (it.cat || 'other'), 16) + '</div>' +
                           '<div class="nm">' + esc(it.name) + '</div>' +
                           '<div class="meta">' + (it.dir ? '' : fmtSize(it.size) + ' · ' + fmtTime(it.mtime)) + '</div>';
-          row.onclick = () => openEntry(it);
+          row.onclick = () => openEntry(it, items);
           row.oncontextmenu = e => { e.preventDefault(); ctxItem = it; showCtx(e.clientX, e.clientY, it); };
           list.appendChild(row);
         }
