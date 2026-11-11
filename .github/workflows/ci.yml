@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build
-        run: make
+        run: make bin/markdown_test
       - name: Markdown / smoke / HTTP API
         run: |
           ./bin/markdown_test
