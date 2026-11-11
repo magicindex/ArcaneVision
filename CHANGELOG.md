@@ -1,3 +1,13 @@
+## 0.8.30
+
+- 缩略图加载优化：
+  - `/api/thumb` 返回 `Cache-Control: private, max-age=86400`，URL 带文件 mtime 版本号，
+    重复打开预览直接命中浏览器缓存
+  - 打开预览时先请求主图，主图 onload（或 700ms 兜底）后再加载缩略图，避免 10+ 个
+    缩略图请求抢占 4 个 worker 拖慢大图
+  - 缩略图 ffmpeg 改为单线程 + `fast_bilinear` + `-q:v 5`，降低 CPU 争用、首张生成更快
+  - 缩略图 `fetchpriority=low`，主图 `high`
+
 ## 0.8.29
 
 - 修复图片预览缩略图黑框：主图样式 `max-width: calc(100% - 96px)` 误作用到缩略图，桌面端

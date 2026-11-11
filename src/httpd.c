@@ -910,6 +910,7 @@ static const char *mime_of(const char *path) {
 /* 每个工作线程一次请求的附加响应头（下载时写 Content-Disposition） */
 static _Thread_local char g_extra_hdr[1400];
 static _Thread_local char g_range_hdr[256];
+static _Thread_local int g_no_store = 1;
 static _Thread_local int g_fs_fd = -1;
 static _Thread_local off_t g_fs_off = 0, g_fs_len = 0;
 static _Thread_local int g_fs_status = 0;
@@ -3330,6 +3331,7 @@ static void handle_client(int fd) {
     }
     g_extra_hdr[0] = 0;
     g_range_hdr[0] = 0;
+    g_no_store = 1;
     g_fs_fd = -1;
 
     /* Accept-Ranges 之外的响应不带 Range/Cache 头 */
@@ -3612,9 +3614,10 @@ static void handle_client(int fd) {
         sbuf resp;
         memset(&resp, 0, sizeof(resp));
         sb_printf(&resp, "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %lld\r\n"
-                         "%s%sCache-Control: no-store\r\nConnection: close\r\n\r\n",
+                         "%s%s%sConnection: close\r\n\r\n",
                   g_fs_status, g_fs_status == 206 ? "Partial Content" : "OK",
-                  ctype, (long long)g_fs_len, g_range_hdr, g_extra_hdr);
+                  ctype, (long long)g_fs_len, g_range_hdr, g_extra_hdr,
+                  g_no_store ? "Cache-Control: no-store\r\n" : "");
         write_all(fd, resp.p, resp.n);
         free(resp.p);
         char *chunk = malloc(STREAM_CHUNK);
@@ -3639,9 +3642,10 @@ static void handle_client(int fd) {
     sbuf resp;
     memset(&resp, 0, sizeof(resp));
     sb_printf(&resp, "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %zu\r\n"
-                     "%s%sCache-Control: no-store\r\nConnection: close\r\n\r\n",
+                     "%s%s%sConnection: close\r\n\r\n",
               code, code == 200 ? "OK" : (code == 404 ? "Not Found" : "Error"),
-              ctype, body.n, g_range_hdr, g_extra_hdr);
+              ctype, body.n, g_range_hdr, g_extra_hdr,
+              g_no_store ? "Cache-Control: no-store\r\n" : "");
     if (body.n) sb_add(&resp, body.p, body.n);
     write_all(fd, resp.p, resp.n);
     free(resp.p);
@@ -3726,6 +3730,8 @@ static void handle_thumb(sbuf *out, const char *qs, int uid, int *code, const ch
                 free(buf);
                 *code = 200;
                 *ctype = "image/jpeg";
+                snprintf(g_extra_hdr, sizeof g_extra_hdr, "Cache-Control: private, max-age=86400\r\n");
+                g_no_store = 0;
                 return;
             }
             free(buf);
@@ -3736,11 +3742,11 @@ static void handle_thumb(sbuf *out, const char *qs, int uid, int *code, const ch
 
     char tmp[PATH_MAX + 96];
     snprintf(tmp, sizeof tmp, "%s.tmp.%d.%lu", cache, (int)getpid(), (unsigned long)pthread_self());
-    char vf[64];
-    snprintf(vf, sizeof vf, "scale=%d:-2", w);
+    char vf[96];
+    snprintf(vf, sizeof vf, "scale=%d:-2:flags=fast_bilinear", w);
     char *argv[] = {
-        (char *)ff, "-v", "error", "-y", "-i", real,
-        "-vf", vf, "-frames:v", "1", "-c:v", "mjpeg", "-q:v", "4", "-f", "image2", tmp, NULL
+        (char *)ff, "-nostdin", "-v", "error", "-y", "-threads", "1", "-i", real,
+        "-vf", vf, "-frames:v", "1", "-c:v", "mjpeg", "-q:v", "5", "-f", "image2", tmp, NULL
     };
     char junk[256];
     int rc = run_capture(argv, junk, sizeof junk);
@@ -3760,6 +3766,8 @@ static void handle_thumb(sbuf *out, const char *qs, int uid, int *code, const ch
     free(buf);
     *code = 200;
     *ctype = "image/jpeg";
+    snprintf(g_extra_hdr, sizeof g_extra_hdr, "Cache-Control: private, max-age=86400\r\n");
+    g_no_store = 0;
 }
 
 static void tc_release(void) {
