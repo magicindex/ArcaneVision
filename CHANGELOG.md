@@ -1,3 +1,13 @@
+## 0.8.32
+
+- unix socket 对端校验收紧：只接受 root / 服务自身 uid / www-data 的 uid，不再放行“任意 uid
+  但 gid=www-data”的进程，防止本地同组进程伪造 `x-trim-*` 身份头
+- 管理员判定改为以网关头 `x-trim-isadmin` 为准；只有请求未带该头时才使用最小 uid≥1000 兜底，
+  可用 `XL_ADMIN_FALLBACK=0` 完全关闭兜底
+- 请求级 admin 结论通过线程局部变量传给 USB/文件操作权限判断，避免同一 worker 复用旧结论
+- 新增 `tests/api_test.py` 并接入 `make test`：覆盖 admin 头优先级/兜底开关、JSON 校验、
+  缩略图缓存头
+
 ## 0.8.31
 
 - 图片全屏预览背景改为不透明 `#05080d`，完全遮住后面的搜索列表，不再透出列表文字

@@ -178,7 +178,13 @@ static pthread_rwlock_t g_rw = PTHREAD_RWLOCK_INITIALIZER;
 
 static volatile sig_atomic_t g_stop;
 /* 网关不一定转发 x-trim-isadmin，这里补一个兜底：
- * 飞牛把首个普通用户（最小的 uid>=1000）视为管理员。 */
+ * 飞牛把首个普通用户（最小的 uid>=1000）视为管理员。
+ * 可用 XL_ADMIN_FALLBACK=0 关闭兜底，只信网关头。 */
+static int admin_fallback_enabled(void) {
+    const char *e = getenv("XL_ADMIN_FALLBACK");
+    if (!e) return 1;
+    return !(e[0] == '0' || e[0] == 'n' || e[0] == 'N' || e[0] == 'f' || e[0] == 'F');
+}
 static int admin_by_uid(int uid) {
     if (uid < 1000) return 0;
     static int cached_first = -2;
@@ -202,8 +208,15 @@ static int admin_by_uid(int uid) {
     return uid == cached_first;
 }
 
+/* 当前请求的 admin 结论（由 handle_client 按网关头/兜底算好后写入 TLS） */
+static _Thread_local int g_req_admin = -1;
+
 /* USB 外挂盘（/vol00）默认只对管理员账号开放 */
-static int uid_is_admin(int uid) { return uid == 0 || admin_by_uid(uid); }
+static int uid_is_admin(int uid) {
+    if (uid == 0) return 1;
+    if (g_req_admin >= 0) return g_req_admin;
+    return admin_by_uid(uid);
+}
 static int usb_path_blocked(int uid, const char *p) {
     return !uid_is_admin(uid) && p && !strncmp(p, "/vol00/", 7);
 }
@@ -3314,7 +3327,7 @@ static void handle_client(int fd) {
             int peer_ok = 0;
             if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cr, &cl) == 0) {
                 peer_ok = (cr.uid == 0) || (cr.uid == geteuid()) ||
-                          (g_www_uid != (uid_t)-1 && (cr.uid == g_www_uid || cr.gid == g_www_gid));
+                          (g_www_uid != (uid_t)-1 && cr.uid == g_www_uid);
             }
             if (!peer_ok) {
                 const char *body = "{\"error\":\"peer not allowed\"}";
@@ -3332,6 +3345,7 @@ static void handle_client(int fd) {
     g_extra_hdr[0] = 0;
     g_range_hdr[0] = 0;
     g_no_store = 1;
+    g_req_admin = -1;
     g_fs_fd = -1;
 
     /* Accept-Ranges 之外的响应不带 Range/Cache 头 */
@@ -3465,7 +3479,7 @@ static void handle_client(int fd) {
     }
     dump_header_names_once(req);
     char hdr_user[128] = "";
-    int hdr_admin = 0;
+    int hdr_admin = 0, hdr_admin_present = 0;
     int uid = -1;
     const char *uid_src = NULL;
     /* 只有 unix socket（网关/root）才可信身份头；TCP 回环任何本地用户都能伪造 */
@@ -3474,8 +3488,10 @@ static void handle_client(int fd) {
         {
             char a[16] = "";
             int has = header_str(req, "x-trim-isadmin:", a, sizeof a);
-            if (has)
+            if (has) {
+                hdr_admin_present = 1;
                 hdr_admin = (a[0] == '1' || a[0] == 't' || a[0] == 'T' || a[0] == 'y' || a[0] == 'Y');
+            }
         }
         uid = header_uid(req);
         uid_src = uid >= 0 ? "trim" : NULL;
@@ -3497,7 +3513,12 @@ static void handle_client(int fd) {
         }
     }
     if (uid < 0 && is_unix) uid = g_acl_uid;
-    int admin = (uid == 0) || (is_unix && (hdr_admin || (uid >= 0 && admin_by_uid(uid))));
+    int admin = (uid == 0);
+    if (is_unix && !admin) {
+        if (hdr_admin_present) admin = hdr_admin;
+        else admin = admin_fallback_enabled() && uid >= 0 && admin_by_uid(uid);
+    }
+    g_req_admin = admin;
     char ct[128] = "";
     header_str(req, "content-type:", ct, sizeof ct);
     int json_ct = strcasestr(ct, "application/json") != NULL;

@@ -32,6 +32,7 @@ clean:
 test: $(BIN) bin/markdown_test
 	./bin/markdown_test
 	./tests/smoke.sh
+	python3 tests/api_test.py $(BIN)
 	./tests/ext4_image_test.sh
 
 install: $(BIN)
