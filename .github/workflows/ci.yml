@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: make
+      - name: Markdown / smoke / HTTP API
+        run: |
+          ./bin/markdown_test
+          ./tests/smoke.sh
+          python3 tests/api_test.py bin/xuanlan
+      - name: ASan smoke
+        run: |
+          make clean
+          make CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wno-unused-parameter -D_GNU_SOURCE -fsanitize=address,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,undefined"
+          ASAN_OPTIONS=detect_leaks=0 ./tests/smoke.sh

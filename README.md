@@ -1,5 +1,7 @@
 # 玄览 / Arcane Vision
 
+[![CI](https://github.com/magicindex/ArcaneVision/actions/workflows/ci.yml/badge.svg)](https://github.com/magicindex/ArcaneVision/actions/workflows/ci.yml)
+
 > 伫中区以玄览，颐情志于典坟。 —— 陆机《文赋》
 
 飞牛 fnOS 上的全盘文件索引与毫秒级检索引擎。全新编写，不包含任何第三方项目的源代码。
@@ -47,6 +49,10 @@
 PDF 预览：内置 pdf.js，按页宽适配，可拖拽缩放或最大化。
 
 ![PDF 预览](docs/screenshots/preview.png)
+
+图片预览：点击图片结果全屏查看，底部缩略图条按当前搜索顺序排列，点击切换，支持下载。
+
+![图片预览](docs/screenshots/image-preview.png)
 
 设置：打开位置、10 类格式关联、自动全盘扫描、忽略隐藏目录与系统杂项、USB 外挂检索、检索范围与严格模式。
 
@@ -178,6 +184,8 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
 - [x] unix socket 对端接受 www-data 组 — 0.8.32 收紧为仅 uid
 - [x] 管理员判定仅靠最小 uid 兜底 — 0.8.32 网关头优先，`XL_ADMIN_FALLBACK=0` 可关闭
 - [x] 无 HTTP API 测试 — 0.8.32 新增 `tests/api_test.py` 并接入 `make test`
+- [x] README 截图过期 — 重拍检索/右键/定位/PDF/设置，并新增图片预览截图
+- [x] CI 未接 — 新增 `.github/workflows/ci.yml`，跑 build、markdown、smoke、API 与 ASan smoke
 - [x] 复制保留 setgid/setuid — 0.8.25 只保留 `0777` 权限
 - [x] systemd unit / 应用中心路径写死 `/vol1` — 0.8.26 按实际安装路径生成 unit
 - [x] 目录列举与检索范围展开 O(N) — 0.8.26 建立 parent→child 索引
@@ -186,7 +194,7 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
 
 | 优先级 | 问题 | 状态 | 计划 |
 |---|---|---|---|
-| **P3** | README 截图过期、CI 未接 | ⬜ 待办 | 更新截图；把 `tests/api_test.py`/ASan/USB 模拟挂载接入 CI |
+| **P3** | ext4 裸扫/USB 真机回归接入 CI | ⬜ 待办 | 需要 privileged Docker 与实体 U 盘；目前仍本地手测 |
 
 #### 暂不列入短期计划（能力边界）
 

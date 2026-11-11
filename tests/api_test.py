@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """HTTP API 基础回归：admin 头优先级、兜底开关、JSON 校验、缩略图缓存。"""
-import base64, json, os, socket, subprocess, sys, tempfile, time, urllib.parse
+import base64, json, os, pwd, socket, subprocess, sys, tempfile, time, urllib.parse
 
 BIN = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else "bin/xuanlan")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -56,12 +56,22 @@ def expect(name, got, want):
     if got != want:
         print(f"FAIL {name}: got {got!r}, want {want!r}"); sys.exit(1)
 
+# admin 兜底取系统里最小的 uid>=1000；CI 用户不一定是 1000，这里动态取
+uids = sorted(u.pw_uid for u in pwd.getpwall() if u.pw_uid >= 1000)
+if not uids:
+    print("SKIP API admin tests (no uid >= 1000)")
+    sys.exit(0)
+admin_uid = str(uids[0])
+other_uid = str(uids[0] + 1)
+
 p = start()
 try:
-    base = {"x-nas-uid": "1000"}
+    base = {"x-nas-uid": admin_uid}
     expect("admin fallback", req("GET", "/api/rebuild", base)[0], 405)
     expect("admin header 0", req("GET", "/api/rebuild", dict(base, **{"x-trim-isadmin": "0"}))[0], 403)
     expect("admin header 1", req("GET", "/api/rebuild", dict(base, **{"x-trim-isadmin": "1"}))[0], 405)
+    expect("other uid no header", req("GET", "/api/rebuild", {"x-nas-uid": other_uid})[0], 403)
+    expect("other uid header 1", req("GET", "/api/rebuild", {"x-nas-uid": other_uid, "x-trim-isadmin": "1"})[0], 405)
     st, body, _ = req("POST", "/api/settings", dict(base, **{"x-trim-isadmin": "1"}), b"{bad json")
     expect("bad json status", st, 200)
     expect("bad json body", json.loads(body).get("error"), "bad json")
@@ -81,8 +91,8 @@ finally:
 
 p = start({"XL_ADMIN_FALLBACK": "0"})
 try:
-    expect("fallback off", req("GET", "/api/rebuild", {"x-nas-uid": "1000"})[0], 403)
-    expect("fallback off header", req("GET", "/api/rebuild", {"x-nas-uid": "1000", "x-trim-isadmin": "1"})[0], 405)
+    expect("fallback off", req("GET", "/api/rebuild", {"x-nas-uid": admin_uid})[0], 403)
+    expect("fallback off header", req("GET", "/api/rebuild", {"x-nas-uid": admin_uid, "x-trim-isadmin": "1"})[0], 405)
 finally:
     stop(p)
 
