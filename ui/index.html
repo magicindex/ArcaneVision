@@ -194,6 +194,19 @@
   .imgview .ivnav:hover{color:#8ff0e4;border-color:rgba(90,200,190,.5)}
   .imgview .ivnav:disabled{opacity:.2;cursor:default}
   .imgview .ivhint{position:absolute;bottom:8px;left:0;right:0;text-align:center;font-size:11px;color:#6f819d;pointer-events:none}
+  .imgview .ivthumbs{flex:none;display:flex;gap:6px;overflow-x:auto;overflow-y:hidden;padding:8px 12px;
+    border-top:1px solid rgba(120,160,220,.16);background:rgba(10,15,24,.92);min-height:64px;
+    scrollbar-width:thin;scrollbar-color:rgba(120,160,220,.28) transparent}
+  .imgview .ivthumbs::-webkit-scrollbar{height:6px}
+  .imgview .ivthumbs::-webkit-scrollbar-thumb{background:rgba(120,160,220,.28);border-radius:6px}
+  .imgview .ivthumb{flex:none;width:78px;height:56px;padding:0;border-radius:6px;overflow:hidden;cursor:pointer;
+    background:#0b1119;border:2px solid transparent;opacity:.62;transition:opacity .12s,border-color .12s}
+  .imgview .ivthumb:hover{opacity:.9}
+  .imgview .ivthumb:focus{outline:none}
+  .imgview .ivthumb.on{border-color:#5eead4;opacity:1;box-shadow:0 0 0 1px rgba(94,234,212,.3)}
+  .imgview .ivthumb img{width:100%;height:100%;object-fit:cover;display:block}
+  .imgview .ivthumb.bad{opacity:.25}
+  @media(max-width:620px),(pointer:coarse){.imgview .ivthumb{width:64px;height:48px}.imgview .ivthumbs{min-height:56px;padding:6px 8px}}
   @media(max-width:620px),(pointer:coarse){
     .imgview img{max-width:calc(100% - 16px);max-height:calc(100% - 8px)}
     .imgview .ivnav{width:36px;height:54px;font-size:24px}
@@ -2023,13 +2036,16 @@
     '<div class="ivbody"><button class="ivnav prev" id="ivprev" aria-label="上一张">‹</button>' +
     '<img id="ivimg" alt="">' +
     '<button class="ivnav next" id="ivnext" aria-label="下一张">›</button>' +
-    '<div class="ivhint">← → 切换 · Esc 关闭 · 点击背景关闭</div></div>';
+    '<div class="ivhint">← → 切换 · 点击下方缩略图 · Esc 关闭</div></div>' +
+    '<div class="ivthumbs" id="ivthumbs"></div>';
   document.body.appendChild(imgview);
   const ivImg = imgview.querySelector('#ivimg');
   const ivTitle = imgview.querySelector('#ivtitle');
   const ivCount = imgview.querySelector('#ivcount');
   const ivPrev = imgview.querySelector('#ivprev');
   const ivNext = imgview.querySelector('#ivnext');
+  const ivThumbs = imgview.querySelector('#ivthumbs');
+  let ivThumbEls = [];
 
   function isImage(it){
     if (!it || it.dir) return false;
@@ -2042,9 +2058,35 @@
     if (finderItems.some(x => x.path === it.path)) return finderItems;
     return items;
   }
+  function ivBuildThumbs(){
+    ivThumbs.innerHTML = '';
+    ivThumbEls = ivList.map((it, idx) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'ivthumb';
+      b.title = it.path;
+      const img = document.createElement('img');
+      img.loading = 'lazy';
+      img.decoding = 'async';
+      img.alt = it.name || baseName(it.path);
+      let fallback = false;
+      img.onerror = () => {
+        if (!fallback) { fallback = true; img.src = API + 'file?dl=0&path=' + encodeURIComponent(it.path); }
+        else b.classList.add('bad');
+      };
+      img.src = API + 'thumb?path=' + encodeURIComponent(it.path) + '&w=96';
+      b.appendChild(img);
+      b.onclick = () => { ivPos = idx; ivShow(); };
+      ivThumbs.appendChild(b);
+      return b;
+    });
+  }
   function ivShow(){
     const it = ivList[ivPos];
     if (!it) return;
+    ivThumbEls.forEach((b, i) => b.classList.toggle('on', i === ivPos));
+    const act = ivThumbEls[ivPos];
+    if (act) ivThumbs.scrollTo({ left: Math.max(0, act.offsetLeft - (ivThumbs.clientWidth - act.offsetWidth) / 2), behavior: 'smooth' });
     ivTitle.textContent = it.name || baseName(it.path);
     ivTitle.title = it.path;
     ivCount.textContent = (ivPos + 1) + ' / ' + ivList.length;
@@ -2066,12 +2108,15 @@
     if (pos < 0) { list.unshift(it); pos = 0; }
     ivList = list; ivPos = pos; ivOpen = true;
     imgview.classList.add('on');
+    ivBuildThumbs();
     ivShow();
   }
   function closeImageViewer(){
     ivOpen = false;
     imgview.classList.remove('on');
     ivImg.removeAttribute('src');
+    ivThumbs.innerHTML = '';
+    ivThumbEls = [];
   }
   ivPrev.onclick = () => ivMove(-1);
   ivNext.onclick = () => ivMove(1);

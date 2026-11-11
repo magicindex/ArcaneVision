@@ -3008,6 +3008,7 @@ static int g_have_zscale;
 static int g_tc_active;
 static pthread_mutex_t g_tc_mu = PTHREAD_MUTEX_INITIALIZER;
 static void handle_transcode(int fd, const char *qs, int uid);
+static void handle_thumb(sbuf *out, const char *qs, int uid, int *code, const char **ctype);
 
 static void handle_status(sbuf *out) {
     uint64_t total = 0;
@@ -3578,6 +3579,8 @@ static void handle_client(int fd) {
         free(body.p);
         close(fd);
         return;
+    } else if (!strcmp(pathonly, "/api/thumb")) {
+        handle_thumb(&body, qs, uid, &code, &ctype);
     } else if (!strcmp(pathonly, "/api/file")) {
         handle_file(&body, req, qs, uid, &code, &ctype);
     } else if (!strcmp(pathonly, "/healthz")) {
@@ -3668,6 +3671,95 @@ static void detect_transcode(void) {
     char fbuf[65536];
     char *fargv[] = { (char *)p, "-hide_banner", "-filters", NULL };
     if (run_capture(fargv, fbuf, sizeof fbuf) == 0 && strstr(fbuf, "zscale")) g_have_zscale = 1;
+}
+
+/* 图片缩略图：ffmpeg 生成 160px JPEG 并按 路径+mtime+size 缓存，供预览底部缩略图条使用 */
+static void handle_thumb(sbuf *out, const char *qs, int uid, int *code, const char **ctype) {
+    char raw[4096], sw[16] = "";
+    *code = 400;
+    *ctype = "application/json; charset=utf-8";
+    if (!param(qs, "path", raw, sizeof raw) || strncmp(raw, "/vol", 4) || strstr(raw, "..")) {
+        sb_puts(out, "{\"error\":\"bad path\"}");
+        return;
+    }
+    int w = 160;
+    if (param(qs, "w", sw, sizeof sw)) {
+        int v = atoi(sw);
+        if (v >= 64 && v <= 320) w = v;
+    }
+    char real[PATH_MAX];
+    if (!realpath(raw, real)) { *code = 404; sb_puts(out, "{\"error\":\"not found\"}"); return; }
+    if (strncmp(real, "/vol", 4) || usb_path_blocked(uid, real)) {
+        *code = 403; sb_puts(out, "{\"error\":\"forbidden\"}"); return;
+    }
+    if (uid >= 0) {
+        char dir[PATH_MAX];
+        snprintf(dir, sizeof dir, "%s", real);
+        char *slash = strrchr(dir, '/');
+        if (slash && slash != dir) {
+            *slash = 0;
+            if (!perm_dir_listable((uid_t)uid, dir)) { *code = 403; sb_puts(out, "{\"error\":\"forbidden\"}"); return; }
+        }
+        if (!perm_file_readable((uid_t)uid, real)) { *code = 403; sb_puts(out, "{\"error\":\"forbidden\"}"); return; }
+    }
+    struct stat st;
+    if (stat(real, &st) != 0 || !S_ISREG(st.st_mode)) { *code = 404; sb_puts(out, "{\"error\":\"not found\"}"); return; }
+
+    char seed[PATH_MAX + 64];
+    snprintf(seed, sizeof seed, "%s|%lld|%lld|%d", real, (long long)st.st_size, (long long)st.st_mtime, w);
+    uint64_t h = 1469598103934665603ull;
+    for (const unsigned char *p = (const unsigned char *)seed; *p; p++) { h ^= *p; h *= 1099511628211ull; }
+    char tdir[PATH_MAX], cache[PATH_MAX + 80];
+    snprintf(tdir, sizeof tdir, "%s/thumbs", g_idx_dir);
+    mkdir(tdir, 0700);
+    snprintf(cache, sizeof cache, "%s/%016llx.jpg", tdir, (unsigned long long)h);
+
+    int fd = open(cache, O_RDONLY | O_CLOEXEC);
+    if (fd >= 0) {
+        struct stat cs;
+        if (fstat(fd, &cs) == 0 && cs.st_size > 0 && cs.st_size < (2 << 20)) {
+            char *buf = xmalloc((size_t)cs.st_size);
+            ssize_t n = read(fd, buf, (size_t)cs.st_size);
+            close(fd);
+            if (n == cs.st_size) {
+                sb_add(out, buf, (size_t)n);
+                free(buf);
+                *code = 200;
+                *ctype = "image/jpeg";
+                return;
+            }
+            free(buf);
+        } else close(fd);
+    }
+    const char *ff = ffmpeg_path();
+    if (!g_have_ffmpeg || !ff) { *code = 404; sb_puts(out, "{\"error\":\"thumbnail unavailable\"}"); return; }
+
+    char tmp[PATH_MAX + 96];
+    snprintf(tmp, sizeof tmp, "%s.tmp.%d.%lu", cache, (int)getpid(), (unsigned long)pthread_self());
+    char vf[64];
+    snprintf(vf, sizeof vf, "scale=%d:-2", w);
+    char *argv[] = {
+        (char *)ff, "-v", "error", "-y", "-i", real,
+        "-vf", vf, "-frames:v", "1", "-c:v", "mjpeg", "-q:v", "4", "-f", "image2", tmp, NULL
+    };
+    char junk[256];
+    int rc = run_capture(argv, junk, sizeof junk);
+    if (rc != 0) { unlink(tmp); *code = 404; sb_puts(out, "{\"error\":\"thumbnail failed\"}"); return; }
+    if (rename(tmp, cache) != 0) { unlink(tmp); *code = 500; sb_puts(out, "{\"error\":\"thumbnail cache failed\"}"); return; }
+    fd = open(cache, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) { *code = 500; sb_puts(out, "{\"error\":\"thumbnail read failed\"}"); return; }
+    struct stat cs;
+    if (fstat(fd, &cs) != 0 || cs.st_size <= 0 || cs.st_size >= (2 << 20)) {
+        close(fd); *code = 500; sb_puts(out, "{\"error\":\"thumbnail invalid\"}"); return;
+    }
+    char *buf = xmalloc((size_t)cs.st_size);
+    ssize_t n = read(fd, buf, (size_t)cs.st_size);
+    close(fd);
+    if (n != cs.st_size) { free(buf); *code = 500; sb_puts(out, "{\"error\":\"thumbnail read failed\"}"); return; }
+    sb_add(out, buf, (size_t)n);
+    free(buf);
+    *code = 200;
+    *ctype = "image/jpeg";
 }
 
 static void tc_release(void) {
