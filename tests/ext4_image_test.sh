@@ -14,33 +14,51 @@ mkdir -p "$TMP"
 truncate -s 192M "$IMG"
 mkfs.ext4 -q -F -b 4096 -O bigalloc -C 65536 "$IMG"
 
-docker run --rm --privileged -v "$PWD:/w" -v /tmp:/tmp subnetdesk-build:bookworm bash -c '
+populate() {
+    local root="$1" out="$2"
+    mkdir -p "$root/a/b/c" "$root/中文目录/深层" "$root/bigdir" "$root/empty"
+    local d="$root"
+    local i=1
+    while [ "$i" -le 20 ]; do d="$d/d$i"; mkdir -p "$d"; i=$((i+1)); done
+    echo deep > "$d/深度文件.txt"
+    for i in $(seq 1 1500); do : > "$root/bigdir/file_$i.txt"; done
+    echo hello > "$root/with space.txt"
+    echo hi > "$root/a/b/c/deep.txt"
+    ln -s /etc/passwd "$root/link_to_passwd"
+    ln -s . "$root/loop_self"
+    # 隐藏项：默认应被跳过（--include-hidden 时与 find 对齐）
+    mkdir -p "$root/@eaDir" "$root/中文目录/深层/.cache"
+    echo meta > "$root/@eaDir/meta.txt"
+    echo hidden > "$root/中文目录/深层/.cache/x.txt"
+    echo dot > "$root/.hiddenfile"
+    # 系统杂项：默认也应跳过
+    echo t > "$root/Thumbs.db"
+    echo t > "$root/中文目录/深层/desktop.ini"
+    mkdir -p "$root/中文目录/深层/__MACOSX"
+    echo m > "$root/中文目录/深层/__MACOSX/a.txt"
+    find "$root" | sort > "$out"
+}
+
+if [ "${XL_EXT4_HOST:-0}" = "1" ]; then
+    sudo mkdir -p /mnt/xl
+    sudo mount -o loop "$IMG" /mnt/xl
+    trap 'sudo umount /mnt/xl 2>/dev/null || true' EXIT
+    sudo chmod 777 /mnt/xl
+    populate /mnt/xl "$FIND"
+    ./bin/xuanlan build --root /mnt/xl --out "$IDX_G" --include-hidden >/dev/null 2>&1
+    sudo umount /mnt/xl
+    trap - EXIT
+else
+    docker run --rm --privileged -v "$PWD:/w" -v /tmp:/tmp subnetdesk-build:bookworm bash -c "
+$(declare -f populate)
 set -e
 mkdir -p /mnt/xl
 mount -o loop /w/build/ext4test/xl_ext4_test.img /mnt/xl
-mkdir -p /mnt/xl/a/b/c /mnt/xl/中文目录/深层 /mnt/xl/bigdir /mnt/xl/empty
-d=/mnt/xl
-i=1; while [ $i -le 20 ]; do d="$d/d$i"; mkdir -p "$d"; i=$((i+1)); done
-echo deep > "$d/深度文件.txt"
-for i in $(seq 1 1500); do : > /mnt/xl/bigdir/file_$i.txt; done
-echo hello > "/mnt/xl/with space.txt"
-echo hi > /mnt/xl/a/b/c/deep.txt
-ln -s /etc/passwd /mnt/xl/link_to_passwd
-ln -s . /mnt/xl/loop_self
-# 隐藏项：默认应被跳过（--include-hidden 时与 find 对齐）
-mkdir -p /mnt/xl/@eaDir /mnt/xl/中文目录/深层/.cache
-echo meta > /mnt/xl/@eaDir/meta.txt
-echo hidden > "/mnt/xl/中文目录/深层/.cache/x.txt"
-echo dot > /mnt/xl/.hiddenfile
-# 系统杂项：默认也应跳过
-echo t > /mnt/xl/Thumbs.db
-echo t > "/mnt/xl/中文目录/深层/desktop.ini"
-mkdir -p "/mnt/xl/中文目录/深层/__MACOSX"
-echo m > "/mnt/xl/中文目录/深层/__MACOSX/a.txt"
-find /mnt/xl | sort > /w/build/ext4test/find.txt
+populate /mnt/xl /w/build/ext4test/find.txt
 /w/bin/xuanlan build --root /mnt/xl --out /w/build/ext4test/getdents.idx --include-hidden >/dev/null 2>&1
 umount /mnt/xl
-'
+"
+fi
 
 ./bin/xuanlan build --device "$IMG" --root /mnt/xl --out "$IDX_R" --include-hidden -v
 ./bin/xuanlan dump --index "$IDX_G" | sort > "$TMP/getdents.dump"

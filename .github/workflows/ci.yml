@@ -34,11 +34,11 @@ jobs:
       - name: Build
         run: make
       - name: ext4 raw scan image test
+        env:
+          XL_EXT4_HOST: "1"
         run: |
           export PATH=/usr/sbin:$PATH
-          docker pull debian:bookworm
-          docker tag debian:bookworm subnetdesk-build:bookworm
-          bash -x tests/ext4_image_test.sh
+          bash tests/ext4_image_test.sh
 
   usb-mount:
     runs-on: ubuntu-latest
