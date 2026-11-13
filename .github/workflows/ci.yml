@@ -24,3 +24,35 @@ jobs:
           make clean
           make CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wno-unused-parameter -D_GNU_SOURCE -fsanitize=address,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,undefined"
           ASAN_OPTIONS=detect_leaks=0 ./tests/smoke.sh
+
+  ext4-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install mkfs.ext4
+        run: sudo apt-get update && sudo apt-get install -y e2fsprogs
+      - name: Build
+        run: make
+      - name: ext4 raw scan image test
+        run: |
+          docker pull debian:bookworm
+          docker tag debian:bookworm subnetdesk-build:bookworm
+          bash tests/ext4_image_test.sh
+
+  usb-mount:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: make
+      - name: Mount fake USB volume
+        run: |
+          sudo mkdir -p /vol00/fake
+          sudo mount -t tmpfs -o size=16m tmpfs /vol00/fake
+          echo usb-marker > /vol00/fake/marker.txt
+          sudo chmod -R 755 /vol00
+      - name: USB mount regression
+        run: XL_USB_REQUIRED=1 python3 tests/usb_test.py bin/xuanlan
+      - name: Cleanup mount
+        if: always()
+        run: sudo umount /vol00/fake || true
