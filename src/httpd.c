@@ -3069,12 +3069,16 @@ static void handle_status(sbuf *out) {
     sb_printf(out, ",\"transcode\":{\"ok\":%s,\"nvenc\":%s}",
               g_have_ffmpeg ? "true" : "false", g_have_nvenc ? "true" : "false");
     {
-        int nusb = 0;
+        int nusb = 0, nusb_building = 0;
         pthread_rwlock_rdlock(&g_rw);
-        for (int i = g_nvols_local; i < g_nvols; i++) if (g_vols[i].usb) nusb++;
+        for (int i = g_nvols_local; i < g_nvols; i++) {
+            if (!g_vols[i].usb) continue;
+            nusb++;
+            if (g_vols[i].building) nusb_building++;
+        }
         pthread_rwlock_unlock(&g_rw);
-        sb_printf(out, ",\"usb\":{\"enabled\":%s,\"watch\":%s,\"mounts\":%d,\"message\":\"",
-                  g_usb_enabled ? "true" : "false", g_usb_watch ? "true" : "false", nusb);
+        sb_printf(out, ",\"usb\":{\"enabled\":%s,\"watch\":%s,\"mounts\":%d,\"building\":%d,\"message\":\"",
+                  g_usb_enabled ? "true" : "false", g_usb_watch ? "true" : "false", nusb, nusb_building);
         char umsg[1024]; usb_msg_get(umsg, sizeof umsg); sb_json(out, umsg, strlen(umsg));
         sb_puts(out, "\"}");
     }

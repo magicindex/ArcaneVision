@@ -47,6 +47,12 @@
   .dot{width:7px;height:7px;border-radius:50%;background:var(--teal);box-shadow:0 0 10px var(--teal)}
   .dot.busy{background:var(--amber);box-shadow:0 0 10px var(--amber);animation:pulse 1.4s infinite}
   .dot.bad{background:#f87171;box-shadow:0 0 10px #f87171}
+  .usb-ind{font-size:11px;line-height:1;padding:6px 9px;border-radius:999px;cursor:pointer;
+    white-space:nowrap;color:#9fb3d1;background:rgba(255,255,255,.04);border:1px solid rgba(120,160,220,.22)}
+  .usb-ind:hover{color:#cdf3ee;border-color:rgba(90,200,190,.45)}
+  .usb-ind.warn{color:#f0b35b;border-color:rgba(240,179,91,.38);background:rgba(240,179,91,.07)}
+  html[data-theme="light"] .usb-ind{background:#fff;color:#4b5a72;border-color:var(--line)}
+  html[data-theme="light"] .usb-ind.warn{color:#a2610f;border-color:rgba(190,140,40,.45);background:rgba(190,140,40,.06)}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 
   .search{
@@ -526,6 +532,7 @@
     .brand p{display:none}
     .status{margin-left:auto;gap:6px;font-size:11px;padding:6px 9px;min-width:0}
     .status .cnt{display:none}
+    .usb-ind{font-size:10.5px;padding:5px 7px}
     .status .who{max-width:76px;margin-left:4px;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .gear{width:34px;height:34px;margin-left:2px}
     .search input{font-size:16px;padding:17px 48px 17px 46px}
@@ -656,6 +663,7 @@
       <span class="cnt" id="scount"></span>
       <span class="who" id="who"></span>
     </div>
+    <span class="usb-ind" id="usbInd" style="display:none" title="USB 检索状态"></span>
     <button class="gear theme" id="theme" title="切换主题" aria-label="切换主题">
       <svg class="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
            stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/></svg>
@@ -2747,6 +2755,11 @@
   setmask.querySelector('#setClose').onclick = () => setmask.classList.remove('on');
   setmask.querySelector('#usbRebuild').onclick = (e) => {
     e.preventDefault();
+    const mounts = settings.usbMounts || [];
+    if (!mounts.length) {
+      alert('当前未检测到 USB 外挂设备。\n请确认 U 盘已插入并在 /vol00 下挂载，再重试。');
+      return;
+    }
     if (!confirm('重新扫描当前 USB 挂载并重建 USB 索引？')) return;
     fetch(API + 'rebuild', { method: 'POST', headers: { 'content-type': 'application/json' },
       body: '{"usb":true}' })
@@ -2787,6 +2800,7 @@
         settings.strictHome = strictHome; settings.skipHidden = skipHidden;
         settings.usbEnabled = usbEnabled; settings.usbWatch = usbWatch;
         setmask.classList.remove('on');
+        say('设置已保存');
         search();
       }).catch(e => alert('保存失败：' + (e && e.message || e)));
   };
@@ -2800,6 +2814,8 @@
     try { localStorage.setItem('xl_theme', to); } catch(e) {}
   };
   document.getElementById('gear').onclick = openSettings;
+  const usbIndBtn = document.getElementById('usbInd');
+  if (usbIndBtn) usbIndBtn.onclick = openSettings;
 
   // 一次性迁移旧默认值到 0.8.8 默认值：
   //   旧「文本」关联（preview）→ 富文本内置；代码/图片/音频/视频 preview → 在线预览。
@@ -2915,13 +2931,29 @@
       if (lastUsbEnabled && !u.enabled && (u.message || '').indexOf('断开') >= 0) say(u.message);
       lastUsbEnabled = !!u.enabled;
       scount.textContent = ' · ' + recs.toLocaleString() + ' 条';
+      const usbBusy = (u.building || 0) > 0;
+      const usbInd = document.getElementById('usbInd');
+      if (usbInd) {
+        if (u.enabled) {
+          usbInd.style.display = '';
+          usbInd.textContent = usbBusy ? 'USB 索引中' : (u.mounts ? ('USB ' + u.mounts + ' 个') : 'USB 未检测');
+          usbInd.classList.toggle('warn', !usbBusy && !u.mounts);
+          usbInd.title = u.message || '';
+        } else {
+          usbInd.style.display = 'none';
+        }
+      }
       $('foot').textContent = recs.toLocaleString() + ' 条索引' +
-        (u.enabled ? ' · USB ' + (u.mounts || 0) + ' 个' : '');
+        (u.enabled ? (usbBusy ? ' · USB 索引中' : (u.mounts ? ' · USB ' + u.mounts + ' 个' : ' · USB 未检测')) : '');
       const v = $('ver'); if (v && d.version) v.textContent = 'v' + d.version;
-      if (d.building) {
+      if (d.building || usbBusy) {
         dot.className = 'dot busy';
-        const p = d.progress || {};
-        stext.textContent = '建索引中 ' + (p.root || '') + ' · ' + (p.records||0).toLocaleString();
+        if (d.building) {
+          const p = d.progress || {};
+          stext.textContent = '建索引中 ' + (p.root || '') + ' · ' + (p.records||0).toLocaleString();
+        } else {
+          stext.textContent = 'USB 建索引中 · ' + (u.mounts || 0) + ' 个';
+        }
         prog.classList.remove('hide');
       } else if (d.state === 'degraded') {
         dot.className = 'dot bad';
