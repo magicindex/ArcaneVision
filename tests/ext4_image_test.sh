@@ -44,6 +44,7 @@ if [ "${XL_EXT4_HOST:-0}" = "1" ]; then
     sudo mount -o loop "$IMG" /mnt/xl
     trap 'sudo umount /mnt/xl 2>/dev/null || true' EXIT
     sudo chmod 777 /mnt/xl
+    sudo chmod 755 /mnt/xl/lost+found 2>/dev/null || true
     populate /mnt/xl "$FIND"
     ./bin/xuanlan build --root /mnt/xl --out "$IDX_G" --include-hidden >/dev/null 2>&1
     sudo umount /mnt/xl
