@@ -4792,6 +4792,7 @@ static void handle_acl_list(sbuf *out, int uid, int admin, int all) {
         /* 管理员全盘视角：直接给卷根，展开时不再过滤 */
         pthread_rwlock_rdlock(&g_rw);
         for (int vi = 0; vi < g_nvols; vi++) {
+            if (g_vols[vi].remote || g_vols[vi].usb) continue;  /* 远程/挂载由独立卡片管理 */
             if (!g_vols[vi].ok && !g_vols[vi].usb) continue;
             if (shown++) sb_puts(out, ",");
             sb_puts(out, "{\"path\":\"");

@@ -2654,7 +2654,8 @@
     '<span class="hint2">掉线自动关闭检索并清理旧索引；挂载点变化自动重建</span></label>' +
     '<div class="hint" id="usbHint"></div>' +
     '<div class="hint" id="usbRebuildRow"><a href="#" id="usbRebuild" style="color:#59d3c8">立即重建 USB 索引</a></div></section>' +
-    '<section class="scard"><h3>检索范围</h3><div class="hint" id="aclWho"></div>' +
+    '<section class="scard"><h3>本地检索范围</h3><div class="hint" id="aclWho"></div>' +
+    '<div class="hint">本地 ACL/范围只管理 /vol1–/vol4；远程挂载与远程凭据在下方「远程挂载」卡片独立管理。</div>' +
     '<label class="admrow" id="strictRow"><input type="checkbox" id="strictHome" checked>严格模式' +
     '<span class="hint2">默认开启；家目录内忽略「所有人」授权，只认属主与指定用户/组</span></label>' +
     '<div class="hint" id="strictHint" style="display:none">严格模式：位于 /volN/&lt;用户&gt;/ 下的目录，即使带「所有人」读写权限，也只有属主和显式授权的用户/组可见；关闭后按文件权限原样判定（who 777 就谁都能看到）。</div>' +
