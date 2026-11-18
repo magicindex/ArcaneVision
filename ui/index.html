@@ -51,6 +51,11 @@
     white-space:nowrap;color:#9fb3d1;background:rgba(255,255,255,.04);border:1px solid rgba(120,160,220,.22)}
   .usb-ind:hover{color:#cdf3ee;border-color:rgba(90,200,190,.45)}
   .usb-ind.warn{color:#f0b35b;border-color:rgba(240,179,91,.38);background:rgba(240,179,91,.07)}
+  .remoteState{font-size:12px;line-height:1.6;padding:7px 9px;border-radius:8px;margin:6px 0;
+    color:#9fd8d1;background:rgba(35,110,105,.12);border:1px solid rgba(90,200,190,.22)}
+  .remoteState.warn{color:#f0b35b;background:rgba(240,179,91,.07);border-color:rgba(240,179,91,.3)}
+  html[data-theme="light"] .remoteState{color:#1f5f5a;background:#f2fbf9;border-color:#bfe4dd}
+  html[data-theme="light"] .remoteState.warn{color:#8a5a10;background:#fff8eb;border-color:#eed9b0}
   html[data-theme="light"] .usb-ind{background:#fff;color:#4b5a72;border-color:var(--line)}
   html[data-theme="light"] .usb-ind.warn{color:#a2610f;border-color:rgba(190,140,40,.45);background:rgba(190,140,40,.06)}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
@@ -2792,8 +2797,21 @@
       let h = '<div class="row2"><div class="k">远程索引</div><label class="chk">' +
         '<input type="checkbox" id="remoteToggle"' + (d.enabled ? ' checked' : '') + '> 启用' +
         '</label> <button class="act" id="remoteRebuild" type="button"' +
-        (d.enabled ? '' : ' disabled') + '>立即重建</button></div>' +
-        '<div class="hint">索引：' + (d.enabled ? '已启用' : '未启用') + '</div>';
+        (d.enabled ? '' : ' disabled') + '>立即重建</button></div>';
+      const ms0 = d.mounts || [];
+      const indexed = ms0.filter(m => m.indexed).length;
+      const recs = ms0.reduce((n, m) => n + (m.records || 0), 0);
+      const degraded = ms0.filter(m => m.indexed && m.acl === 'cifs' && /fallback/i.test(m.aclReason || ''));
+      let state;
+      if (!d.enabled) {
+        state = '远程检索已关闭；本地与挂载检索不受影响。';
+      } else {
+        state = '远程检索已开启 · ' + indexed + ' 个挂载已索引 · ' + recs.toLocaleString() + ' 条记录';
+        if (!ms0.length) state += ' · 未检测到远程挂载';
+        if (degraded.length) state += ' · ACL 降级：' + degraded.length + ' 个 CIFS 使用 owner-only，仅影响远程';
+        if (ms0.some(m => m.stale)) state += ' · 有挂载离线';
+      }
+      h += '<div class="remoteState' + (degraded.length ? ' warn' : '') + '">' + esc(state) + '</div>';
       const ms = d.mounts || [];
       if (!ms.length) h += '<div class="hint">未检测到 /vol02 下的远程挂载</div>';
       for (const m of ms) {
