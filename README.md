@@ -187,7 +187,7 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
 - [x] 修复扫描模式数组只认字符串、导致勾选不落盘的解析 bug；
 - [x] 真机 fanotify → 队列 → 批量 delta → 重启恢复（独立临时实例，见
       [docs/10](docs/10-真机fanotify与单元增量验证.md)）
-- [ ] 实体 FPK 应用中心安装回归；
+- [ ] 实体 FPK 应用中心安装回归（FPK dry-run 通过；实际安装任务 10236，见 docs/10 §8）；
 - [ ] 快照 checksum、修复失败按单元计数、远程挂载 provider。
 
 ### 正在做 / 下一步
@@ -217,7 +217,7 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
 - [x] docs/09 §8 标注为未来设计，与当前实现对齐
 - [x] 版本号 0.9.0、README / CHANGELOG / RELEASE_NOTES
 - [x] 真机 fanotify → 队列 → 批量 delta → 重启恢复（docs/10）
-- [ ] 实体 FPK 应用中心安装回归
+- [ ] 实体 FPK 应用中心安装回归（FPK dry-run 通过；实际安装任务 10236，见 docs/10 §8）
 - [x] FPK 构建：`dist/xuanlan_0.9.0_amd64.fpk`
 - [x] Gitea 推送 + tag `v0.9.0` + Release
 - [x] GitHub 推送 + tag `v0.9.0` + Release
@@ -599,7 +599,7 @@ scripts/build-fpk.sh      打包装包
   - [x] 管理端自动候选/组名选择（当前用勾选）
   - [x] 组单元 ACL 批量读取、单元构建进度
   - [x] 真机 fanotify 端到端（新增/删除/批量/重启恢复）
-  - [ ] 实体 FPK 应用中心安装回归
+  - [ ] 实体 FPK 应用中心安装回归（FPK dry-run 通过；实际安装任务 10236，见 docs/10 §8）
   - [ ] 容量/修复趋势、修复失败按单元计数
   - [ ] 快照 checksum / 更完整的损坏检测
   - [ ] 远程挂载 provider（CIFS/NFS/WebDAV）设计落地
