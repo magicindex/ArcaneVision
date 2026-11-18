@@ -20,7 +20,7 @@ QueryRouter、epoch 切换、live + delta、损坏自愈与管理端配置。完
 - SHA-256：`aa9c6e440fae0723a360c3061f1e0093508de51b88aa4c54db4604e9ca051437`
 - 下载：
   [GitHub](https://github.com/magicindex/ArcaneVision/releases/download/v0.9.0/xuanlan_0.9.0_amd64.fpk) ·
-  [Gitea](http://192.168.3.200:3000/attachments/a563d8f9-ba11-4c21-bb3f-fa45895fe068)
+  [Gitea](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/download/v0.9.0/xuanlan_0.9.0_amd64.fpk)
 
 ## 0.8.35
 
