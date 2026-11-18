@@ -185,12 +185,14 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
 - [x] `/api/status.unitBuild`：显示当前单元、卷、记录数、耗时；管理端状态行同步展示；
 - [x] 自动候选目录/用户组/用户勾选配置，替代手写 gid；
 - [x] 修复扫描模式数组只认字符串、导致勾选不落盘的解析 bug；
-- [ ] 真机 fanotify 端到端与实体 FPK 安装回归；
+- [x] 真机 fanotify → 队列 → 批量 delta → 重启恢复（独立临时实例，见
+      [docs/10](docs/10-真机fanotify与单元增量验证.md)）
+- [ ] 实体 FPK 应用中心安装回归；
 - [ ] 快照 checksum、修复失败按单元计数、远程挂载 provider。
 
 ### 正在做 / 下一步
 
-- 真机 fanotify 端到端：事件 → 队列 → 批量 delta → 重启恢复 → 单元查询一致性。
+- 真机 fanotify 端到端已完成首轮（新增/删除/批量/重启恢复）；继续补 ACL 变更事件与压力测试。
 - 候选检测继续扩展共享目录/ACL user ACE 依据；容量/修复趋势可视化。
 - 单元健康检查的调度与 IO 限速（当前默认 60 秒、可用 `XL_UNITS_CHECK_SEC` 调整）。
 - 继续优化单元构建：目录级 ACL 缓存、构建并发/错峰、进度上报。
@@ -214,7 +216,8 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
       `unitdelta` / `group-intersection` / `units-admin` / `repair` / `ui` 回归
 - [x] docs/09 §8 标注为未来设计，与当前实现对齐
 - [x] 版本号 0.9.0、README / CHANGELOG / RELEASE_NOTES
-- [ ] 真机 fanotify 与实体 FPK 安装回归（当前环境无 fanotify 权限）
+- [x] 真机 fanotify → 队列 → 批量 delta → 重启恢复（docs/10）
+- [ ] 实体 FPK 应用中心安装回归
 - [x] FPK 构建：`dist/xuanlan_0.9.0_amd64.fpk`
 - [x] Gitea 推送 + tag `v0.9.0` + Release
 - [x] GitHub 推送 + tag `v0.9.0` + Release
@@ -595,7 +598,8 @@ scripts/build-fpk.sh      打包装包
 - **0.10.x（进行中）**
   - [x] 管理端自动候选/组名选择（当前用勾选）
   - [x] 组单元 ACL 批量读取、单元构建进度
-  - [ ] 真机 fanotify 端到端与 FPK 安装回归
+  - [x] 真机 fanotify 端到端（新增/删除/批量/重启恢复）
+  - [ ] 实体 FPK 应用中心安装回归
   - [ ] 容量/修复趋势、修复失败按单元计数
   - [ ] 快照 checksum / 更完整的损坏检测
   - [ ] 远程挂载 provider（CIFS/NFS/WebDAV）设计落地
