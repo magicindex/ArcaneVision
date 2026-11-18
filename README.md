@@ -174,14 +174,15 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
 - **delta 运维**：按路径保留最后事件的压缩、16MB 上限、容量告警、`units gc/rollback/stats/compact`。
 - **损坏自愈**：加载期 + 周期 `units check`；损坏单元进入修复队列，后台重建；
   `/api/status.repair` 暴露 queued/dropped/failed。
-- **管理端**：扫描模式、share/isolated 分类、用户覆盖、容量/修复/事件队列状态、回滚到共享。
+- **管理端**：扫描模式、自动检测 `/@team` 团队目录与用户组/用户候选、勾选 share/isolated 分类、
+  容量/修复/事件队列状态、回滚到共享；候选依据在页面展示。
 - **测试**：新增 route / scanmode / unitbuild / unitdelta / group-intersection / epoch /
   units-admin / repair / UI 静态回归，全部接入 `make test`。
 
 ### 正在做 / 下一步
 
 - 真机 fanotify 端到端：事件 → 队列 → 批量 delta → 重启恢复 → 单元查询一致性。
-- 管理端分类组从 gid 文本升级为组名选择器；容量/修复状态进一步可视化。
+- 候选检测继续扩展共享目录/ACL user ACE 依据；容量/修复趋势可视化。
 - 单元健康检查的调度与 IO 限速（当前默认 60 秒、可用 `XL_UNITS_CHECK_SEC` 调整）。
 - 组交集语义的产品确认：当前是“所有成员都可读”的公共范围；若需要成员并集需另设模式。
 - 远程挂载 provider 仍是设计稿（见 docs/09 §9），尚未接入 CIFS/NFS/WebDAV。
@@ -559,9 +560,9 @@ scripts/build-fpk.sh      打包装包
 
 - 最新版本：**0.9.0（公测）**（2026-11-18）
 - 源码 tag：`v0.9.0`
-- FPK：`dist/xuanlan_0.9.0_amd64.fpk`（1,011,138 字节）
-- MD5：`b724546fb28d9caf1abfee27d24a59ec`
-- SHA-256：`aa9c6e440fae0723a360c3061f1e0093508de51b88aa4c54db4604e9ca051437`
+- FPK：`dist/xuanlan_0.9.0_amd64.fpk`（1,021,949 字节）
+- MD5：`08e267d1fedb454d8fcf6a002fd74b91`
+- SHA-256：`23d99a484137b6b1ef0271b781944b8c0e799d2e06ebe87b1fde2f5679cb2f30`
 - 发布页：[GitHub Release](https://github.com/magicindex/ArcaneVision/releases/tag/v0.9.0) ·
   [Gitea Release](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.9.0)
 - 安装包直链：

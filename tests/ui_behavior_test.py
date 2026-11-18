@@ -23,7 +23,8 @@ def must(cond, name):
 # 鼠标打开方式：默认文件夹单击、文件双击；设置项存在
 must('id="scanCard"' in src and 'id="scanMode"' in src, "scan mode setting")
 must('id="scanStatus"' in src and 'id="scanRollback"' in src, "scan status/rollback")
-must('id="shareGroups"' in src and 'id="isolatedGroups"' in src, "scan group classification")
+must('id="scanCandidates"' in src and 'id="scanRefresh"' in src, "scan candidate selection")
+must('scanmode/candidates' in src, "candidate API")
 must("API + 'scanmode'" in src, "scanmode API wiring")
 must('id="clickFolder"' in src, "clickFolder setting")
 must('id="clickFile"' in src, "clickFile setting")

@@ -342,6 +342,14 @@
   .setbox select,.setbox input[type=text]{background:#101826;color:#cfdcf0;border:1px solid rgba(120,160,220,.25);
     border-radius:8px;padding:5px 8px;font-size:12.5px;outline:none}
   .setbox input[type=text]{flex:1;min-width:0}
+  .setbox .scanlist{max-height:320px;overflow:auto;border:1px solid rgba(120,160,220,.14);border-radius:9px;padding:4px 8px;margin:0 0 8px}
+  .setbox .scanrow{display:flex;align-items:flex-start;gap:10px;padding:7px 6px;border-radius:7px}
+  .setbox .scanrow:hover{background:rgba(80,150,170,.08)}
+  .setbox .scanmain{flex:1;min-width:0}
+  .setbox .scanmain b{font-size:12.5px;color:#dbe8f8;font-weight:500}
+  .setbox .scanmain .hint2{display:block;white-space:normal}
+  .setbox .scanrow label{font-size:11.5px;color:#a9bad6;white-space:nowrap;display:flex;align-items:center;gap:4px}
+  .setbox .scangroup{font-size:11px;color:#7f93b4;letter-spacing:1px;margin:8px 6px 2px}
   html[data-theme="light"] .setbox select,html[data-theme="light"] .setbox input[type=text]{
     background:#f7f9fc;color:#33415a;border-color:rgba(15,23,42,.16)}
   .setbox .hint{font-size:12px;color:#6e7f9f;line-height:1.7;margin-top:6px}
@@ -2598,17 +2606,12 @@
     '<option value="hybrid">混合（默认共享，按组隔离）</option></select></div>' +
     '<div class="hint" id="scanModeHint"></div>' +
     '<div id="scanHybrid">' +
-    '<div class="row2"><div class="k">share 组（gid，逗号分隔）</div>' +
-    '<input id="shareGroups" type="text" placeholder="例如 9001,9002"></div>' +
-    '<div class="row2"><div class="k">isolated 组（gid，逗号分隔）</div>' +
-    '<input id="isolatedGroups" type="text" placeholder="例如 9010,9011"></div>' +
-    '<div class="row2"><div class="k">share 用户（uid，逗号分隔）</div>' +
-    '<input id="shareUsers" type="text" placeholder="可选"></div>' +
-    '<div class="row2"><div class="k">isolated 用户（uid，逗号分隔）</div>' +
-    '<input id="isolatedUsers" type="text" placeholder="可选"></div>' +
-    '<div class="hint">默认 shared；hybrid 下 isolated 组按组独立扫描，未分类/未命中回退 shared；isolated 为每用户独立索引。用户覆盖优先于组，隔离组优先于共享组；保存后自动重建索引。</div>' +
+    '<div class="scanlist" id="scanCandidates"><div class="hint">正在检测飞牛目录与用户组…</div></div>' +
+    '<div class="hint">检测依据：/etc/passwd、/etc/group、/volN/@team 与 system.trim_acl。勾选“共享/隔离”即确认分类；未勾选回退 shared。保存后自动重建索引。</div>' +
     '<div class="hint" id="scanStatus"></div>' +
-    '<div class="row2"><div class="k">回滚</div><button class="act" id="scanRollback" type="button">回滚到共享</button></div>' +
+    '<div class="row2"><div class="k">维护</div>' +
+    '<button class="act" id="scanRefresh" type="button">重新检测</button> ' +
+    '<button class="act" id="scanRollback" type="button">回滚到共享</button></div>' +
     '</div></section>' +
     '<section class="scard"><h3>鼠标操作</h3>' +
     '<div class="row2"><div class="k">文件夹打开</div><select id="clickFolder">' +
@@ -2645,6 +2648,7 @@
     '<div class="foot"><button class="act" id="setClose">关闭</button>' +
     '<button class="act primary" id="setSave">保存</button></div></div>';
   document.body.appendChild(setmask);
+  setmask.querySelector('#scanRefresh').onclick = () => { scanCandidates = null; renderScanCandidates(); refreshScanCandidates(); };
   setmask.querySelector('#scanRollback').onclick = () => {
     if (!confirm('回滚到共享模式？所有用户将回到共享索引，单元索引保留待清理。')) return;
     fetch(API + 'scanmode', { method: 'POST', headers: { 'content-type': 'application/json' },
@@ -2663,6 +2667,68 @@
   function docsAvailable(){ const o = oo(); return !!(o.installed && o.running); }
 
   let scanStatus = null;
+  let scanCandidates = null;
+  function candChecked(list, id) {
+    return (list || []).map(String).includes(String(id));
+  }
+  function renderScanCandidates(){
+    const box = setmask.querySelector('#scanCandidates');
+    if (!box) return;
+    if (!scanCandidates) { box.innerHTML = '<div class="hint">正在检测飞牛目录与用户组…</div>'; return; }
+    const d = scanCandidates;
+    let h = '<div class="scangroup">团队目录（检测依据）</div>';
+    const dirs = d.directories || [];
+    if (!dirs.length) h += '<div class="hint">未检测到 /volN/@team 团队目录</div>';
+    for (const it of dirs) {
+      h += '<div class="scanrow"><div class="scanmain"><b>' + esc(it.path) + '</b>' +
+        '<span class="hint2">依据：' + esc(it.evidence || 'system.trim_acl') +
+        (it.gids && it.gids.length ? ' · gid ' + it.gids.join(',') : '') + '</span></div></div>';
+    }
+    const shG = new Set((settings.shareGroups || []).map(String));
+    const isG = new Set((settings.isolatedGroups || []).map(String));
+    const shU = new Set((settings.shareUsers || []).map(String));
+    const isU = new Set((settings.isolatedUsers || []).map(String));
+    const row = (kind, id, name, meta, sh, iso) =>
+      '<div class="scanrow"><div class="scanmain"><b>' + esc(name) + '</b>' +
+      '<span class="hint2">' + esc(meta) + '</span></div>' +
+      '<label><input type="checkbox" data-kind="' + kind + '" data-id="' + esc(String(id)) +
+      '" data-bucket="share"' + (sh ? ' checked' : '') + '>共享</label>' +
+      '<label><input type="checkbox" data-kind="' + kind + '" data-id="' + esc(String(id)) +
+      '" data-bucket="isolate"' + (iso ? ' checked' : '') + '>隔离</label></div>';
+    h += '<div class="scangroup">用户组</div>';
+    const groups = d.groups || [];
+    if (!groups.length) h += '<div class="hint">未检测到用户组</div>';
+    for (const g of groups) {
+      const meta = 'gid ' + g.gid + (g.members ? ' · 成员：' + g.members : '') +
+        (g.teamDirs && g.teamDirs.length ? ' · 团队目录：' + g.teamDirs.join('、') : '');
+      h += row('group', g.gid, g.name || ('gid ' + g.gid), meta, shG.has(String(g.gid)), isG.has(String(g.gid)));
+    }
+    h += '<div class="scangroup">用户</div>';
+    const users = d.users || [];
+    if (!users.length) h += '<div class="hint">未检测到普通用户</div>';
+    for (const u of users) {
+      const meta = 'uid ' + u.uid + (u.home ? ' · ' + u.home : '') +
+        (u.groups && u.groups.length ? ' · 组 ' + u.groups.join(',') : '');
+      h += row('user', u.uid, u.name || ('uid ' + u.uid), meta, shU.has(String(u.uid)), isU.has(String(u.uid)));
+    }
+    box.innerHTML = h;
+    box.querySelectorAll('input[type=checkbox]').forEach(cb => {
+      cb.onchange = () => {
+        if (!cb.checked) return;
+        const other = cb.dataset.bucket === 'share' ? 'isolate' : 'share';
+        const peer = box.querySelector('input[data-kind="' + cb.dataset.kind + '"][data-id="' +
+          cb.dataset.id + '"][data-bucket="' + other + '"]');
+        if (peer) peer.checked = false;
+      };
+    });
+  }
+  function refreshScanCandidates(){
+    fetch(API + 'scanmode/candidates').then(r => r.json()).then(d => {
+      if (!d || d.error) { scanCandidates = null; renderScanCandidates(); return; }
+      scanCandidates = d;
+      renderScanCandidates();
+    }).catch(() => { scanCandidates = null; renderScanCandidates(); });
+  }
   function renderScanStatus(){
     const el = setmask.querySelector('#scanStatus');
     if (!el) return;
@@ -2695,11 +2761,6 @@
       if (card) card.style.display = isAdmin ? '' : 'none';
       const sm = setmask.querySelector('#scanMode');
       if (sm) sm.value = settings.scanMode || 'shared';
-      const txt = a => (a || []).join(',');
-      const sg = setmask.querySelector('#shareGroups'); if (sg) sg.value = txt(settings.shareGroups);
-      const ig = setmask.querySelector('#isolatedGroups'); if (ig) ig.value = txt(settings.isolatedGroups);
-      const su = setmask.querySelector('#shareUsers'); if (su) su.value = txt(settings.shareUsers);
-      const iu = setmask.querySelector('#isolatedUsers'); if (iu) iu.value = txt(settings.isolatedUsers);
       const syncScan = () => {
         const m = sm ? sm.value : 'shared';
         const hy = setmask.querySelector('#scanHybrid');
@@ -2708,6 +2769,7 @@
         if (h) h.textContent = m === 'shared' ? '所有人共用一份索引，成本最低；结果按 ACL 视图裁剪。'
           : m === 'isolated' ? '每个用户一份索引，物理隔离；构建/存储约为用户数倍。'
           : '默认共享；isolated 组按组独立扫描，未分类组回退共享。';
+        renderScanCandidates();
       };
       if (sm) sm.onchange = syncScan;
       syncScan();
@@ -3035,6 +3097,7 @@
     setmask.classList.add('on');
     renderSettings();
     refreshScanStatus();
+    refreshScanCandidates();
   }
   setmask.addEventListener('click', e => { if (e.target === setmask) setmask.classList.remove('on'); });
   setmask.querySelector('#setClose').onclick = () => setmask.classList.remove('on');
@@ -3072,8 +3135,9 @@
     const clickFolder = setmask.querySelector('#clickFolder').value === 'double' ? 'double' : 'single';
     const clickFile = setmask.querySelector('#clickFile').value === 'single' ? 'single' : 'double';
     const scanMode = setmask.querySelector('#scanMode') ? setmask.querySelector('#scanMode').value : 'shared';
-    const numList = id => (setmask.querySelector('#' + id).value || '')
-      .split(',').map(x => x.trim()).filter(Boolean).map(x => String(parseInt(x, 10))).filter(x => x !== 'NaN');
+    const picked = (kind, bucket) => [...setmask.querySelectorAll(
+      '#scanCandidates input[data-kind="' + kind + '"][data-bucket="' + bucket + '"]:checked'
+    )].map(x => x.dataset.id);
     const strictHome = !!setmask.querySelector('#strictHome').checked;
     const skipHidden = !!setmask.querySelector('#skipHidden').checked;
     const usbEnabled = !!setmask.querySelector('#usbEnabled').checked;
@@ -3089,10 +3153,10 @@
         settings.openWith = ow; settings.scope = scope; settings.settingsVersion = 3; openIn = oi;
         settings.clickFolder = clickFolder; settings.clickFile = clickFile;
         settings.scanMode = scanMode;
-        settings.shareGroups = numList('shareGroups');
-        settings.isolatedGroups = numList('isolatedGroups');
-        settings.shareUsers = numList('shareUsers');
-        settings.isolatedUsers = numList('isolatedUsers');
+        settings.shareGroups = picked('group', 'share');
+        settings.isolatedGroups = picked('group', 'isolate');
+        settings.shareUsers = picked('user', 'share');
+        settings.isolatedUsers = picked('user', 'isolate');
         settings.strictHome = strictHome; settings.skipHidden = skipHidden;
         settings.usbEnabled = usbEnabled; settings.usbWatch = usbWatch;
         const adminScan = !!(settings.scopeAvailable && settings.scopeAvailable.admin);

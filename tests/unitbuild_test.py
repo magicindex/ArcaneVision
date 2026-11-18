@@ -40,10 +40,10 @@ def start():
         time.sleep(0.05)
     p.kill(); raise RuntimeError("socket timeout")
 
-def req(path):
+def req(path, extra=""):
     s = socket.socket(socket.AF_UNIX); s.connect(SOCK)
     s.sendall(("GET " + path + " HTTP/1.1\r\nHost: x\r\nConnection: close\r\n"
-               "x-nas-uid: %d\r\n\r\n" % uid).encode())
+               "x-nas-uid: %d\r\n%s\r\n" % (uid, extra)).encode())
     data = b""
     while True:
         d = s.recv(65536)
@@ -80,6 +80,9 @@ try:
     d = req("/api/search?q=teamonly&limit=50")
     if len(d.get("items", [])) != 1:
         print("FAIL @team not scanned into unit", d); sys.exit(1)
+    c = req("/api/scanmode/candidates", "x-trim-isadmin: 1\r\n")
+    if not any(x.get("path", "").endswith("/@team/teamA") for x in c.get("directories", [])):
+        print("FAIL candidates missing @team", c); sys.exit(1)
 finally:
     p.terminate()
     try: p.wait(timeout=5)

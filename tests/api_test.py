@@ -95,6 +95,13 @@ try:
     st, body, _ = req("POST", "/api/scanmode", {"x-nas-uid": other_uid},
                       b'{"scanMode":"isolated"}')
     expect("scanmode non-admin", json.loads(body).get("ok"), False)
+    st, body, _ = req("GET", "/api/scanmode/candidates", base)
+    cand = json.loads(body)
+    expect("candidates dirs", isinstance(cand.get("directories"), list), True)
+    expect("candidates groups", isinstance(cand.get("groups"), list), True)
+    expect("candidates users", isinstance(cand.get("users"), list), True)
+    st, body, _ = req("GET", "/api/scanmode/candidates", {"x-nas-uid": other_uid})
+    expect("candidates non-admin", "error" in json.loads(body), True)
 
     # 鼠标打开方式：默认文件夹单击、文件双击；POST 后可持久化，非法值回落默认
     st, body, _ = req("GET", "/api/settings", base)

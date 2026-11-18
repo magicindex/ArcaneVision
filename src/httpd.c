@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/xattr.h>
 #include <sys/time.h>
 #include <sys/un.h>
 #include <sys/socket.h>
@@ -3881,6 +3882,232 @@ static void handle_scanmode(sbuf *out, const char *body, int uid, int admin, int
     sb_puts(out, "{\"ok\":true,\"rebuild\":true}");
 }
 
+#define CAND_MAX 64
+typedef struct {
+    gid_t gid;
+    char name[80];
+    char members[512];
+    char teams[1024];
+} cand_group;
+
+typedef struct {
+    uid_t uid;
+    char name[80];
+    char home[256];
+    gid_t gids[32];
+    int ngids;
+} cand_user;
+
+typedef struct {
+    char path[512];
+    gid_t gids[16];
+    int ngids;
+    int kind;          /* 1=team 2=home 3=share */
+    uid_t owner;
+    char evidence[256];
+} cand_dir;
+
+static cand_group *cand_group_find(cand_group *g, int n, gid_t gid) {
+    for (int i = 0; i < n; i++) if (g[i].gid == gid) return &g[i];
+    return NULL;
+}
+
+static cand_group *cand_group_get(cand_group *g, int *n, gid_t gid) {
+    for (int i = 0; i < *n; i++) if (g[i].gid == gid) return &g[i];
+    if (*n >= CAND_MAX) return NULL;
+    cand_group *x = &g[(*n)++];
+    memset(x, 0, sizeof(*x));
+    x->gid = gid;
+    struct group *gr = getgrgid(gid);
+    if (gr) snprintf(x->name, sizeof x->name, "%s", gr->gr_name);
+    return x;
+}
+
+static void cand_members(cand_group *g) {
+    struct group *gr = getgrgid(g->gid);
+    if (!gr) return;
+    size_t used = 0;
+    g->members[0] = 0;
+    for (char **m = gr->gr_mem; m && *m; m++) {
+        size_t l = strlen(*m);
+        if (used + l + 2 >= sizeof g->members) break;
+        if (used) g->members[used++] = ',';
+        memcpy(g->members + used, *m, l); used += l; g->members[used] = 0;
+    }
+}
+
+static void cand_add_team(cand_group *groups, int *ng, cand_dir *dirs, int *nd, const char *path) {
+    if (*nd >= CAND_MAX) return;
+    cand_dir *d = &dirs[(*nd)++];
+    memset(d, 0, sizeof(*d));
+    size_t pl = strlen(path);
+    if (pl >= sizeof d->path) pl = sizeof d->path - 1;
+    memcpy(d->path, path, pl); d->path[pl] = 0;
+    d->kind = 1;
+    unsigned char buf[4096];
+    ssize_t n = getxattr(path, "system.trim_acl", buf, sizeof buf);
+    if (n >= 4) {
+        uint32_t ver;
+        memcpy(&ver, buf, 4);
+        if (ver == 1) {
+            snprintf(d->evidence, sizeof d->evidence, "system.trim_acl");
+            for (size_t off = 4; off + 20 <= (size_t)n && d->ngids < 16; off += 20) {
+                uint32_t tag, id;
+                memcpy(&tag, buf + off, 4);
+                memcpy(&id, buf + off + 12, 4);
+                if ((tag & 0x3c) == 0x08) {
+                    int dup = 0;
+                    for (int k = 0; k < d->ngids; k++) if (d->gids[k] == (gid_t)id) dup = 1;
+                    if (!dup) {
+                        d->gids[d->ngids++] = (gid_t)id;
+                        cand_group *g = cand_group_get(groups, ng, (gid_t)id);
+                        if (g) {
+                            size_t l = strlen(g->teams);
+                            if (l + strlen(path) + 3 < sizeof g->teams) {
+                                if (l) strcat(g->teams, ",");
+                                strcat(g->teams, path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (!d->ngids) {
+        struct stat st;
+        if (stat(path, &st) == 0) {
+            d->gids[0] = st.st_gid; d->ngids = 1;
+            snprintf(d->evidence, sizeof d->evidence, "POSIX gid=%u", (unsigned)st.st_gid);
+            cand_group_get(groups, ng, st.st_gid);
+        }
+    }
+}
+
+static void handle_scan_candidates(sbuf *out, int uid, int admin) {
+    if (!admin) { sb_puts(out, "{\"error\":\"需要管理员权限\"}"); return; }
+    cand_group groups[CAND_MAX]; int ng = 0;
+    cand_dir dirs[CAND_MAX]; int nd = 0;
+    cand_user users[CAND_MAX]; int nu = 0;
+
+    /* 团队目录：/volN/@team/<team> */
+    for (int vi = 0; vi < g_nvols_local; vi++) {
+        char base[600];
+        size_t rl = strlen(g_vols[vi].root);
+        if (rl + 8 > sizeof base) continue;
+        memcpy(base, g_vols[vi].root, rl);
+        memcpy(base + rl, "/@team", 7);
+        base[rl + 7] = 0;
+        DIR *d = opendir(base);
+        if (!d) continue;
+        struct dirent *e;
+        while ((e = readdir(d)) != NULL) {
+            if (e->d_name[0] == '.' || !strcmp(e->d_name, "..")) continue;
+            char path[700];
+            size_t bl = strlen(base), nl = strlen(e->d_name);
+            if (bl + 1 + nl + 1 > sizeof path) continue;
+            memcpy(path, base, bl);
+            path[bl] = '/';
+            memcpy(path + bl + 1, e->d_name, nl);
+            path[bl + 1 + nl] = 0;
+            struct stat st;
+            if (stat(path, &st) != 0 || !S_ISDIR(st.st_mode)) continue;
+            cand_add_team(groups, &ng, dirs, &nd, path);
+        }
+        closedir(d);
+    }
+
+    /* 组：团队 ACL 引用 + 普通用户组 */
+    setgrent();
+    struct group *gr;
+    while ((gr = getgrent()) != NULL) {
+        /* 只保留团队 ACL 引用过的组，或普通用户组（gid>=1000） */
+        cand_group *g = cand_group_find(groups, ng, gr->gr_gid);
+        if (!g && gr->gr_gid >= 1000) g = cand_group_get(groups, &ng, gr->gr_gid);
+        if (!g) continue;
+        if (!g->name[0]) snprintf(g->name, sizeof g->name, "%s", gr->gr_name);
+        cand_members(g);
+    }
+    endgrent();
+    /* 有团队目录但组名未命中的，补名称 */
+    for (int i = 0; i < ng; i++) {
+        if (!groups[i].name[0]) {
+            struct group *grp = getgrgid(groups[i].gid);
+            if (grp) snprintf(groups[i].name, sizeof groups[i].name, "%s", grp->gr_name);
+        }
+    }
+
+    /* 用户：uid>=1000，附家目录与组 */
+    setpwent();
+    struct passwd *pw;
+    while ((pw = getpwent()) != NULL && nu < CAND_MAX) {
+        if (pw->pw_uid < 1000) continue;
+        cand_user *u = &users[nu++];
+        memset(u, 0, sizeof(*u));
+        u->uid = pw->pw_uid;
+        snprintf(u->name, sizeof u->name, "%s", pw->pw_name);
+        if (g_nvols_local > 0)
+            snprintf(u->home, sizeof u->home, "%s/%u", g_vols[0].root, (unsigned)pw->pw_uid);
+        else
+            snprintf(u->home, sizeof u->home, "/vol1/%u", (unsigned)pw->pw_uid);
+        gid_t gl[32];
+        int n = 32;
+        if (getgrouplist(pw->pw_name, pw->pw_gid, gl, &n) < 0) { gl[0] = pw->pw_gid; n = 1; }
+        if (n > 32) n = 32;
+        u->ngids = n;
+        memcpy(u->gids, gl, sizeof(gid_t) * (size_t)n);
+    }
+    endpwent();
+
+    sb_puts(out, "{\"mode\":\"");
+    pthread_mutex_lock(&g_scan_policy_mu);
+    sb_puts(out, xl_scan_mode_name(g_scan_policy.mode));
+    pthread_mutex_unlock(&g_scan_policy_mu);
+    sb_puts(out, "\",\"volumes\":[");
+    for (int i = 0; i < g_nvols_local; i++) {
+        if (i) sb_puts(out, ",");
+        sb_puts(out, "\""); sb_json(out, g_vols[i].root, strlen(g_vols[i].root)); sb_puts(out, "\"");
+    }
+    sb_puts(out, "],\"directories\":[");
+    for (int i = 0; i < nd; i++) {
+        if (i) sb_puts(out, ",");
+        sb_puts(out, "{\"path\":\""); sb_json(out, dirs[i].path, strlen(dirs[i].path));
+        sb_printf(out, "\",\"kind\":\"team\",\"gids\":[");
+        for (int k = 0; k < dirs[i].ngids; k++) sb_printf(out, "%s%u", k ? "," : "", (unsigned)dirs[i].gids[k]);
+        sb_puts(out, "],\"evidence\":\""); sb_json(out, dirs[i].evidence, strlen(dirs[i].evidence));
+        sb_puts(out, "\"}");
+    }
+    sb_puts(out, "],\"groups\":[");
+    for (int i = 0; i < ng; i++) {
+        if (i) sb_puts(out, ",");
+        sb_printf(out, "{\"gid\":%u,\"name\":\"", (unsigned)groups[i].gid);
+        sb_json(out, groups[i].name, strlen(groups[i].name));
+        sb_puts(out, "\",\"members\":\""); sb_json(out, groups[i].members, strlen(groups[i].members));
+        sb_puts(out, "\",\"teamDirs\":[");
+        const char *p = groups[i].teams;
+        int first = 1;
+        while (p && *p) {
+            const char *e = strchr(p, ',');
+            size_t l = e ? (size_t)(e - p) : strlen(p);
+            if (!first) sb_puts(out, ",");
+            sb_puts(out, "\""); sb_json(out, p, l); sb_puts(out, "\"");
+            first = 0;
+            p = e ? e + 1 : NULL;
+        }
+        sb_puts(out, "]}");
+    }
+    sb_puts(out, "],\"users\":[");
+    for (int i = 0; i < nu; i++) {
+        if (i) sb_puts(out, ",");
+        sb_printf(out, "{\"uid\":%u,\"name\":\"", (unsigned)users[i].uid);
+        sb_json(out, users[i].name, strlen(users[i].name));
+        sb_puts(out, "\",\"home\":\""); sb_json(out, users[i].home, strlen(users[i].home));
+        sb_puts(out, "\",\"groups\":[");
+        for (int k = 0; k < users[i].ngids; k++) sb_printf(out, "%s%u", k ? "," : "", (unsigned)users[i].gids[k]);
+        sb_puts(out, "]}");
+    }
+    sb_puts(out, "]}");
+}
+
 static void handle_acl_list(sbuf *out, int uid, int admin, int all) {
     sb_printf(out, "{\"uid\":%d,\"admin\":%s,\"paths\":[", uid, admin ? "true" : "false");
     int shown = 0;
@@ -4569,6 +4796,8 @@ static void handle_client(int fd) {
         if (param(qs, "msg", msg, sizeof msg))
             fprintf(stderr, "xuanlan client: %.900s\n", msg);
         sb_puts(&body, "{\"ok\":true}");
+    } else if (!strcmp(pathonly, "/api/scanmode/candidates")) {
+        handle_scan_candidates(&body, uid, admin);
     } else if (!strcmp(pathonly, "/api/scanmode")) {
         if (strcmp(method, "POST") == 0) {
             if (!json_ct) { code = 415; sb_puts(&body, "{\"error\":\"use application/json\"}"); }
