@@ -2785,7 +2785,11 @@
     if (!box) return;
     fetch(API + 'remote').then(r => r.json()).then(d => {
       if (!d || d.error) { box.innerHTML = '<div class="hint">' + esc(d && d.error || '无法读取远程挂载') + '</div>'; return; }
-      let h = '<div class="hint">索引：' + (d.enabled ? '已启用' : '未启用（XL_REMOTE_INDEX=1）') + '</div>';
+      let h = '<div class="row2"><div class="k">远程索引</div><label class="chk">' +
+        '<input type="checkbox" id="remoteToggle"' + (d.enabled ? ' checked' : '') + '> 启用' +
+        '</label> <button class="act" id="remoteRebuild" type="button"' +
+        (d.enabled ? '' : ' disabled') + '>立即重建</button></div>' +
+        '<div class="hint">索引：' + (d.enabled ? '已启用' : '未启用') + '</div>';
       const ms = d.mounts || [];
       if (!ms.length) h += '<div class="hint">未检测到 /vol02 下的远程挂载</div>';
       for (const m of ms) {
@@ -2797,6 +2801,30 @@
           (m.aclReason ? '（' + m.aclReason + '）' : '') + '</span></div></div>';
       }
       box.innerHTML = h;
+      const tg = box.querySelector('#remoteToggle');
+      if (tg) tg.onchange = () => {
+        const en = tg.checked;
+        fetch(API + 'remote', { method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ enabled: en }) })
+          .then(r => r.json()).then(x => {
+            if (!x || x.ok === false) throw new Error(x && x.error || '保存失败');
+            say(en ? '远程索引已启用，正在对账' : '远程索引已关闭');
+            refreshScanStatus();
+            setTimeout(renderRemoteList, 800);
+          }).catch(e => { alert('远程索引设置失败：' + (e && e.message || e)); tg.checked = !en; });
+      };
+      const rb = box.querySelector('#remoteRebuild');
+      if (rb) rb.onclick = () => {
+        rb.disabled = true;
+        fetch(API + 'remote/rebuild', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+          .then(r => r.json()).then(x => {
+            if (!x || x.ok === false) throw new Error(x && x.error || '启动失败');
+            say('远程索引对账已启动');
+            refreshScanStatus();
+            setTimeout(renderRemoteList, 1200);
+          }).catch(e => alert('远程重建失败：' + (e && e.message || e)))
+            .finally(() => { rb.disabled = false; });
+      };
     }).catch(() => { box.innerHTML = '<div class="hint">无法读取远程挂载</div>'; });
   }
   function renderSettings(){

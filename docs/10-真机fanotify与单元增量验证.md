@@ -353,3 +353,12 @@ chmod 600 → 子树增量更新 → 查询再次为空
   ```
   adapter 变为 `config`，只有 users 列表 + owner/管理员可见；
 - 真机临时验证：CIFS 挂载配置 users=[1000,1001]，uid1001 命中、uid1002 为空。
+
+
+## 17. 远程索引设置页开关/立即重建（0.10.1）
+
+- 设置页远程卡片提供“启用/关闭”和“立即重建”；
+- `POST /api/remote {"enabled":true|false}` 写 `remote.json` 并即时增删远程卷；
+- `POST /api/remote/rebuild` 立即启动远程对账；
+- 关闭时删除远程卷与 `remote-*.idx`，开启时重新探测并构建；
+- 构建/对账进行中拒绝重复操作。

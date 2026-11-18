@@ -460,6 +460,49 @@ static void route_release(query_route_t *r) {
 
 static uint64_t g_remote_ttl = 300;
 
+static int g_remote_enabled;
+
+static void remote_cfg_path(char *out, size_t cap) {
+    char tmp[1200];
+    snprintf(tmp, sizeof tmp, "%s", g_idx_dir);
+    char *sl = strrchr(tmp, '/');
+    if (sl) *sl = 0;
+    snprintf(out, cap, "%s/remote.json", tmp);
+}
+
+static void remote_cfg_load(void) {
+    char path[1300];
+    remote_cfg_path(path, sizeof path);
+    g_remote_enabled = getenv("XL_REMOTE_INDEX") && atoi(getenv("XL_REMOTE_INDEX")) ? 1 : 0;
+    FILE *f = fopen(path, "r");
+    if (!f) return;
+    char buf[4096];
+    size_t n = fread(buf, 1, sizeof buf - 1, f);
+    fclose(f);
+    buf[n] = 0;
+    const char *p = strstr(buf, "\"enabled\"");
+    if (!p) return;
+    p = strchr(p, ':');
+    if (!p) return;
+    p++;
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
+    if (!strncmp(p, "true", 4)) g_remote_enabled = 1;
+    else if (!strncmp(p, "false", 5)) g_remote_enabled = 0;
+}
+
+static int remote_cfg_write(int enabled) {
+    char path[1300], tmp[1400];
+    remote_cfg_path(path, sizeof path);
+    snprintf(tmp, sizeof tmp, "%s.tmp", path);
+    FILE *f = fopen(tmp, "w");
+    if (!f) return -1;
+    fchmod(fileno(f), 0600);
+    fprintf(f, "{\"enabled\":%s,\"syncSec\":900}", enabled ? "true" : "false");
+    fflush(f); fsync(fileno(f));
+    if (fclose(f) != 0 || rename(tmp, path) != 0) { unlink(tmp); return -1; }
+    return 0;
+}
+
 static void remote_acl_config(vol_t *v) {
     snprintf(v->remote_acl, sizeof v->remote_acl, "owner");
     snprintf(v->remote_acl_reason, sizeof v->remote_acl_reason,
@@ -587,7 +630,7 @@ static int remote_scan_mounts(remote_mount *out, int max) {
 
 /* 远程挂载生命周期：启动/周期对账时新增、迁移、清理。 */
 static int remote_reconcile_mounts(void) {
-    if (!getenv("XL_REMOTE_INDEX") || !atoi(getenv("XL_REMOTE_INDEX"))) return 0;
+    if (!g_remote_enabled) return 0;
     remote_mount ms[32];
     int nm = remote_scan_mounts(ms, 32);
     int claimed[32];
@@ -1889,8 +1932,36 @@ static void *remote_sync_worker(void *arg) {
     return NULL;
 }
 
+static void remote_remove_all(void) {
+    pthread_rwlock_wrlock(&g_rw);
+    for (int i = g_nvols - 1; i >= g_nvols_local; i--) {
+        vol_t *v = &g_vols[i];
+        if (!v->remote) continue;
+        if (v->ok) { dir_index_free(v); snapshot_close(&v->sn); }
+        unlink(v->file);
+        memmove(&g_vols[i], &g_vols[i + 1], (size_t)(g_nvols - i - 1) * sizeof(g_vols[0]));
+        g_nvols--;
+    }
+    pthread_rwlock_unlock(&g_rw);
+}
+
+static int remote_start_sync(void) {
+    if (g_building || __atomic_load_n(&g_remote_running, __ATOMIC_RELAXED)) return -1;
+    g_building = 1;
+    __atomic_store_n(&g_remote_running, 1, __ATOMIC_RELAXED);
+    pthread_t th;
+    if (pthread_create(&th, NULL, remote_sync_worker, NULL) != 0) {
+        g_building = 0;
+        __atomic_store_n(&g_remote_running, 0, __ATOMIC_RELAXED);
+        return -1;
+    }
+    pthread_detach(th);
+    return 0;
+}
+
 static void remote_sync_tick(void) {
     static uint64_t next;
+    if (!g_remote_enabled) return;
     const char *es = getenv("XL_REMOTE_SYNC_SEC");
     int sec = es ? atoi(es) : 900;
     if (sec < 60) sec = 60;
@@ -1902,16 +1973,10 @@ static void remote_sync_tick(void) {
     int any = 0;
     for (int i = 0; i < g_nvols; i++) if (g_vols[i].remote) any = 1;
     if (!any) { next = now + (uint64_t)sec; return; }
-    g_building = 1;
-    __atomic_store_n(&g_remote_running, 1, __ATOMIC_RELAXED);
-    pthread_t th;
-    if (pthread_create(&th, NULL, remote_sync_worker, NULL) != 0) {
-        g_building = 0;
-        __atomic_store_n(&g_remote_running, 0, __ATOMIC_RELAXED);
+    if (remote_start_sync() != 0) {
         next = now + 60;
         return;
     }
-    pthread_detach(th);
     next = now + (uint64_t)sec;
 }
 
@@ -4686,7 +4751,7 @@ static void handle_thumb(sbuf *out, const char *qs, int uid, int *code, const ch
 static void handle_remote(sbuf *out, int admin) {
     if (!admin) { sb_puts(out, "{\"error\":\"需要管理员权限\"}"); return; }
     sb_puts(out, "{\"enabled\":");
-    sb_puts(out, getenv("XL_REMOTE_INDEX") && atoi(getenv("XL_REMOTE_INDEX")) ? "true" : "false");
+    sb_puts(out, g_remote_enabled ? "true" : "false");
     sb_puts(out, ",\"mounts\":[");
     int first = 1;
     /* 已启用的实时索引卷 */
@@ -4731,6 +4796,37 @@ static void handle_remote(sbuf *out, int admin) {
         endmntent(f);
     }
     sb_puts(out, "]}");
+}
+
+static void handle_remote_post(sbuf *out, const char *body, int admin, int rebuild) {
+    if (!admin) { sb_puts(out, "{\"ok\":false,\"error\":\"需要管理员权限\"}"); return; }
+    if (g_building || __atomic_load_n(&g_remote_running, __ATOMIC_RELAXED)) {
+        sb_puts(out, "{\"ok\":false,\"error\":\"正在构建/对账，请稍后\"}");
+        return;
+    }
+    if (rebuild) {
+        if (!g_remote_enabled) { sb_puts(out, "{\"ok\":false,\"error\":\"远程索引未启用\"}"); return; }
+        if (remote_start_sync() != 0) { sb_puts(out, "{\"ok\":false,\"error\":\"无法启动远程对账\"}"); return; }
+        sb_puts(out, "{\"ok\":true,\"rebuild\":true}");
+        return;
+    }
+    int enabled = json_bool_def(body, "\"enabled\"", g_remote_enabled);
+    if (remote_cfg_write(enabled) < 0) {
+        sb_puts(out, "{\"ok\":false,\"error\":\"无法写入 remote.json\"}");
+        return;
+    }
+    g_remote_enabled = enabled ? 1 : 0;
+    if (!g_remote_enabled) {
+        remote_remove_all();
+        sb_puts(out, "{\"ok\":true,\"enabled\":false}");
+        return;
+    }
+    remote_reconcile_mounts();
+    if (remote_start_sync() != 0) {
+        sb_puts(out, "{\"ok\":true,\"enabled\":true,\"rebuild\":false}");
+        return;
+    }
+    sb_puts(out, "{\"ok\":true,\"enabled\":true,\"rebuild\":true}");
 }
 
 static void handle_status(sbuf *out) {
@@ -5353,7 +5449,11 @@ static void handle_client(int fd) {
             fprintf(stderr, "xuanlan client: %.900s\n", msg);
         sb_puts(&body, "{\"ok\":true}");
     } else if (!strcmp(pathonly, "/api/remote")) {
-        handle_remote(&body, admin);
+        if (strcmp(method, "POST") == 0) handle_remote_post(&body, req_body, admin, 0);
+        else handle_remote(&body, admin);
+    } else if (!strcmp(pathonly, "/api/remote/rebuild")) {
+        if (strcmp(method, "POST") != 0) { code = 405; sb_puts(&body, "{\"ok\":false,\"error\":\"use POST\"}"); }
+        else handle_remote_post(&body, req_body, admin, 1);
     } else if (!strcmp(pathonly, "/api/scanmode/candidates")) {
         handle_scan_candidates(&body, uid, admin);
     } else if (!strcmp(pathonly, "/api/scanmode")) {
@@ -5937,6 +6037,7 @@ int httpd_serve(const xl_svc_opts *o) {
         g_nvols++;
     }
     g_nvols_local = g_nvols;
+    remote_cfg_load();
     remote_reconcile_mounts();
     if (!g_nvols) {
         fprintf(stderr, "xuanlan serve: 没有挂载点\n");
