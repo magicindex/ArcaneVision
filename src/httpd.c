@@ -168,6 +168,7 @@ static int   g_nvols_local;       /* 前 g_nvols_local 个是 /volN 本地卷 */
 
 /* USB 外挂设备检索（默认关闭，单独索引，/vol00 挂载） */
 static int  g_usb_enabled;
+static int  g_local_enabled = 1;
 static int  g_usb_watch = 1;
 static int  g_usb_had;
 static char g_usb_msg[1024] = "USB 检索未开启";
@@ -473,7 +474,8 @@ static void remote_cfg_path(char *out, size_t cap) {
 static void remote_cfg_load(void) {
     char path[1300];
     remote_cfg_path(path, sizeof path);
-    g_remote_enabled = getenv("XL_REMOTE_INDEX") && atoi(getenv("XL_REMOTE_INDEX")) ? 1 : 0;
+    g_remote_enabled = 0;   /* 默认仅本地；显式 env/remote.json 才启用 */
+    if (getenv("XL_REMOTE_INDEX") && atoi(getenv("XL_REMOTE_INDEX"))) g_remote_enabled = 1;
     FILE *f = fopen(path, "r");
     if (!f) return;
     char buf[4096];
@@ -828,11 +830,14 @@ static void route_for_uid(int uid, int admin, query_route_t *r) {
     int nu = xl_scan_resolve(&pol, (uid_t)(uid < 0 ? 0 : uid), gids, ngids,
                              units, XL_SCAN_ARRAY_MAX);
     for (int k = 0; k < nu; k++) {
+        if (!g_local_enabled && units[k].kind != XL_UNIT_SHARED) continue;
         if (units[k].kind == XL_UNIT_SHARED) {
             r->shared = 1;
-            for (int i = 0; i < g_nvols && r->n < (int)(sizeof r->vols / sizeof r->vols[0]); i++)
+            for (int i = 0; i < g_nvols && r->n < (int)(sizeof r->vols / sizeof r->vols[0]); i++) {
+                if (!g_local_enabled && i < g_nvols_local) continue;
                 if (g_vols[i].ok && remote_volume_allows(uid, admin, &g_vols[i]))
                     r->vols[r->n++] = &g_vols[i];
+            }
             continue;
         }
         unit_cache_t *u = unit_cache_get(units[k].key);
@@ -4173,7 +4178,8 @@ static void handle_settings_get(sbuf *out, int uid, int admin, int all) {
     sb_printf(out, ",\"strictHome\":%s",
               json_bool_def(buf, "\"strictHome\"", 1) ? "true" : "false");
     sb_printf(out, ",\"skipHidden\":%s", scan_skip_hidden() ? "true" : "false");
-    sb_printf(out, ",\"usbEnabled\":%s,\"usbWatch\":%s,\"usbMessage\":\"",
+    sb_printf(out, ",\"localEnabled\":%s,\"usbEnabled\":%s,\"usbWatch\":%s,\"usbMessage\":\"",
+              g_local_enabled ? "true" : "false",
               g_usb_enabled ? "true" : "false", g_usb_watch ? "true" : "false");
     char umsg[1024]; usb_msg_get(umsg, sizeof umsg); sb_json(out, umsg, strlen(umsg));
     sb_puts(out, "\",\"usbMounts\":[");
@@ -4380,13 +4386,15 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
     if (!f) { sb_puts(out, "{\"ok\":false,\"error\":\"cannot write\"}"); return; }
     fchmod(fileno(f), 0600);
     const char *m = rc.mode == 1 ? "daily" : (rc.mode == 2 ? "interval" : "off");
+    int local_on = json_bool_def(body, "\"localEnabled\"", g_local_enabled);
     fprintf(f, "{\"settingsVersion\":3,\"openWith\":%.*s,\"openIn\":\"%s\","
                "\"clickFolder\":\"%s\",\"clickFile\":\"%s\","
-               "\"strictHome\":%s,\"skipHidden\":%s,"
+               "\"strictHome\":%s,\"skipHidden\":%s,\"localEnabled\":%s,"
                "\"rebuild\":{\"mode\":\"%s\",\"hour\":%d,\"minute\":%d,\"hours\":%d}}",
             (int)len, b, open_in, click_folder, click_file,
             strict_home ? "true" : "false",
             skip_hidden ? "true" : "false",
+            local_on ? "true" : "false",
             m, rc.hour, rc.minute, rc.hours);
     fflush(f);
     fsync(fileno(f));
@@ -4405,6 +4413,7 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
     {
         int usb_watch = usb_json_bool(body, "\"usbWatch\"", g_usb_watch);
         int usb_on = usb_json_bool(body, "\"usbEnabled\"", g_usb_enabled);
+        g_local_enabled = local_on ? 1 : 0;
         if (usb_watch != g_usb_watch) { g_usb_watch = usb_watch; usb_cfg_save(); }
         usb_enable(usb_on);
     }
@@ -6080,6 +6089,7 @@ int httpd_serve(const xl_svc_opts *o) {
             b[n] = 0;
             fclose(f);
             perm_set_strict_home(json_bool_def(b, "\"strictHome\"", 1));
+            g_local_enabled = json_bool_def(b, "\"localEnabled\"", 1);
         }
     }
     const char *acl_env = getenv("XL_ACL_UID");

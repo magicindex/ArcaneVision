@@ -2638,8 +2638,12 @@
     '<div class="hint" id="rbHint"></div>' +
     '<label class="admrow" id="hiddenRow"><input type="checkbox" id="skipHidden" checked>忽略隐藏目录与系统杂项' +
     '<span class="hint2">默认开启；跳过 . / @ 开头目录，以及 Thumbs.db、desktop.ini、__MACOSX 等杂项；保存后自动重建索引</span></label></section>' +
-    '<section class="scard"><h3>USB 外挂设备</h3>' +
-    '<label class="admrow" id="usbRow"><input type="checkbox" id="usbEnabled">启用 USB 外挂设备检索' +
+    '<section class="scard"><h3>本地检索</h3>' +
+    '<label class="admrow" id="localRow"><input type="checkbox" id="localEnabled" checked>启用本地卷检索' +
+    '<span class="hint2">默认开启；关闭后本地 /vol1–/vol4 不参与搜索，但索引保留</span></label>' +
+    '<div class="hint" id="localHint"></div></section>' +
+    '<section class="scard"><h3>挂载检索（外接存储）</h3>' +
+    '<label class="admrow" id="usbRow"><input type="checkbox" id="usbEnabled">启用挂载检索' +
     '<span class="hint2">默认关闭；只索引 /vol00 下的外挂挂载，使用独立索引，设备失效不影响本地索引</span></label>' +
     '<label class="admrow" id="usbWatchRow"><input type="checkbox" id="usbWatch" checked>USB 挂载路径检测' +
     '<span class="hint2">掉线自动关闭检索并清理旧索引；挂载点变化自动重建</span></label>' +
@@ -3103,6 +3107,10 @@
       }
     }
     {
+      const lcb = setmask.querySelector('#localEnabled');
+      if (lcb) lcb.checked = settings.localEnabled !== false;
+      const lh = setmask.querySelector('#localHint');
+      if (lh) lh.textContent = (settings.localEnabled !== false) ? '本地检索已启用' : '本地检索已关闭';
       const urow = setmask.querySelector('#usbRow');
       const ucb = setmask.querySelector('#usbEnabled');
       const wcb = setmask.querySelector('#usbWatch');
@@ -3220,11 +3228,12 @@
     )].map(x => x.dataset.id);
     const strictHome = !!setmask.querySelector('#strictHome').checked;
     const skipHidden = !!setmask.querySelector('#skipHidden').checked;
+    const localEnabled = !!setmask.querySelector('#localEnabled').checked;
     const usbEnabled = !!setmask.querySelector('#usbEnabled').checked;
     const usbWatch = !!setmask.querySelector('#usbWatch').checked;
     fetch(API + 'settings', { method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ openWith: ow, openIn: oi, clickFolder, clickFile,
-                             strictHome, skipHidden, usbEnabled, usbWatch,
+                             strictHome, skipHidden, localEnabled, usbEnabled, usbWatch,
                              scope, rebuild, settingsVersion: 3 }) })
       .then(r => r.json()).then(d => {
         if (d && d.ok === false) {
@@ -3238,6 +3247,7 @@
         settings.shareUsers = picked('user', 'share');
         settings.isolatedUsers = picked('user', 'isolate');
         settings.strictHome = strictHome; settings.skipHidden = skipHidden;
+        settings.localEnabled = localEnabled;
         settings.usbEnabled = usbEnabled; settings.usbWatch = usbWatch;
         const adminScan = !!(settings.scopeAvailable && settings.scopeAvailable.admin);
         if (!adminScan) return;

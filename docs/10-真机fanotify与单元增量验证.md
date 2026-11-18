@@ -372,3 +372,13 @@ chmod 600 → 子树增量更新 → 查询再次为空
 - 当前内核 6.18.18 下 `getcifsacl` 对两个共享均返回 `Operation not permitted`，
   因此实际仍回退 owner-only；`/api/remote.aclReason` 可观测；
 - 结论：代码路径已具备，但服务端/内核未返回 security descriptor，需在支持 cifsacl 的挂载/内核环境验证。
+
+
+## 19. 三路检索范围开关（0.10.3）
+
+- 设置页拆为「本地检索」「挂载检索（外接存储）」「远程挂载」三张卡片；
+- 本地开关写入 settings.json `localEnabled`，默认 true；
+- 挂载（USB/外接）沿用 `usbEnabled`，默认 false；
+- 远程沿用 `remote.json`/XL_REMOTE_INDEX，默认 false；
+- 关闭本地仅跳过 /vol1–/vol4 本地卷，远程/挂载独立可用；
+- 关闭某一路不删除其他索引，不触发其他路重建。
