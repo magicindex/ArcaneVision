@@ -4448,6 +4448,7 @@ static void handle_remote(sbuf *out, int admin) {
     sb_puts(out, getenv("XL_REMOTE_INDEX") && atoi(getenv("XL_REMOTE_INDEX")) ? "true" : "false");
     sb_puts(out, ",\"mounts\":[");
     int first = 1;
+    /* 已启用的实时索引卷 */
     for (int i = 0; i < g_nvols; i++) {
         vol_t *v = &g_vols[i];
         if (!v->remote) continue;
@@ -4455,9 +4456,34 @@ static void handle_remote(sbuf *out, int admin) {
         first = 0;
         sb_puts(out, "{\"root\":\""); sb_json(out, v->root, strlen(v->root));
         sb_puts(out, "\",\"kind\":\""); sb_json(out, v->remote_kind, strlen(v->remote_kind));
-        sb_printf(out, "\",\"uid\":%d,\"ok\":%s,\"records\":%llu}",
+        sb_printf(out, "\",\"uid\":%d,\"ok\":%s,\"records\":%llu,\"indexed\":true}",
                   v->remote_uid == (uid_t)-1 ? -1 : (int)v->remote_uid,
                   v->ok ? "true" : "false", (unsigned long long)v->records);
+    }
+    /* 未启用索引时也列出 fnOS 已挂载的远程目录，便于 UI/运维启用 */
+    FILE *f = setmntent("/proc/mounts", "r");
+    if (f) {
+        struct mntent *m;
+        while ((m = getmntent(f)) != NULL) {
+            if (!remote_type(m->mnt_type)) continue;
+            if (strncmp(m->mnt_dir, "/vol02/", 7) != 0) continue;
+            int indexed = 0;
+            for (int i = 0; i < g_nvols; i++)
+                if (g_vols[i].remote && !strcmp(g_vols[i].root, m->mnt_dir)) indexed = 1;
+            if (indexed) continue;
+            if (!first) sb_puts(out, ",");
+            first = 0;
+            const char *base = strrchr(m->mnt_dir, '/');
+            base = base ? base + 1 : m->mnt_dir;
+            char *end = NULL;
+            unsigned long owner = strtoul(base, &end, 10);
+            int uid = (end && end != base && *end == '-') ? (int)owner : -1;
+            sb_puts(out, "{\"root\":\""); sb_json(out, m->mnt_dir, strlen(m->mnt_dir));
+            sb_puts(out, "\",\"kind\":\""); sb_json(out, m->mnt_type, strlen(m->mnt_type));
+            sb_printf(out, "\",\"uid\":%d,\"ok\":%s,\"records\":0,\"indexed\":false}",
+                      uid, "false");
+        }
+        endmntent(f);
     }
     sb_puts(out, "]}");
 }
