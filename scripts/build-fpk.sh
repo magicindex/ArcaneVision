@@ -2,7 +2,7 @@
 # 打包 fnOS 应用：dist/xuanlan_<version>_amd64.fpk
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="${VERSION:-0.10.3}"
+VERSION="${VERSION:-0.10.4}"
 PORT="${PORT:-8971}"
 STAGE="$ROOT/build/fpk"
 PAYLOAD="$STAGE/payload"
@@ -14,7 +14,7 @@ make -C "$ROOT" >/dev/null
 
 rm -rf "$STAGE"
 mkdir -p "$PAYLOAD/bin" "$PAYLOAD/ui/images" "$PAYLOAD/ui/vendor" "$PAYLOAD/config" \
-         "$FPKROOT/wizard" "$FPKROOT/cmd" "$FPKROOT/config" "$DIST"
+         "$FPKROOT/cmd" "$FPKROOT/config" "$DIST"
 
 # ---- payload（解到安装目录） ----
 install -m 0755 "$ROOT/bin/xuanlan" "$PAYLOAD/bin/xuanlan"
@@ -47,9 +47,6 @@ install -m 0644 "$ROOT/pkg/config/resource" "$FPKROOT/config/resource"
 for f in main port_config install_init install_callback upgrade_init upgrade_callback \
          uninstall_init uninstall_callback config_init config_callback; do
     install -m 0755 "$ROOT/pkg/cmd/$f" "$FPKROOT/cmd/$f"
-done
-for f in install uninstall config; do
-    install -m 0644 "$ROOT/pkg/wizard/$f" "$FPKROOT/wizard/$f"
 done
 sed -e "s/@VERSION@/$VERSION/g" -e "s/@PORT@/$PORT/g" -e "s/@CHECKSUM@/$CHECKSUM/g" \
     "$ROOT/pkg/manifest.in" > "$FPKROOT/manifest"

@@ -425,3 +425,12 @@ chmod 600 → 子树增量更新 → 查询再次为空
 - 解析 ACE 用户名/组/Everyone，按读权限/继承评估；
 - 真机验证：给 Everyone 增加 READ 后 uid1001 命中，恢复后 uid1001 为空；uid1000 owner 始终可见；
 - 远程卷现在按真实服务端 ACL 过滤，不再仅 owner-only。
+
+
+## 25. App Center 无 wizard 干净升级（0.10.4）
+
+- 安装包不再包含 wizard 目录，端口固定默认 8971；
+- `fnos-cli app uninstall xuanlan --yes` 返回 Uninstalled app，不再要求 customParameters；
+- 卸载后 `/vol1/@appdata/xuanlan` 保留；
+- `fnos-cli app install-fpk ... --volume-id 1 --yes` 无需 custom parameters 即可重装；
+- 重装后版本 0.10.4、状态 running、远程索引/凭据保留。

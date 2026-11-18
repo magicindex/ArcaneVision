@@ -1,3 +1,10 @@
+## 0.10.4（公测）
+
+- 移除安装/卸载 wizard，默认端口 8971
+- `fnos-cli app uninstall xuanlan --yes` 可直接成功，保留 appdata
+- 重新安装无需 custom parameters
+- 完成 App Center 干净卸载/重装闭环
+
 ## 0.10.3（公测）
 
 - 检索范围拆为本地/挂载/远程三张卡片，独立开关
