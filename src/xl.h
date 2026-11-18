@@ -53,7 +53,7 @@ typedef struct {
     uint64_t names_bytes;
     uint64_t names_off;
     uint32_t tri_count;       /* 出现过的 trigram 个数 */
-    uint32_t pad0;
+    uint32_t checksum;        /* 全文件 FNV-1a；0=旧快照未校验 */
     uint64_t tri_ids_off;     /* uint32[tri_count]，升序 trigram 值 */
     uint64_t tri_ranges_off;  /* xl_range[tri_count] */
     uint64_t postings_off;

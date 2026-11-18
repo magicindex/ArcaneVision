@@ -290,3 +290,14 @@ delta.log      = 857,127 字节
 - 采样与读取通过 mutex 保护。
 
 说明：趋势仅保留当前进程生命周期，重启后重新累计。
+
+## 13. 快照 checksum（0.10.x）
+
+- `xl_hdr.pad0` 改为 `checksum`（128B 布局不变）；
+- `snapshot_save()` 写入完成后对全文件计算 FNV-1a，回写 checksum 并 fsync；
+- `snapshot_open()` 对 `checksum != 0` 的新快照重新计算并比对；
+- 旧快照 checksum=0 视为兼容，不做全文件校验；
+- 损坏测试：翻转索引尾部 1 字节，`info` 立即报
+  `index checksum mismatch` 并拒绝打开。
+
+代价：打开新快照时多一次全文件读取；旧快照不受影响。

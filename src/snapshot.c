@@ -15,6 +15,26 @@
 
 static inline uint64_t align_up(uint64_t v, uint64_t a) { return (v + a - 1) & ~(a - 1); }
 
+/* FNV-1a over the whole file, treating the checksum field itself as zero. */
+static uint32_t snap_checksum_fd(int fd, off_t size) {
+    uint32_t h = 2166136261u;
+    unsigned char buf[65536];
+    off_t off = 0;
+    size_t ck = offsetof(xl_hdr, checksum);
+    while (off < size) {
+        size_t want = (size - off) > (off_t)sizeof buf ? sizeof buf : (size_t)(size - off);
+        ssize_t n = pread(fd, buf, want, off);
+        if (n <= 0) return 0;
+        for (ssize_t i = 0; i < n; i++) {
+            off_t pos = off + i;
+            unsigned char b = (pos >= (off_t)ck && pos < (off_t)ck + 4) ? 0 : buf[i];
+            h ^= b; h *= 16777619u;
+        }
+        off += n;
+    }
+    return h ? h : 1;
+}
+
 static int write_at(int fd, const void *buf, size_t n, uint64_t off) {
     const uint8_t *p = buf;
     while (n) {
@@ -58,7 +78,7 @@ int snapshot_save(const char *path, const xl_store *s, const xl_index *ix,
     h.root_off = align_up(off, XL_ALIGN);
     off = h.root_off + h.root_len + 1;
 
-    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    int fd = open(path, O_RDWR | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
     if (fd < 0) {
         fprintf(stderr, "xuanlan: cannot create %s: %s\n", path, strerror(errno));
         return -1;
@@ -75,6 +95,12 @@ int snapshot_save(const char *path, const xl_store *s, const xl_index *ix,
     if (!rc && write_at(fd, root, h.root_len + 1, h.root_off) < 0) rc = -1;
     if (!rc && ftruncate(fd, (off_t)off) < 0) rc = -1;
     if (!rc && fsync(fd) < 0) rc = -1;   /* rename 之前落盘，避免掉电留下半写索引 */
+    if (!rc) {
+        uint32_t ck = snap_checksum_fd(fd, (off_t)off);
+        if (!ck || pwrite(fd, &ck, sizeof ck, (off_t)offsetof(xl_hdr, checksum)) != (ssize_t)sizeof ck)
+            rc = -1;
+        else if (fsync(fd) < 0) rc = -1;
+    }
     if (rc)
         fprintf(stderr, "xuanlan: write %s failed: %s\n", path, strerror(errno));
     if (close(fd) < 0 && !rc) rc = -1;
@@ -91,6 +117,17 @@ int snapshot_open(const char *path, xl_snap *sn) {
     struct stat st;
     if (fstat(fd, &st) < 0) { close(fd); return -1; }
     sn->map_len = (size_t)st.st_size;
+    if (sn->map_len >= sizeof(sn->h)) {
+        uint32_t want = 0;
+        if (pread(fd, &want, sizeof want, (off_t)offsetof(xl_hdr, checksum)) == (ssize_t)sizeof want && want) {
+            uint32_t got = snap_checksum_fd(fd, (off_t)sn->map_len);
+            if (got != want) {
+                fprintf(stderr, "xuanlan: index checksum mismatch %s\n", path);
+                close(fd);
+                return -1;
+            }
+        }
+    }
     sn->map = mmap(NULL, sn->map_len, PROT_READ, MAP_SHARED, fd, 0);
     close(fd);
     if (sn->map == MAP_FAILED) {
