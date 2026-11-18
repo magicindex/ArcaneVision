@@ -270,3 +270,13 @@ delta.log      = 857,127 字节
 
 > 测试使用独立临时实例，生产 `xuanlan.service` 未受影响；测试后已删除
 > `/vol1/@team/xl-stress`、`/tmp/xl-stress` 和临时容器。
+
+
+## 11. 0.10.0 FPK 安装与发布
+
+- 构建：`xuanlan_0.10.0_amd64.fpk`（1,026,888 字节，SHA-256
+  `53daa3004be390964e0e09f3f920bbc3cfe3d2624e92523b2bcede8d3a1a4da4`）；
+- 在 FnOSF10 本机通过 `fnosf10` profile 完成 App Center 安装；
+- 安装后版本 0.10.0、服务 running、候选 API 正常；
+- `/vol1/@appdata/xuanlan/settings.json`、`scanmode.json` 保留；
+- Gitea / GitHub 发布 `v0.10.0`（prerelease），附 FPK。

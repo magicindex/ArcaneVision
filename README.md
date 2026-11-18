@@ -227,8 +227,8 @@ fanotify ACL 变更自愈、事件队列压力防护、修复退避，并在 FnO
 - [x] 真机 fanotify → 队列 → 批量 delta → 重启恢复（docs/10）
 - [x] 实体 FPK 应用中心安装回归（FnOSF10 本机 profile 安装 0.10.0 通过）
 - [x] FPK 构建：`dist/xuanlan_0.10.0_amd64.fpk`
-- [ ] Gitea 推送 + tag `v0.10.0` + Release
-- [ ] GitHub 推送 + tag `v0.10.0` + Release
+- [x] Gitea 推送 + tag `v0.10.0` + Release
+- [x] GitHub 推送 + tag `v0.10.0` + Release
 
 ### 0.8.9–0.8.17 更新内容（历史）
 
