@@ -1160,6 +1160,72 @@ static int unit_build_one(const unit_job *j) {
     return rc;
 }
 
+static int unit_patch_path(const unit_job *j, const char *changed) {
+    char dir[1200];
+    if (xl_scan_unit_dir(g_idx_dir, j->key, dir, sizeof dir) < 0) return -1;
+    xl_unit_subject subj;
+    memset(&subj, 0, sizeof subj);
+    subj.kind = j->kind;
+    subj.uid = j->uid;
+    subj.gid = j->gid;
+    subj.members = j->members;
+    subj.nmembers = j->nmembers;
+
+    int patched = 0, failed = 0;
+    for (int i = 0; i < g_nvols_local; i++) {
+        vol_t *v = &g_vols[i];
+        if (!v->ok) continue;
+        size_t rl = strlen(v->root);
+        if (strncmp(changed, v->root, rl) != 0 ||
+            (changed[rl] != 0 && changed[rl] != '/')) continue;
+        const char *base = strrchr(v->file, '/');
+        base = base ? base + 1 : v->file;
+        char oldp[1300], newp[1400];
+        if (snprintf(oldp, sizeof oldp, "%s/%s", dir, base) >= (int)sizeof oldp) { failed++; continue; }
+        snprintf(newp, sizeof newp, "%s.new", oldp);
+        if (xl_unit_patch_to_file(v->root, changed, &subj, oldp, newp) == 0) {
+            if (rename(newp, oldp) == 0) patched++;
+            else { unlink(newp); failed++; }
+        } else {
+            unlink(newp);
+            failed++;
+        }
+    }
+    if (patched) {
+        char uj[1300];
+        snprintf(uj, sizeof uj, "%s/unit.json", dir);
+        utimensat(AT_FDCWD, uj, NULL, 0);   /* 让单元缓存按 mtime 重新加载 */
+    }
+    if (failed) return -1;
+    return patched ? 0 : -1;
+}
+
+static void unit_patch_acl_paths(char paths[][4096], int n) {
+    unit_job jobs[XL_UNIT_CACHE_MAX];
+    int nj = 0;
+    pthread_mutex_lock(&g_unit_jobs_mu);
+    nj = g_nunit_jobs;
+    memcpy(jobs, g_unit_jobs, sizeof(jobs[0]) * (size_t)nj);
+    pthread_mutex_unlock(&g_unit_jobs_mu);
+    if (!nj) return;
+
+    for (int p = 0; p < n; p++) {
+        for (int j = 0; j < nj; j++) {
+            if (unit_patch_path(&jobs[j], paths[p]) == 0) {
+                fprintf(stderr, "xuanlan: ACL 子树增量更新 %s -> %s\n",
+                        paths[p], jobs[j].key);
+            } else {
+                /* 子树合并失败时退回该单元全量重建，保证正确性。 */
+                fprintf(stderr, "xuanlan: ACL 子树合并失败 %s/%s，回退全单元重建\n",
+                        paths[p], jobs[j].key);
+                pthread_rwlock_rdlock(&g_rw);
+                unit_build_one(&jobs[j]);
+                pthread_rwlock_unlock(&g_rw);
+            }
+        }
+    }
+}
+
 static void units_build_all(void) {
     xl_scan_policy p;
     pthread_mutex_lock(&g_scan_policy_mu);
@@ -5627,10 +5693,17 @@ int httpd_serve(const xl_svc_opts *o) {
                 if (!acl_seen) acl_seen = now_ms();
                 /* ACL 批量变更常产生大量连续 ATTRIB，静默 5 秒后只重建一次 */
                 if (!g_building && now_ms() - acl_seen >= 5000) {
+                    char paths[64][4096];
+                    int n = live_acl_take_paths(paths, 64);
                     live_clear_acl();
                     acl_seen = 0;
-                    fprintf(stderr, "xuanlan: 检测到 ACL/属性变化，触发重建\n");
-                    start_build();
+                    if (n > 0) {
+                        fprintf(stderr, "xuanlan: 检测到 ACL/属性变化，子树增量更新 %d 个路径\n", n);
+                        unit_patch_acl_paths(paths, n);
+                    } else {
+                        fprintf(stderr, "xuanlan: 检测到 ACL/属性变化，无路径，触发重建\n");
+                        start_build();
+                    }
                 }
             }
         }

@@ -70,6 +70,8 @@ static struct {
     size_t qh, qt;
     int acl_dirty;
     uint64_t acl_events;
+    char *acl_paths[64];
+    int acl_path_n;
 } L;
 
 static uint64_t h64(const char *s) {
@@ -302,6 +304,21 @@ static void apply_one(const char *dir, const char *name, uint32_t mask) {
                   FAN_MODIFY | FAN_CLOSE_WRITE))) {
         __atomic_store_n(&L.acl_dirty, 1, __ATOMIC_RELAXED);
         __atomic_add_fetch(&L.acl_events, 1, __ATOMIC_RELAXED);
+        int dup = 0;
+        for (int i = 0; i < L.acl_path_n; i++)
+            if (!strcmp(L.acl_paths[i], path)) { dup = 1; break; }
+        if (!dup) {
+            if (L.acl_path_n < 64) {
+                char *cp = strdup(path);
+                if (cp) L.acl_paths[L.acl_path_n++] = cp;
+            } else {
+                free(L.acl_paths[0]);
+                memmove(&L.acl_paths[0], &L.acl_paths[1],
+                        sizeof(L.acl_paths[0]) * 63);
+                char *cp = strdup(path);
+                if (cp) L.acl_paths[63] = cp;
+            }
+        }
         return;
     }
 
@@ -521,6 +538,23 @@ size_t live_delta_count(size_t *dels) {
 int live_overflowed(void) { return __atomic_load_n(&L.fatal, __ATOMIC_RELAXED); }
 int live_acl_dirty(void) { return __atomic_load_n(&L.acl_dirty, __ATOMIC_RELAXED); }
 void live_clear_acl(void) { __atomic_store_n(&L.acl_dirty, 0, __ATOMIC_RELAXED); }
+int live_acl_take_paths(char paths[][4096], int max) {
+    int n = 0;
+    pthread_mutex_lock(&L.mu);
+    for (int i = 0; i < L.acl_path_n && n < max; i++) {
+        snprintf(paths[n], PATH_MAX, "%s", L.acl_paths[i]);
+        free(L.acl_paths[i]);
+        L.acl_paths[i] = NULL;
+        n++;
+    }
+    for (int i = n; i < L.acl_path_n; i++) {
+        free(L.acl_paths[i]);
+        L.acl_paths[i] = NULL;
+    }
+    L.acl_path_n = 0;
+    pthread_mutex_unlock(&L.mu);
+    return n;
+}
 uint64_t live_acl_events(void) { return __atomic_load_n(&L.acl_events, __ATOMIC_RELAXED); }
 
 int live_is_deleted(const char *path) {

@@ -221,6 +221,7 @@ int    live_overflowed(void);
 int    live_acl_dirty(void);
 void   live_clear_acl(void);
 uint64_t live_acl_events(void);
+int    live_acl_take_paths(char paths[][4096], int max);
 /* 增量事件回调：用于写单元级 delta（回调在 live 锁内，须快速返回） */
 typedef void (*xl_live_event_fn)(const char *path, int deleted, uint8_t flags,
                                  uint32_t size, uint32_t mtime, void *ud);
