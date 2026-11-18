@@ -337,4 +337,5 @@ chmod 600 → 子树增量更新 → 查询再次为空
 - 远程健康检查每 60 秒；不可达超过 TTL（默认 300 秒）后查询隐藏；
 - 管理端设置页增加远程挂载卡片，展示挂载/索引/离线状态；
 - 远程索引每 `XL_REMOTE_SYNC_SEC`（默认 900 秒）对账重建，仅重建远程卷；
-- 对账线程与全量构建互斥，`/api/status.remoteSync` 暴露 running/last。
+- 对账线程与全量构建互斥，`/api/status.remoteSync` 暴露 running/last；
+- 生命周期：对账时按 `mnt_fsname` 识别同一共享，换挂载点保留索引并标记重建；掉线/卸载删除对应 `remote-*.idx` 并移出卷数组。

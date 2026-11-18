@@ -142,6 +142,7 @@ typedef struct {
     int      remote;              /* 1 = CIFS/NFS/WebDAV 远程挂载，owner-only */
     uid_t    remote_uid;          /* /vol02/<uid>-...；未知为 (uid_t)-1 */
     char     remote_kind[16];
+    char     remote_source[512];
     uint64_t remote_last_ok;      /* 最近一次 stat 成功 */
     uint64_t remote_fail_since;   /* 首次不可达；TTL 后隐藏 */
     uint64_t records;
@@ -470,36 +471,98 @@ static int remote_type(const char *type) {
            !strcmp(type, "davfs");
 }
 
-/* 检测 fnOS 已挂载的远程目录；仅在 XL_REMOTE_INDEX=1 时加入索引。 */
-static int remote_add_mounts(void) {
-    if (!getenv("XL_REMOTE_INDEX") || !atoi(getenv("XL_REMOTE_INDEX"))) return 0;
+typedef struct {
+    char root[256];
+    char source[512];
+    char kind[16];
+    uid_t uid;
+} remote_mount;
+
+static int remote_scan_mounts(remote_mount *out, int max) {
     FILE *f = setmntent("/proc/mounts", "r");
     if (!f) return 0;
     struct mntent *m;
-    int added = 0;
-    while ((m = getmntent(f)) != NULL) {
+    int n = 0;
+    while ((m = getmntent(f)) != NULL && n < max) {
         if (!remote_type(m->mnt_type)) continue;
         if (strncmp(m->mnt_dir, "/vol02/", 7) != 0) continue;
-        if (g_nvols >= MAX_VOL) break;
-        int dup = 0;
-        for (int i = 0; i < g_nvols; i++)
-            if (!strcmp(g_vols[i].root, m->mnt_dir)) { dup = 1; break; }
-        if (dup) continue;
         struct stat st;
         if (stat(m->mnt_dir, &st) != 0 || !S_ISDIR(st.st_mode)) continue;
-        vol_t *v = &g_vols[g_nvols];
-        memset(v, 0, sizeof(*v));
-        snprintf(v->root, sizeof v->root, "%s", m->mnt_dir);
-        snprintf(v->remote_kind, sizeof v->remote_kind, "%s", m->mnt_type);
-        v->remote = 1;
-        v->remote_last_ok = (uint64_t)time(NULL);
-        v->remote_uid = (uid_t)-1;
+        remote_mount *r = &out[n++];
+        memset(r, 0, sizeof(*r));
+        snprintf(r->root, sizeof r->root, "%s", m->mnt_dir);
+        snprintf(r->source, sizeof r->source, "%s", m->mnt_fsname ? m->mnt_fsname : m->mnt_dir);
+        snprintf(r->kind, sizeof r->kind, "%s", m->mnt_type);
+        r->uid = (uid_t)-1;
         const char *base = strrchr(m->mnt_dir, '/');
         base = base ? base + 1 : m->mnt_dir;
-        char *end = NULL;
-        unsigned long owner = strtoul(base, &end, 10);
-        if (end && end != base && *end == '-') v->remote_uid = (uid_t)owner;
-        if (snprintf(v->file, sizeof(v->file), "%s/remote-%s.idx", g_idx_dir, base) >= (int)sizeof(v->file))
+        char *endp = NULL;
+        unsigned long owner = strtoul(base, &endp, 10);
+        if (endp && endp != base && *endp == '-') r->uid = (uid_t)owner;
+    }
+    endmntent(f);
+    return n;
+}
+
+/* 远程挂载生命周期：启动/周期对账时新增、迁移、清理。 */
+static int remote_reconcile_mounts(void) {
+    if (!getenv("XL_REMOTE_INDEX") || !atoi(getenv("XL_REMOTE_INDEX"))) return 0;
+    remote_mount ms[32];
+    int nm = remote_scan_mounts(ms, 32);
+    int claimed[32];
+    memset(claimed, 0, sizeof claimed);
+    int changed = 0;
+
+    pthread_rwlock_wrlock(&g_rw);
+    /* 已有远程卷：同 root 保留；同 source 换挂载点则迁移；否则删除 */
+    for (int i = g_nvols - 1; i >= g_nvols_local; i--) {
+        vol_t *v = &g_vols[i];
+        if (!v->remote) continue;
+        int match = -1;
+        for (int k = 0; k < nm; k++)
+            if (!claimed[k] && !strcmp(v->root, ms[k].root)) { match = k; break; }
+        if (match < 0)
+            for (int k = 0; k < nm; k++)
+                if (!claimed[k] && !strcmp(v->remote_source, ms[k].source)) { match = k; break; }
+        if (match >= 0) {
+            claimed[match] = 1;
+            if (strcmp(v->root, ms[match].root)) {
+                /* 同一共享换挂载点：保留索引文件，标记待重建 */
+                snprintf(v->root, sizeof v->root, "%s", ms[match].root);
+                v->ok = 0;
+                changed++;
+            }
+            snprintf(v->remote_source, sizeof v->remote_source, "%s", ms[match].source);
+            snprintf(v->remote_kind, sizeof v->remote_kind, "%s", ms[match].kind);
+            v->remote_uid = ms[match].uid;
+            v->remote_last_ok = (uint64_t)time(NULL);
+            v->remote_fail_since = 0;
+            continue;
+        }
+        /* 掉线/卸载：删除索引并移出卷数组 */
+        if (v->ok) { dir_index_free(v); snapshot_close(&v->sn); }
+        unlink(v->file);
+        fprintf(stderr, "xuanlan: 远程挂载移除 %s，清理索引\n", v->root);
+        memmove(&g_vols[i], &g_vols[i + 1], (size_t)(g_nvols - i - 1) * sizeof(g_vols[0]));
+        g_nvols--;
+        changed++;
+    }
+
+    /* 新挂载 */
+    for (int k = 0; k < nm; k++) {
+        if (claimed[k]) continue;
+        if (g_nvols >= MAX_VOL) break;
+        vol_t *v = &g_vols[g_nvols];
+        memset(v, 0, sizeof(*v));
+        snprintf(v->root, sizeof v->root, "%s", ms[k].root);
+        snprintf(v->remote_source, sizeof v->remote_source, "%s", ms[k].source);
+        snprintf(v->remote_kind, sizeof v->remote_kind, "%s", ms[k].kind);
+        v->remote = 1;
+        v->remote_uid = ms[k].uid;
+        v->remote_last_ok = (uint64_t)time(NULL);
+        const char *base = strrchr(ms[k].root, '/');
+        base = base ? base + 1 : ms[k].root;
+        if (snprintf(v->file, sizeof v->file, "%s/remote-%s.idx", g_idx_dir, base) >= (int)sizeof v->file)
             continue;
         if (snapshot_open(v->file, &v->sn) == 0) {
             v->ok = 1;
@@ -508,10 +571,11 @@ static int remote_add_mounts(void) {
             dir_index_build(v);
         }
         g_nvols++;
-        added++;
+        changed++;
+        fprintf(stderr, "xuanlan: 远程挂载加入 %s (%s)\n", v->root, v->remote_kind);
     }
-    endmntent(f);
-    return added;
+    pthread_rwlock_unlock(&g_rw);
+    return changed;
 }
 
 /* 返回该请求应读取的卷集合：shared 或一个/多个隔离单元。 */
@@ -1726,6 +1790,7 @@ static uint64_t g_remote_last_sync;
 
 static void *remote_sync_worker(void *arg) {
     (void)arg;
+    remote_reconcile_mounts();
     for (int i = 0; i < g_nvols && !g_stop; i++) {
         if (!g_vols[i].remote) continue;
         fprintf(stderr, "xuanlan: 远程索引对账开始 %s\n", g_vols[i].root);
@@ -1750,6 +1815,7 @@ static void remote_sync_tick(void) {
     if (!next) next = now + (uint64_t)sec;
     if (now < next) return;
     if (g_building || __atomic_load_n(&g_remote_running, __ATOMIC_RELAXED)) return;
+    remote_reconcile_mounts();
     int any = 0;
     for (int i = 0; i < g_nvols; i++) if (g_vols[i].remote) any = 1;
     if (!any) { next = now + (uint64_t)sec; return; }
@@ -5783,7 +5849,7 @@ int httpd_serve(const xl_svc_opts *o) {
         g_nvols++;
     }
     g_nvols_local = g_nvols;
-    remote_add_mounts();
+    remote_reconcile_mounts();
     if (!g_nvols) {
         fprintf(stderr, "xuanlan serve: 没有挂载点\n");
         return 2;
