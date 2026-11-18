@@ -234,8 +234,8 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
 - [x] 真机 fanotify → 队列 → 批量 delta → 重启恢复（docs/10）
 - [x] 实体 FPK 应用中心安装回归（FnOSF10 本机 profile 安装 0.10.0 通过）
 - [x] FPK 构建：`dist/xuanlan_0.10.1_amd64.fpk`
-- [ ] Gitea 推送 + tag `v0.10.1` + Release
-- [ ] GitHub 推送 + tag `v0.10.1` + Release
+- [x] Gitea 推送 + tag `v0.10.1` + Release
+- [x] GitHub 推送 + tag `v0.10.1` + Release
 
 ### 0.8.9–0.8.17 更新内容（历史）
 
