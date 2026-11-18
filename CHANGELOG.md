@@ -1,3 +1,9 @@
+## 0.10.2（公测）
+
+- App Center 干净卸载/重装回归：settings、scanmode、远程索引保留
+- 版本 0.10.2；FnOSF10 安装 running
+- 升级边界：`install-fpk` 覆盖安装仍返回 10236；带 wizard 的应用卸载需 App Center UI
+
 ## 0.10.1（公测）
 
 - 快照全文件 FNV-1a checksum：保存回写、打开校验，损坏拒绝打开；旧 checksum=0 兼容
