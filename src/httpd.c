@@ -3789,13 +3789,26 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
 }
 
 static int parse_num_list_body(const char *body, const char *key, unsigned int *out, int max) {
-    char arr[XL_SCAN_ARRAY_MAX][16];
-    if (!body || !strstr(body, key)) return -1;   /* 字段缺省 */
-    int n = json_str_array(body, key, (char *)arr, sizeof arr[0], XL_SCAN_ARRAY_MAX);
+    if (!body) return -1;
+    const char *k = strstr(body, key);
+    if (!k) return -1;
+    const char *p = strchr(k + strlen(key), ':');
+    if (!p) return -1;
+    p++;
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
+    if (*p != '[') return -1;
+    p++;
     int m = 0;
-    for (int i = 0; i < n && m < max; i++) {
-        int v = atoi(arr[i]);
+    while (*p && *p != ']' && m < max) {
+        while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' || *p == ',') p++;
+        if (*p == ']' || !*p) break;
+        if (*p == '"' || *p == '\'') p++;
+        char *e = NULL;
+        unsigned long v = strtoul(p, &e, 10);
+        if (e == p) { p++; continue; }
         if (v > 0) out[m++] = (unsigned int)v;
+        p = e;
+        if (*p == '"' || *p == '\'') p++;
     }
     return m;
 }
@@ -3893,7 +3906,7 @@ typedef struct {
 typedef struct {
     uid_t uid;
     char name[80];
-    char home[256];
+    char home[512];
     gid_t gids[32];
     int ngids;
 } cand_user;

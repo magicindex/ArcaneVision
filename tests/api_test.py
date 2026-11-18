@@ -95,6 +95,12 @@ try:
     st, body, _ = req("POST", "/api/scanmode", {"x-nas-uid": other_uid},
                       b'{"scanMode":"isolated"}')
     expect("scanmode non-admin", json.loads(body).get("ok"), False)
+    st, body, _ = req("POST", "/api/scanmode", base,
+                      b'{"scanMode":"hybrid","isolatedGroups":[1001]}')
+    st, body, _ = req("GET", "/api/scanmode", base)
+    expect("scanmode numeric arrays", json.loads(body).get("isolatedGroups"), [1001])
+    req("POST", "/api/scanmode", base,
+        b'{"scanMode":"shared","isolatedGroups":[]}')
     st, body, _ = req("GET", "/api/scanmode/candidates", base)
     cand = json.loads(body)
     expect("candidates dirs", isinstance(cand.get("directories"), list), True)

@@ -15,9 +15,9 @@ QueryRouter、epoch 切换、live + delta、损坏自愈与管理端配置。完
 - delta 压缩/容量告警、GC/回滚、损坏检测与自动重建
 - 管理端模式/分类组/状态/回滚；新增 CLI 单元运维命令
 - 已知边界：真机 fanotify 与实体 FPK 安装仍需回归；索引 v3 视图、远程挂载、P10 分析副本未实现
-- 安装包：`xuanlan_0.9.0_amd64.fpk`（1,021,949 字节）
-- MD5：`08e267d1fedb454d8fcf6a002fd74b91`
-- SHA-256：`23d99a484137b6b1ef0271b781944b8c0e799d2e06ebe87b1fde2f5679cb2f30`
+- 安装包：`xuanlan_0.9.0_amd64.fpk`（1,021,895 字节）
+- MD5：`5089601a1cb1827acc8d23553f628ca1`
+- SHA-256：`da7120936393fb3d57a10d6279020d5246563f2aa7f9a1871fd0dfcd5ce28bb6`
 - 下载：
   [GitHub](https://github.com/magicindex/ArcaneVision/releases/download/v0.9.0/xuanlan_0.9.0_amd64.fpk) ·
   [Gitea](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/download/v0.9.0/xuanlan_0.9.0_amd64.fpk)
