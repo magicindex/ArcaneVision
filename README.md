@@ -205,8 +205,8 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
 - [x] 版本号 0.9.0、README / CHANGELOG / RELEASE_NOTES
 - [ ] 真机 fanotify 与实体 FPK 安装回归（当前环境无 fanotify 权限）
 - [x] FPK 构建：`dist/xuanlan_0.9.0_amd64.fpk`
-- [x] Gitea 推送 + tag `v0.9.0`
-- [ ] GitHub 推送（当前环境到 github.com 超时）
+- [x] Gitea 推送 + tag `v0.9.0` + Release
+- [x] GitHub 推送 + tag `v0.9.0` + Release
 
 ### 0.8.9–0.8.17 更新内容（历史）
 
@@ -562,8 +562,11 @@ scripts/build-fpk.sh      打包装包
 - FPK：`dist/xuanlan_0.9.0_amd64.fpk`（1,011,138 字节）
 - MD5：`b724546fb28d9caf1abfee27d24a59ec`
 - SHA-256：`aa9c6e440fae0723a360c3061f1e0093508de51b88aa4c54db4604e9ca051437`
-- 发布页：[GitHub](https://github.com/magicindex/ArcaneVision/releases/tag/v0.9.0) ·
-  [Gitea](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.9.0)
+- 发布页：[GitHub Release](https://github.com/magicindex/ArcaneVision/releases/tag/v0.9.0) ·
+  [Gitea Release](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.9.0)
+- 安装包直链：
+  [GitHub](https://github.com/magicindex/ArcaneVision/releases/download/v0.9.0/xuanlan_0.9.0_amd64.fpk) ·
+  [Gitea](http://192.168.3.200:3000/attachments/a563d8f9-ba11-4c21-bb3f-fa45895fe068)
 
 > 0.9.0 是公测版本：核心检索、团队空间单元索引、增量/修复链路已接入并有自动化回归；
 > 真机 fanotify、实体 FPK 安装与远程挂载 provider 仍建议按“正在做 / 未完成”逐项验收。

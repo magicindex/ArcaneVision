@@ -18,6 +18,9 @@ QueryRouter、epoch 切换、live + delta、损坏自愈与管理端配置。完
 - 安装包：`xuanlan_0.9.0_amd64.fpk`（1,011,138 字节）
 - MD5：`b724546fb28d9caf1abfee27d24a59ec`
 - SHA-256：`aa9c6e440fae0723a360c3061f1e0093508de51b88aa4c54db4604e9ca051437`
+- 下载：
+  [GitHub](https://github.com/magicindex/ArcaneVision/releases/download/v0.9.0/xuanlan_0.9.0_amd64.fpk) ·
+  [Gitea](http://192.168.3.200:3000/attachments/a563d8f9-ba11-4c21-bb3f-fa45895fe068)
 
 ## 0.8.35
 
