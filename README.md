@@ -169,7 +169,8 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
   `/api/remote` 列出；设置 `XL_REMOTE_INDEX=1` 时纳入共享索引；
 - 远程卷按 `/vol02/<uid>-...` 做 **owner-only** 过滤，管理员可读；不进入隔离单元；
 - 远程健康检查每 60 秒；不可达超过 TTL（默认 300 秒）后隐藏旧索引；
-- 管理端设置页新增「远程挂载」卡片，展示路径/类型/owner/索引状态/离线状态。
+- 管理端设置页新增「远程挂载」卡片，展示路径/类型/owner/索引状态/离线状态；
+- 远程索引每 `XL_REMOTE_SYNC_SEC`（默认 900 秒）自动对账重建，只重建远程卷，不扫描本地共享。
 
 ### 0.10.0 已完成
 
@@ -596,9 +597,9 @@ scripts/build-fpk.sh      打包装包
 
 - 最新版本：**0.10.1（公测）**（2026-11-19）
 - 源码 tag：`v0.10.1`
-- FPK：`dist/xuanlan_0.10.1_amd64.fpk`（1,042,021 字节）
-- MD5：`7de3210bce5ca77ad235ce242a9bab9d`
-- SHA-256：`0be65a4e2aa5f661469784e9b34b727a3a4a060309c613e24beca24bcd5b9bee`
+- FPK：`dist/xuanlan_0.10.1_amd64.fpk`（1,043,522 字节）
+- MD5：`3798d2d4edbab7a0bc2bb9b6d28c6d71`
+- SHA-256：`b166a157d131d57e22131dbf0265caa12a79e982ea1e4a29a981a6e6db5ab223`
 - 发布页：[GitHub Release](https://github.com/magicindex/ArcaneVision/releases/tag/v0.10.1) ·
   [Gitea Release](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.10.1)
 - 安装包直链：

@@ -1721,6 +1721,51 @@ static uint64_t g_trend_bytes[XL_TREND_N], g_trend_repair[XL_TREND_N];
 static int g_trend_n, g_trend_pos;
 static pthread_mutex_t g_trend_mu = PTHREAD_MUTEX_INITIALIZER;
 
+static int g_remote_running;
+static uint64_t g_remote_last_sync;
+
+static void *remote_sync_worker(void *arg) {
+    (void)arg;
+    for (int i = 0; i < g_nvols && !g_stop; i++) {
+        if (!g_vols[i].remote) continue;
+        fprintf(stderr, "xuanlan: 远程索引对账开始 %s\n", g_vols[i].root);
+        if (build_one(i, 0) == 0)
+            fprintf(stderr, "xuanlan: 远程索引对账完成 %s (%llu 条)\n",
+                    g_vols[i].root, (unsigned long long)g_vols[i].records);
+        else
+            fprintf(stderr, "xuanlan: 远程索引对账失败 %s\n", g_vols[i].root);
+    }
+    g_remote_last_sync = (uint64_t)time(NULL);
+    __atomic_store_n(&g_remote_running, 0, __ATOMIC_RELAXED);
+    g_building = 0;
+    return NULL;
+}
+
+static void remote_sync_tick(void) {
+    static uint64_t next;
+    const char *es = getenv("XL_REMOTE_SYNC_SEC");
+    int sec = es ? atoi(es) : 900;
+    if (sec < 60) sec = 60;
+    uint64_t now = (uint64_t)time(NULL);
+    if (!next) next = now + (uint64_t)sec;
+    if (now < next) return;
+    if (g_building || __atomic_load_n(&g_remote_running, __ATOMIC_RELAXED)) return;
+    int any = 0;
+    for (int i = 0; i < g_nvols; i++) if (g_vols[i].remote) any = 1;
+    if (!any) { next = now + (uint64_t)sec; return; }
+    g_building = 1;
+    __atomic_store_n(&g_remote_running, 1, __ATOMIC_RELAXED);
+    pthread_t th;
+    if (pthread_create(&th, NULL, remote_sync_worker, NULL) != 0) {
+        g_building = 0;
+        __atomic_store_n(&g_remote_running, 0, __ATOMIC_RELAXED);
+        next = now + 60;
+        return;
+    }
+    pthread_detach(th);
+    next = now + (uint64_t)sec;
+}
+
 static void remote_health_tick(void) {
     static uint64_t last;
     uint64_t now = now_ms();
@@ -4656,6 +4701,9 @@ static void handle_status(sbuf *out) {
         trf[i] = g_trend_repair[idx];
     }
     pthread_mutex_unlock(&g_trend_mu);
+    sb_printf(out, ",\"remoteSync\":{\"running\":%s,\"last\":%llu}",
+              __atomic_load_n(&g_remote_running, __ATOMIC_RELAXED) ? "true" : "false",
+              (unsigned long long)g_remote_last_sync);
     sb_puts(out, ",\"trend\":{\"capacity\":[");
     for (int i = 0; i < tn; i++) sb_printf(out, "%s%llu", i ? "," : "", (unsigned long long)tb[i]);
     sb_puts(out, "],\"repairFailed\":[");
@@ -5829,6 +5877,7 @@ int httpd_serve(const xl_svc_opts *o) {
         }
         usb_tick();
         remote_health_tick();
+        remote_sync_tick();
         units_tick();
         {
             static uint64_t drop_seen;
