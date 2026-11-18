@@ -142,6 +142,8 @@ typedef struct {
     int      remote;              /* 1 = CIFS/NFS/WebDAV 远程挂载，owner-only */
     uid_t    remote_uid;          /* /vol02/<uid>-...；未知为 (uid_t)-1 */
     char     remote_kind[16];
+    uint64_t remote_last_ok;      /* 最近一次 stat 成功 */
+    uint64_t remote_fail_since;   /* 首次不可达；TTL 后隐藏 */
     uint64_t records;
     uint64_t built_at;
     uint64_t build_ms;
@@ -451,10 +453,15 @@ static void route_release(query_route_t *r) {
     r->nuc = 0;
 }
 
+static uint64_t g_remote_ttl = 300;
+
 static int remote_allows(int uid, int admin, const vol_t *v) {
     if (!v->remote) return 1;
     if (admin) return 1;
-    return v->remote_uid != (uid_t)-1 && (uid_t)uid == v->remote_uid;
+    if (v->remote_uid == (uid_t)-1 || (uid_t)uid != v->remote_uid) return 0;
+    if (v->remote_fail_since && time(NULL) - (time_t)v->remote_fail_since > (time_t)g_remote_ttl)
+        return 0;                  /* 掉线超过 TTL：隐藏旧索引 */
+    return 1;
 }
 
 static int remote_type(const char *type) {
@@ -485,6 +492,7 @@ static int remote_add_mounts(void) {
         snprintf(v->root, sizeof v->root, "%s", m->mnt_dir);
         snprintf(v->remote_kind, sizeof v->remote_kind, "%s", m->mnt_type);
         v->remote = 1;
+        v->remote_last_ok = (uint64_t)time(NULL);
         v->remote_uid = (uid_t)-1;
         const char *base = strrchr(m->mnt_dir, '/');
         base = base ? base + 1 : m->mnt_dir;
@@ -1712,6 +1720,25 @@ static uint64_t g_units_tick_at, g_units_alert_at;
 static uint64_t g_trend_bytes[XL_TREND_N], g_trend_repair[XL_TREND_N];
 static int g_trend_n, g_trend_pos;
 static pthread_mutex_t g_trend_mu = PTHREAD_MUTEX_INITIALIZER;
+
+static void remote_health_tick(void) {
+    static uint64_t last;
+    uint64_t now = now_ms();
+    if (now - last < 60000) return;
+    last = now;
+    for (int i = 0; i < g_nvols; i++) {
+        vol_t *v = &g_vols[i];
+        if (!v->remote) continue;
+        struct stat st;
+        if (stat(v->root, &st) == 0 && S_ISDIR(st.st_mode)) {
+            v->remote_last_ok = (uint64_t)time(NULL);
+            v->remote_fail_since = 0;
+        } else if (!v->remote_fail_since) {
+            v->remote_fail_since = (uint64_t)time(NULL);
+            fprintf(stderr, "xuanlan: 远程挂载不可达 %s\n", v->root);
+        }
+    }
+}
 
 static void units_tick(void) {
     uint64_t now = now_ms();
@@ -4456,9 +4483,12 @@ static void handle_remote(sbuf *out, int admin) {
         first = 0;
         sb_puts(out, "{\"root\":\""); sb_json(out, v->root, strlen(v->root));
         sb_puts(out, "\",\"kind\":\""); sb_json(out, v->remote_kind, strlen(v->remote_kind));
-        sb_printf(out, "\",\"uid\":%d,\"ok\":%s,\"records\":%llu,\"indexed\":true}",
+        sb_printf(out, "\",\"uid\":%d,\"ok\":%s,\"records\":%llu,\"indexed\":true,"
+                  "\"stale\":%s,\"lastOk\":%llu}",
                   v->remote_uid == (uid_t)-1 ? -1 : (int)v->remote_uid,
-                  v->ok ? "true" : "false", (unsigned long long)v->records);
+                  v->ok ? "true" : "false", (unsigned long long)v->records,
+                  v->remote_fail_since ? "true" : "false",
+                  (unsigned long long)v->remote_last_ok);
     }
     /* 未启用索引时也列出 fnOS 已挂载的远程目录，便于 UI/运维启用 */
     FILE *f = setmntent("/proc/mounts", "r");
@@ -5782,6 +5812,7 @@ int httpd_serve(const xl_svc_opts *o) {
             }
         }
         usb_tick();
+        remote_health_tick();
         units_tick();
         {
             static uint64_t drop_seen;

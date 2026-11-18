@@ -167,7 +167,9 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
 - `/api/status.live.aclEvents` / `aclDirty` 可观测；
 - **远程挂载 provider（MVP）**：检测 `/vol02` 下 CIFS/NFS/NFS4/WebDAV 挂载，
   `/api/remote` 列出；设置 `XL_REMOTE_INDEX=1` 时纳入共享索引；
-- 远程卷按 `/vol02/<uid>-...` 做 **owner-only** 过滤，管理员可读；不进入隔离单元。
+- 远程卷按 `/vol02/<uid>-...` 做 **owner-only** 过滤，管理员可读；不进入隔离单元；
+- 远程健康检查每 60 秒；不可达超过 TTL（默认 300 秒）后隐藏旧索引；
+- 管理端设置页新增「远程挂载」卡片，展示路径/类型/owner/索引状态/离线状态。
 
 ### 0.10.0 已完成
 
@@ -594,9 +596,9 @@ scripts/build-fpk.sh      打包装包
 
 - 最新版本：**0.10.1（公测）**（2026-11-19）
 - 源码 tag：`v0.10.1`
-- FPK：`dist/xuanlan_0.10.1_amd64.fpk`（1,040,299 字节）
-- MD5：`dda6812545372f18b13861dcc5813b5f`
-- SHA-256：`6ec43bc913a383bdaf80c02224eb5af7d8e8ad990b4791c3d641e7c056b48f01`
+- FPK：`dist/xuanlan_0.10.1_amd64.fpk`（1,041,428 字节）
+- MD5：`d91233eb5f09f333afc4c55a08a8a090`
+- SHA-256：`84f6b92b15b92ff0343c3641f5e2535f6ebf4dee072a1c47cea090f091462fa4`
 - 发布页：[GitHub Release](https://github.com/magicindex/ArcaneVision/releases/tag/v0.10.1) ·
   [Gitea Release](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.10.1)
 - 安装包直链：

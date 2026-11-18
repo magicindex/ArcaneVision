@@ -2616,6 +2616,10 @@
     '<button class="act" id="scanRefresh" type="button">重新检测</button> ' +
     '<button class="act" id="scanRollback" type="button">回滚到共享</button></div>' +
     '</div></section>' +
+    '<section class="scard"><h3>远程挂载</h3><div id="remoteList" class="scanlist">' +
+    '<div class="hint">正在检测远程挂载…</div></div>' +
+    '<div class="hint">检测 CIFS / NFS / WebDAV（/vol02）。索引默认关闭；设置 XL_REMOTE_INDEX=1 并重建后启用，仅 owner/管理员可检索。</div>' +
+    '</section>' +
     '<section class="scard"><h3>鼠标操作</h3>' +
     '<div class="row2"><div class="k">文件夹打开</div><select id="clickFolder">' +
     '<option value="single">单击</option><option value="double">双击</option></select></div>' +
@@ -2776,6 +2780,23 @@
       renderScanStatus();
     }).catch(() => {});
   }
+  function renderRemoteList(){
+    const box = setmask.querySelector('#remoteList');
+    if (!box) return;
+    fetch(API + 'remote').then(r => r.json()).then(d => {
+      if (!d || d.error) { box.innerHTML = '<div class="hint">' + esc(d && d.error || '无法读取远程挂载') + '</div>'; return; }
+      let h = '<div class="hint">索引：' + (d.enabled ? '已启用' : '未启用（XL_REMOTE_INDEX=1）') + '</div>';
+      const ms = d.mounts || [];
+      if (!ms.length) h += '<div class="hint">未检测到 /vol02 下的远程挂载</div>';
+      for (const m of ms) {
+        h += '<div class="scanrow"><div class="scanmain"><b>' + esc(m.root) + '</b>' +
+          '<span class="hint2">' + esc(m.kind) + ' · owner uid ' + esc(String(m.uid)) +
+          (m.indexed ? ' · 已索引 ' + (m.records || 0) + ' 条' : ' · 未索引') +
+          (m.stale ? ' · 离线' : '') + '</span></div></div>';
+      }
+      box.innerHTML = h;
+    }).catch(() => { box.innerHTML = '<div class="hint">无法读取远程挂载</div>'; });
+  }
   function renderSettings(){
     const oiSel = setmask.querySelector('#openIn');
     if (oiSel) oiSel.value = openIn;
@@ -2802,6 +2823,7 @@
       if (sm) sm.onchange = syncScan;
       syncScan();
       renderScanStatus();
+      renderRemoteList();
     }
     const box = setmask.querySelector('#assoc');
     box.className = 'agrid';
