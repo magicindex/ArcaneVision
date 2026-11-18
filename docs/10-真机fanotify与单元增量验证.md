@@ -415,3 +415,13 @@ chmod 600 → 子树增量更新 → 查询再次为空
 - `POST /api/remote/acl` 写入独立 `remote_acl.json`，不进入本地 settings/scope；
 - 只影响远程卷，本地检索与本地 ACL 完全独立；
 - 空列表表示仅 owner/管理员。
+
+
+## 24. CIFS 真实 ACL：smbcacls 通道（0.10.3）
+
+- 完整卸载/重挂载后 `getcifsacl` 仍 EPERM、`getfattr` ENOTSUP；
+- 改用 `smbcacls -A cifs.cred` 直接查询服务端 ACL，成功返回 OWNER/ACL；
+- 服务使用 `/vol1/@appconf/xuanlan/cifs.cred`（root 600）认证；
+- 解析 ACE 用户名/组/Everyone，按读权限/继承评估；
+- 真机验证：给 Everyone 增加 READ 后 uid1001 命中，恢复后 uid1001 为空；uid1000 owner 始终可见；
+- 远程卷现在按真实服务端 ACL 过滤，不再仅 owner-only。

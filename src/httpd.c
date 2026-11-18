@@ -518,9 +518,17 @@ static void remote_acl_config(vol_t *v) {
     snprintf(v->remote_acl_reason, sizeof v->remote_acl_reason,
              "owner-only fallback");
     if (!strcmp(v->remote_kind, "cifs") || !strcmp(v->remote_kind, "smb3")) {
-        snprintf(v->remote_acl, sizeof v->remote_acl, "cifs");
-        snprintf(v->remote_acl_reason, sizeof v->remote_acl_reason,
-                 "CIFS cifsacl; getcifsacl failure falls back to owner-only");
+        const char *cred = getenv("XL_CIFS_CRED");
+        if (!cred || !*cred) cred = "/vol1/@appconf/xuanlan/cifs.cred";
+        if (access(cred, R_OK) == 0) {
+            snprintf(v->remote_acl, sizeof v->remote_acl, "cifs-smbcacls");
+            snprintf(v->remote_acl_reason, sizeof v->remote_acl_reason,
+                     "CIFS server ACL via smbcacls credentials");
+        } else {
+            snprintf(v->remote_acl, sizeof v->remote_acl, "cifs");
+            snprintf(v->remote_acl_reason, sizeof v->remote_acl_reason,
+                     "CIFS cifsacl; no smbcacls credentials; owner-only fallback");
+        }
     } else if (!strcmp(v->remote_kind, "nfs") || !strcmp(v->remote_kind, "nfs4")) {
         if (access("/usr/bin/nfs4_getfacl", X_OK) == 0) {
             snprintf(v->remote_acl, sizeof v->remote_acl, "nfs4");
@@ -581,7 +589,8 @@ static int remote_volume_allows(int uid, int admin, const vol_t *v) {
     if (v->remote_fail_since && time(NULL) - (time_t)v->remote_fail_since > (time_t)g_remote_ttl)
         return 0;
     if (remote_uid_in_config(v, uid)) return 1;
-    if (!strcmp(v->remote_acl, "posix") || !strcmp(v->remote_acl, "nfs4")) return 1;
+    if (!strcmp(v->remote_acl, "posix") || !strcmp(v->remote_acl, "nfs4") ||
+        !strcmp(v->remote_acl, "cifs-smbcacls")) return 1;
     return v->remote_uid != (uid_t)-1 && (uid_t)uid == v->remote_uid;
 }
 
@@ -631,6 +640,130 @@ static int cifs_name_matches(const char *name, const char *user, gid_t *gids, in
     struct group *gr = getgrnam(n);
     if (gr) for (int i = 0; i < ngids; i++) if (gids[i] == gr->gr_gid) return 1;
     return 0;
+}
+
+typedef struct {
+    char path[8192];
+    uid_t uid;
+    int allow;
+    time_t at;
+} cifs_smb_cache;
+static cifs_smb_cache g_cifs_smb_cache[64];
+static pthread_mutex_t g_cifs_smb_mu = PTHREAD_MUTEX_INITIALIZER;
+
+static int cifs_smb_run(const char *share, const char *rel, const char *cred,
+                        char *out, size_t cap) {
+    int pfd[2];
+    if (pipe(pfd) != 0) return -1;
+    pid_t pid = fork();
+    if (pid < 0) { close(pfd[0]); close(pfd[1]); return -1; }
+    if (pid == 0) {
+        close(pfd[0]);
+        dup2(pfd[1], STDOUT_FILENO);
+        dup2(pfd[1], STDERR_FILENO);
+        close(pfd[1]);
+        execlp("smbcacls", "smbcacls", share, rel, "-A", cred, (char *)NULL);
+        _exit(127);
+    }
+    close(pfd[1]);
+    size_t n = 0;
+    ssize_t r;
+    while ((r = read(pfd[0], out + n, cap - 1 - n)) > 0) {
+        n += (size_t)r;
+        if (n + 1 >= cap) break;
+    }
+    close(pfd[0]);
+    int st = 0;
+    waitpid(pid, &st, 0);
+    out[n] = 0;
+    return (WIFEXITED(st) && WEXITSTATUS(st) == 0) ? 0 : -1;
+}
+
+static int smb_name_matches(const char *name, const char *user,
+                            gid_t *gids, int ngids) {
+    if (!name || !*name) return 0;
+    if (!strcmp(name, "Everyone") || !strcmp(name, "WORLD")) return 1;
+    const char *n = strrchr(name, '\\');
+    n = n ? n + 1 : name;
+    if (!strcmp(n, user)) return 1;
+    struct group *gr = getgrnam(n);
+    if (gr) for (int i = 0; i < ngids; i++) if (gids[i] == gr->gr_gid) return 1;
+    return 0;
+}
+
+static int smb_perm_read(const char *perm, int is_dir) {
+    if (strstr(perm, "FULL") || strstr(perm, "READ")) return 1;
+    char *end = NULL;
+    unsigned long mask = strtoul(perm, &end, 0);
+    if (end == perm) return 0;
+    unsigned long need = is_dir ? (0x1u | 0x20u) : 0x1u;
+    return (mask & need) != 0;
+}
+
+static int cifs_smbcacls_allows(int uid, const char *path, const struct stat *st,
+                                const vol_t *v) {
+    const char *cred = getenv("XL_CIFS_CRED");
+    if (!cred || !*cred) cred = "/vol1/@appconf/xuanlan/cifs.cred";
+    if (access(cred, R_OK) != 0) return -1;
+    struct passwd *pw = getpwuid((uid_t)uid);
+    if (!pw) return -1;
+    gid_t gids[64];
+    int ngids = 64;
+    if (getgrouplist(pw->pw_name, pw->pw_gid, gids, &ngids) < 0) ngids = 0;
+
+    pthread_mutex_lock(&g_cifs_smb_mu);
+    for (int i = 0; i < 64; i++) {
+        cifs_smb_cache *c = &g_cifs_smb_cache[i];
+        if (c->path[0] && c->uid == (uid_t)uid && !strcmp(c->path, path) &&
+            time(NULL) - c->at < 60) {
+            int x = c->allow;
+            pthread_mutex_unlock(&g_cifs_smb_mu);
+            return x;
+        }
+    }
+    pthread_mutex_unlock(&g_cifs_smb_mu);
+
+    size_t rl = strlen(v->root);
+    const char *rel = path + rl;
+    if (!*rel) rel = "/";
+    char out[32768];
+    if (cifs_smb_run(v->remote_source, rel, cred, out, sizeof out) != 0) return -1;
+    int saw = 0, allow = 0;
+    char *line = out;
+    while (line && *line) {
+        char *nl = strchr(line, '\n');
+        if (nl) *nl = 0;
+        if (!strncmp(line, "OWNER:", 6)) {
+            if (smb_name_matches(line + 6, pw->pw_name, gids, ngids)) { allow = 1; saw = 1; }
+        } else if (!strncmp(line, "ACL:", 4)) {
+            char *name = line + 4;
+            char *sep = strchr(name, ':');
+            if (sep) {
+                *sep++ = 0;
+                char *slash = strchr(sep, '/');
+                if (!slash) { line = nl ? nl + 1 : NULL; continue; }
+                *slash++ = 0;
+                char *perm = strchr(slash, '/');
+                if (perm) perm++;
+                int is_deny = !strncmp(sep, "DENIED", 6);
+                if (smb_name_matches(name, pw->pw_name, gids, ngids) &&
+                    perm && smb_perm_read(perm, st && S_ISDIR(st->st_mode))) {
+                    saw = 1;
+                    if (is_deny) { allow = 0; break; }
+                    allow = 1;
+                }
+            }
+        }
+        line = nl ? nl + 1 : NULL;
+    }
+    if (!saw) return -1;
+    pthread_mutex_lock(&g_cifs_smb_mu);
+    int slot = (int)((unsigned)uid + (unsigned)strlen(path)) % 64;
+    cifs_smb_cache *c = &g_cifs_smb_cache[slot];
+    snprintf(c->path, sizeof c->path, "%s", path);
+    c->uid = (uid_t)uid; c->allow = allow; c->at = time(NULL);
+    pthread_mutex_unlock(&g_cifs_smb_mu);
+    return allow;
 }
 
 static int cifs_acl_allows(int uid, const char *path, const struct stat *st) {
@@ -701,7 +834,11 @@ static int remote_path_allows(int uid, int admin, const char *path,
         if (v->remote_uid != (uid_t)-1 && (uid_t)uid == v->remote_uid) return 1;
         return perm_mode_readable((uid_t)uid, path, st);
     }
-    if (!strcmp(v->remote_acl, "cifs")) {
+    if (!strcmp(v->remote_acl, "cifs-smbcacls")) {
+        int r = cifs_smbcacls_allows(uid, path, st, v);
+        if (r >= 0) return r;
+    }
+    if (!strcmp(v->remote_acl, "cifs") || !strcmp(v->remote_acl, "cifs-smbcacls")) {
         int r = cifs_acl_allows(uid, path, st);
         if (r >= 0) return r;
     }
