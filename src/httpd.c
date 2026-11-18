@@ -143,6 +143,10 @@ typedef struct {
     uid_t    remote_uid;          /* /vol02/<uid>-...；未知为 (uid_t)-1 */
     char     remote_kind[16];
     char     remote_source[512];
+    char     remote_acl[16];
+    char     remote_acl_reason[160];
+    uid_t    remote_acluids[64];
+    int      remote_nacluids;
     uint64_t remote_last_ok;      /* 最近一次 stat 成功 */
     uint64_t remote_fail_since;   /* 首次不可达；TTL 后隐藏 */
     uint64_t records;
@@ -456,13 +460,90 @@ static void route_release(query_route_t *r) {
 
 static uint64_t g_remote_ttl = 300;
 
-static int remote_allows(int uid, int admin, const vol_t *v) {
+static void remote_acl_config(vol_t *v) {
+    snprintf(v->remote_acl, sizeof v->remote_acl, "owner");
+    snprintf(v->remote_acl_reason, sizeof v->remote_acl_reason,
+             "owner-only fallback");
+    if (!strcmp(v->remote_kind, "cifs") || !strcmp(v->remote_kind, "smb3")) {
+        snprintf(v->remote_acl, sizeof v->remote_acl, "cifs");
+        snprintf(v->remote_acl_reason, sizeof v->remote_acl_reason,
+                 "CIFS forceuid/0777; cifsacl not mounted; owner-only fallback");
+    } else if (!strcmp(v->remote_kind, "nfs") || !strcmp(v->remote_kind, "nfs4")) {
+        if (access("/usr/bin/nfs4_getfacl", X_OK) == 0) {
+            snprintf(v->remote_acl, sizeof v->remote_acl, "nfs4");
+            snprintf(v->remote_acl_reason, sizeof v->remote_acl_reason, "NFSv4 ACL tool");
+        } else {
+            snprintf(v->remote_acl, sizeof v->remote_acl, "posix");
+            snprintf(v->remote_acl_reason, sizeof v->remote_acl_reason, "NFS POSIX mode");
+        }
+    } else if (!strcmp(v->remote_kind, "davfs")) {
+        snprintf(v->remote_acl, sizeof v->remote_acl, "owner");
+        snprintf(v->remote_acl_reason, sizeof v->remote_acl_reason,
+                 "WebDAV POSIX mode forceuid; owner-only fallback");
+    }
+
+    /* 可选显式 ACL 映射，用于 CIFS/WebDAV 服务端 ACL 不可见时按用户授权。 */
+    const char *cp = getenv("XL_REMOTE_ACL");
+    if (!cp || !*cp) cp = "/vol1/@appconf/xuanlan/remote_acl.json";
+    FILE *f = fopen(cp, "r");
+    if (!f) return;
+    char buf[65536];
+    size_t n = fread(buf, 1, sizeof buf - 1, f);
+    fclose(f);
+    buf[n] = 0;
+    char *pos = strstr(buf, v->root);
+    if (!pos) return;
+    char *u = strstr(pos, "\"users\"");
+    if (!u) return;
+    u = strchr(u, '[');
+    if (!u) return;
+    u++;
+    int count = 0;
+    while (*u && *u != ']' && count < 64) {
+        while (*u == ' ' || *u == '\t' || *u == ',' || *u == '\n' || *u == '\r') u++;
+        if (*u == ']' || !*u) break;
+        char *end = NULL;
+        unsigned long val = strtoul(u, &end, 10);
+        if (end == u) { u++; continue; }
+        v->remote_acluids[count++] = (uid_t)val;
+        u = end;
+    }
+    if (count > 0) {
+        v->remote_nacluids = count;
+        snprintf(v->remote_acl, sizeof v->remote_acl, "config");
+        snprintf(v->remote_acl_reason, sizeof v->remote_acl_reason,
+                 "remote_acl.json per-user allowlist");
+    }
+}
+
+static int remote_uid_in_config(const vol_t *v, int uid) {
+    for (int i = 0; i < v->remote_nacluids; i++)
+        if ((int)v->remote_acluids[i] == uid) return 1;
+    return 0;
+}
+
+static int remote_volume_allows(int uid, int admin, const vol_t *v) {
     if (!v->remote) return 1;
     if (admin) return 1;
-    if (v->remote_uid == (uid_t)-1 || (uid_t)uid != v->remote_uid) return 0;
     if (v->remote_fail_since && time(NULL) - (time_t)v->remote_fail_since > (time_t)g_remote_ttl)
-        return 0;                  /* 掉线超过 TTL：隐藏旧索引 */
-    return 1;
+        return 0;
+    if (remote_uid_in_config(v, uid)) return 1;
+    if (!strcmp(v->remote_acl, "posix") || !strcmp(v->remote_acl, "nfs4")) return 1;
+    return v->remote_uid != (uid_t)-1 && (uid_t)uid == v->remote_uid;
+}
+
+static int remote_path_allows(int uid, int admin, const char *path,
+                              const struct stat *st, const vol_t *v) {
+    if (!v->remote) return 1;
+    if (admin) return 1;
+    if (v->remote_fail_since && time(NULL) - (time_t)v->remote_fail_since > (time_t)g_remote_ttl)
+        return 0;
+    if (remote_uid_in_config(v, uid)) return 1;
+    if (!strcmp(v->remote_acl, "posix") && st) {
+        if (v->remote_uid != (uid_t)-1 && (uid_t)uid == v->remote_uid) return 1;
+        return perm_mode_readable((uid_t)uid, path, st);
+    }
+    return v->remote_uid != (uid_t)-1 && (uid_t)uid == v->remote_uid;
 }
 
 static int remote_type(const char *type) {
@@ -535,6 +616,7 @@ static int remote_reconcile_mounts(void) {
             snprintf(v->remote_source, sizeof v->remote_source, "%s", ms[match].source);
             snprintf(v->remote_kind, sizeof v->remote_kind, "%s", ms[match].kind);
             v->remote_uid = ms[match].uid;
+            remote_acl_config(v);
             v->remote_last_ok = (uint64_t)time(NULL);
             v->remote_fail_since = 0;
             continue;
@@ -559,6 +641,7 @@ static int remote_reconcile_mounts(void) {
         snprintf(v->remote_kind, sizeof v->remote_kind, "%s", ms[k].kind);
         v->remote = 1;
         v->remote_uid = ms[k].uid;
+        remote_acl_config(v);
         v->remote_last_ok = (uint64_t)time(NULL);
         const char *base = strrchr(ms[k].root, '/');
         base = base ? base + 1 : ms[k].root;
@@ -596,7 +679,7 @@ static void route_for_uid(int uid, int admin, query_route_t *r) {
         if (units[k].kind == XL_UNIT_SHARED) {
             r->shared = 1;
             for (int i = 0; i < g_nvols && r->n < (int)(sizeof r->vols / sizeof r->vols[0]); i++)
-                if (g_vols[i].ok && remote_allows(uid, admin, &g_vols[i]))
+                if (g_vols[i].ok && remote_volume_allows(uid, admin, &g_vols[i]))
                     r->vols[r->n++] = &g_vols[i];
             continue;
         }
@@ -3023,7 +3106,7 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
             if (!sl) continue;
             if (sl == pd) sl[1] = 0; else *sl = 0;
             vol_t *rv = remote_vol_for_path(path);
-            remote_ok = rv && remote_allows(uid, admin, rv);
+            remote_ok = rv && remote_volume_allows(uid, admin, rv);
             if (!remote_ok) {
                 if (!admin && system_path(path)) continue;
                 if (!perm_cache_check(pcache, pd, (uid_t)uid)) continue;
@@ -3036,6 +3119,10 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
             /* 索引可能短时间保留已删除/已卸载路径；不要把它们当搜索结果返回 */
             if (!have) continue;
             if (is_dir && !S_ISDIR(lst.st_mode)) continue;
+            if (remote_ok) {
+                vol_t *rv = remote_vol_for_path(path);
+                if (rv && !remote_path_allows(uid, admin, path, &lst, rv)) continue;
+            }
             if (!is_dir && uid >= 0 && !remote_ok && !perm_mode_readable((uid_t)uid, path, &lst)) continue;
             if (!is_dir) { size = (uint32_t)lst.st_size; mtime = (uint32_t)lst.st_mtime; }
         }
@@ -4611,11 +4698,12 @@ static void handle_remote(sbuf *out, int admin) {
         sb_puts(out, "{\"root\":\""); sb_json(out, v->root, strlen(v->root));
         sb_puts(out, "\",\"kind\":\""); sb_json(out, v->remote_kind, strlen(v->remote_kind));
         sb_printf(out, "\",\"uid\":%d,\"ok\":%s,\"records\":%llu,\"indexed\":true,"
-                  "\"stale\":%s,\"lastOk\":%llu}",
+                  "\"stale\":%s,\"lastOk\":%llu,\"acl\":\"%s\",\"aclReason\":\"%s\"}",
                   v->remote_uid == (uid_t)-1 ? -1 : (int)v->remote_uid,
                   v->ok ? "true" : "false", (unsigned long long)v->records,
                   v->remote_fail_since ? "true" : "false",
-                  (unsigned long long)v->remote_last_ok);
+                  (unsigned long long)v->remote_last_ok,
+                  v->remote_acl, v->remote_acl_reason);
     }
     /* 未启用索引时也列出 fnOS 已挂载的远程目录，便于 UI/运维启用 */
     FILE *f = setmntent("/proc/mounts", "r");

@@ -2792,7 +2792,9 @@
         h += '<div class="scanrow"><div class="scanmain"><b>' + esc(m.root) + '</b>' +
           '<span class="hint2">' + esc(m.kind) + ' · owner uid ' + esc(String(m.uid)) +
           (m.indexed ? ' · 已索引 ' + (m.records || 0) + ' 条' : ' · 未索引') +
-          (m.stale ? ' · 离线' : '') + '</span></div></div>';
+          (m.stale ? ' · 离线' : '') +
+          (m.acl ? ' · ACL ' + m.acl : '') +
+          (m.aclReason ? '（' + m.aclReason + '）' : '') + '</span></div></div>';
       }
       box.innerHTML = h;
     }).catch(() => { box.innerHTML = '<div class="hint">无法读取远程挂载</div>'; });

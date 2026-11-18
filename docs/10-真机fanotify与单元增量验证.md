@@ -339,3 +339,17 @@ chmod 600 → 子树增量更新 → 查询再次为空
 - 远程索引每 `XL_REMOTE_SYNC_SEC`（默认 900 秒）对账重建，仅重建远程卷；
 - 对账线程与全量构建互斥，`/api/status.remoteSync` 暴露 running/last；
 - 生命周期：对账时按 `mnt_fsname` 识别同一共享，换挂载点保留索引并标记重建；掉线/卸载删除对应 `remote-*.idx` 并移出卷数组。
+
+
+## 16. 远程 ACL 适配器（0.10.1）
+
+- CIFS/SMB3：adapter `cifs`；当前挂载 `forceuid/0777` 且未启用 `cifsacl`，无法读取服务端 ACL，
+  安全回退 owner-only，并在 `/api/remote.aclReason` 说明；
+- NFS/NFS4：有 `nfs4_getfacl` 时 adapter `nfs4`，否则 `posix`，按 POSIX mode 判断；
+- WebDAV：adapter `owner`/`posix`；
+- 显式映射：`/vol1/@appconf/xuanlan/remote_acl.json`
+  ```json
+  {"mounts":[{"root":"/vol02/1000-0-aea4b1f9","users":[1000,1001]}]}
+  ```
+  adapter 变为 `config`，只有 users 列表 + owner/管理员可见；
+- 真机临时验证：CIFS 挂载配置 users=[1000,1001]，uid1001 命中、uid1002 为空。
