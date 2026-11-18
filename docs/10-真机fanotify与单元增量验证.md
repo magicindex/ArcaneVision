@@ -137,3 +137,83 @@ fnos-cli app install-fpk xuanlan_0.9.0_amd64.fpk --volume-id 1 --dry-run --yes
 - 需在 App Center UI 中做一次“卸载/重装”或清理异常安装任务后再验证；
 - 在 App Center 安装任务恢复前，0.9.0 继续以已有安装 + 手动 FPK payload 升级方式运行；
 - 该问题不改变 FPK 内容；应用中心安装回归仍为 0.10 待办。
+
+## 9. FPK 应用中心安装回归（2026-11-19 复测通过）
+
+前一节 10236 的真实原因是：`fnos-cli` profile 实际连接的是 **FnOSF6 / 192.168.3.202**，
+而不是当前机器 **FnOSF10 / 192.168.3.201**。之前所有 App Center 安装任务都发到了错误主机。
+
+### 9.1 切换本机 profile
+
+新建并通过设备授权登录 `fnosf10`：
+
+```text
+host     = 192.168.3.201
+hostName = FnOSF10
+uid      = 1000
+admin    = true
+```
+
+验证：
+
+```bash
+fnos-cli --profile fnosf10 system host-name
+# FnOSF10
+```
+
+### 9.2 清理异常安装状态
+
+- 停止本机 `xuanlan.service`；
+- 删除本机 App Center 中 xuanlan 记录及关联行；
+- 移走旧 `/var/apps/xuanlan` 与 `/vol1/@appcenter/xuanlan`；
+- 删除旧 systemd unit；
+- 保留 `/vol1/@appdata/xuanlan` 索引数据；
+- 清理残留应用用户/组，避免 `APP_INSTALL_FAILED_USER_ALREADY_EXISTS`。
+
+### 9.3 安装结果
+
+```bash
+fnos-cli --profile fnosf10 app install-fpk \
+  xuanlan_0.9.0_amd64.fpk \
+  --volume-id 1 \
+  --custom-parameters '[{"key":"wizard_service_port","value":"8971"}]' \
+  --yes
+```
+
+返回：
+
+```text
+Started install task ... for xuanlan 0.9.0
+```
+
+状态轮询：
+
+```text
+starting → running
+```
+
+最终：
+
+```text
+appName = xuanlan
+version = 0.9.0
+status  = running
+服务    = active
+```
+
+FPK manifest：
+
+```text
+version  = 0.9.0
+checksum = e012cd737c3d3a578c13ce75142fd70c
+```
+
+### 9.4 安装后验证
+
+- `/api/status`：`ready`、`version=0.9.0`、`scanMode=shared`；
+- `/api/scanmode/candidates`：正常返回 200；
+- `/vol1/@appdata/xuanlan/settings.json`、`scanmode.json` 保留；
+- 索引数据未清空；
+- App Center 显示 0.9.0 / running。
+
+结论：**FnOSF10 本机 FPK 应用中心安装通过**。
