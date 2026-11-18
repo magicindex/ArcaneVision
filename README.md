@@ -140,9 +140,8 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
 
 ## 现在是什么状态
 
-当前版本 **0.10.0（公测）**，更新记录见 [CHANGELOG.md](CHANGELOG.md)，发布说明见
-[RELEASE_NOTES.md](RELEASE_NOTES.md)。0.9.0 完成团队空间按权限索引；0.10.0 完成
-fanotify ACL 变更自愈、事件队列压力防护、修复退避，并在 FnOSF10 完成 FPK 应用中心安装回归。
+当前版本 **0.10.1（公测）**，更新记录见 [CHANGELOG.md](CHANGELOG.md)，发布说明见
+[RELEASE_NOTES.md](RELEASE_NOTES.md)。0.9.0 完成团队空间按权限索引；0.10.1 完成快照 checksum 与趋势采样；0.10.0 完成 fanotify ACL 变更自愈、事件队列压力防护、修复退避，并在 FnOSF10 完成 FPK 应用中心安装回归。
 
 ### 方向
 
@@ -155,6 +154,14 @@ fanotify ACL 变更自愈、事件队列压力防护、修复退避，并在 FnO
 4. **可运维**：单元索引有 epoch 原子切换、增量 delta、损坏检测/自动重建、容量告警、
    `.trash` 回收与一键回滚。
 5. **不牺牲检索性能**：共享索引仍是 mmap + trigram；单元索引只读 mmap，增量走 live + delta。
+
+### 0.10.1 已完成
+
+- 快照全文件 FNV-1a checksum：保存回写、打开校验，损坏立即拒绝；
+- 容量/修复趋势采样：`/api/status.trend`，最近 60 点，管理端趋势条；
+- 修复失败按单元指数退避；
+- FnOSF10 本机 FPK 应用中心安装 0.10.1 完成；
+- 快照 checksum 对旧 checksum=0 快照保持兼容。
 
 ### 0.10.0 已完成
 
@@ -223,12 +230,12 @@ fanotify ACL 变更自愈、事件队列压力防护、修复退避，并在 FnO
 - [x] 编译 + `smoke` / `api` / `scanmode` / `route` / `unitbuild` / `epoch` /
       `unitdelta` / `group-intersection` / `units-admin` / `repair` / `ui` 回归
 - [x] docs/09 §8 标注为未来设计，与当前实现对齐
-- [x] 版本号 0.10.0、README / CHANGELOG / RELEASE_NOTES
+- [x] 版本号 0.10.1、README / CHANGELOG / RELEASE_NOTES
 - [x] 真机 fanotify → 队列 → 批量 delta → 重启恢复（docs/10）
 - [x] 实体 FPK 应用中心安装回归（FnOSF10 本机 profile 安装 0.10.0 通过）
-- [x] FPK 构建：`dist/xuanlan_0.10.0_amd64.fpk`
-- [x] Gitea 推送 + tag `v0.10.0` + Release
-- [x] GitHub 推送 + tag `v0.10.0` + Release
+- [x] FPK 构建：`dist/xuanlan_0.10.1_amd64.fpk`
+- [ ] Gitea 推送 + tag `v0.10.1` + Release
+- [ ] GitHub 推送 + tag `v0.10.1` + Release
 
 ### 0.8.9–0.8.17 更新内容（历史）
 
@@ -579,19 +586,19 @@ scripts/build-fpk.sh      打包装包
 
 ## 版本与安装包
 
-- 最新版本：**0.10.0（公测）**（2026-11-19）
-- 源码 tag：`v0.10.0`
-- FPK：`dist/xuanlan_0.10.0_amd64.fpk`（1,026,888 字节）
-- MD5：`a31c49dafe06c1eea6068b169ea2c15d`
-- SHA-256：`53daa3004be390964e0e09f3f920bbc3cfe3d2624e92523b2bcede8d3a1a4da4`
-- 发布页：[GitHub Release](https://github.com/magicindex/ArcaneVision/releases/tag/v0.10.0) ·
-  [Gitea Release](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.10.0)
+- 最新版本：**0.10.1（公测）**（2026-11-19）
+- 源码 tag：`v0.10.1`
+- FPK：`dist/xuanlan_0.10.1_amd64.fpk`（1,028,405 字节）
+- MD5：`5af2f6c868306046c274279c9adb7b17`
+- SHA-256：`8728ee194db334d40f82809dfa0e189f63aeaa2a3e2f17201328f2e333883d24`
+- 发布页：[GitHub Release](https://github.com/magicindex/ArcaneVision/releases/tag/v0.10.1) ·
+  [Gitea Release](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.10.1)
 - 安装包直链：
-  [GitHub](https://github.com/magicindex/ArcaneVision/releases/download/v0.10.0/xuanlan_0.10.0_amd64.fpk) ·
-  [Gitea](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/download/v0.10.0/xuanlan_0.10.0_amd64.fpk)
+  [GitHub](https://github.com/magicindex/ArcaneVision/releases/download/v0.10.1/xuanlan_0.10.1_amd64.fpk) ·
+  [Gitea](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/download/v0.10.1/xuanlan_0.10.1_amd64.fpk)
 
-> 0.10.0 已完成 FnOSF10 本机应用中心安装；剩余 checksum、子树级 ACL 重建、趋势图、
-> 远程挂载 provider 仍在计划中。
+> 0.10.1 增加快照 checksum、容量/趋势采样和修复退避；已在 FnOSF10 本机完成安装回归。
+> 子树级 ACL 重建、远程挂载 provider 仍在后续计划。
 
 ## 路线图
 

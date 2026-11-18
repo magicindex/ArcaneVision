@@ -1,3 +1,11 @@
+## 0.10.1（公测）
+
+- 快照全文件 FNV-1a checksum：保存回写、打开校验，损坏拒绝打开；旧 checksum=0 兼容
+- `/api/status.trend` 容量/修复失败最近 60 点采样；管理端趋势条
+- 修复失败按单元指数退避、成功后清除
+- FnOSF10 本机 FPK 应用中心安装 0.10.1 回归通过
+- 已知边界：子树级 ACL 重建、远程挂载 provider 仍未完成
+
 ## 0.10.0（公测）
 
 - fanotify `FAN_ATTRIB`：ACL/xattr/chmod/chown 变化标脏，静默 5 秒后只重建一次
