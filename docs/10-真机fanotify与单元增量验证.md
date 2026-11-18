@@ -390,3 +390,12 @@ chmod 600 → 子树增量更新 → 查询再次为空
 - 开启远程后本地搜索 `xuanlan` 仍为 21 条，首条与开启前一致；
 - 远程 CIFS ACL 降级时 1000 命中 4 条，1001 命中 0 条；
 - 本地结果不因远程 ACL 失败而消失或报错。
+
+
+## 21. 远程索引容量/孤立索引清理（0.10.3）
+
+- `/api/remote` 增加 totalMounts/totalRecords/totalBytes 及每卷 bytes；
+- `/api/status.remote` 增加 mounts/records/bytes；
+- 远程卡片状态条显示记录数与 MB；
+- 对账完成后清理不再被任何远程卷引用的 `remote-*.idx`，避免卸载遗留；
+- 远程关闭时不清理索引，便于重新开启复用。

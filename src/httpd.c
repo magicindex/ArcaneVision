@@ -739,6 +739,37 @@ static int remote_scan_mounts(remote_mount *out, int max) {
     return n;
 }
 
+static uint64_t remote_index_bytes(const vol_t *v) {
+    struct stat st;
+    return stat(v->file, &st) == 0 ? (uint64_t)st.st_size : 0;
+}
+
+/* 清理不再被任何远程卷引用的 remote-*.idx（掉线挂载遗留）。 */
+static void remote_gc_indexes(void) {
+    DIR *d = opendir(g_idx_dir);
+    if (!d) return;
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        if (strncmp(e->d_name, "remote-", 7) != 0) continue;
+        size_t nl = strlen(e->d_name);
+        if (nl < 4 || strcmp(e->d_name + nl - 4, ".idx") != 0) continue;
+        int used = 0;
+        for (int i = 0; i < g_nvols; i++) {
+            if (!g_vols[i].remote) continue;
+            const char *b = strrchr(g_vols[i].file, '/');
+            b = b ? b + 1 : g_vols[i].file;
+            if (!strcmp(b, e->d_name)) { used = 1; break; }
+        }
+        if (!used) {
+            char p[1400];
+            snprintf(p, sizeof p, "%s/%s", g_idx_dir, e->d_name);
+            if (unlink(p) == 0)
+                fprintf(stderr, "xuanlan: 清理孤立远程索引 %s\n", e->d_name);
+        }
+    }
+    closedir(d);
+}
+
 /* 远程挂载生命周期：启动/周期对账时新增、迁移、清理。 */
 static int remote_reconcile_mounts(void) {
     if (!g_remote_enabled) return 0;
@@ -812,6 +843,7 @@ static int remote_reconcile_mounts(void) {
         fprintf(stderr, "xuanlan: 远程挂载加入 %s (%s)\n", v->root, v->remote_kind);
     }
     pthread_rwlock_unlock(&g_rw);
+    if (g_remote_enabled) remote_gc_indexes();
     return changed;
 }
 
@@ -4870,7 +4902,16 @@ static void handle_remote(sbuf *out, int admin) {
     if (!admin) { sb_puts(out, "{\"error\":\"需要管理员权限\"}"); return; }
     sb_puts(out, "{\"enabled\":");
     sb_puts(out, g_remote_enabled ? "true" : "false");
-    sb_puts(out, ",\"mounts\":[");
+    uint64_t total_bytes = 0, total_records = 0;
+    int total_mounts = 0;
+    for (int i = 0; i < g_nvols; i++) {
+        if (!g_vols[i].remote) continue;
+        total_mounts++;
+        total_records += g_vols[i].records;
+        total_bytes += remote_index_bytes(&g_vols[i]);
+    }
+    sb_printf(out, ",\"totalMounts\":%d,\"totalRecords\":%llu,\"totalBytes\":%llu,\"mounts\":[",
+              total_mounts, (unsigned long long)total_records, (unsigned long long)total_bytes);
     int first = 1;
     /* 已启用的实时索引卷 */
     for (int i = 0; i < g_nvols; i++) {
@@ -4880,10 +4921,11 @@ static void handle_remote(sbuf *out, int admin) {
         first = 0;
         sb_puts(out, "{\"root\":\""); sb_json(out, v->root, strlen(v->root));
         sb_puts(out, "\",\"kind\":\""); sb_json(out, v->remote_kind, strlen(v->remote_kind));
-        sb_printf(out, "\",\"uid\":%d,\"ok\":%s,\"records\":%llu,\"indexed\":true,"
+        sb_printf(out, "\",\"uid\":%d,\"ok\":%s,\"records\":%llu,\"bytes\":%llu,\"indexed\":true,"
                   "\"stale\":%s,\"lastOk\":%llu,\"acl\":\"%s\",\"aclReason\":\"%s\"}",
                   v->remote_uid == (uid_t)-1 ? -1 : (int)v->remote_uid,
                   v->ok ? "true" : "false", (unsigned long long)v->records,
+                  (unsigned long long)remote_index_bytes(v),
                   v->remote_fail_since ? "true" : "false",
                   (unsigned long long)v->remote_last_ok,
                   v->remote_acl, v->remote_acl_reason);
@@ -5069,6 +5111,16 @@ static void handle_status(sbuf *out) {
         trf[i] = g_trend_repair[idx];
     }
     pthread_mutex_unlock(&g_trend_mu);
+    {
+        uint64_t rb = 0, rr = 0; int rm = 0;
+        pthread_rwlock_rdlock(&g_rw);
+        for (int i = 0; i < g_nvols; i++) if (g_vols[i].remote) {
+            rm++; rr += g_vols[i].records; rb += remote_index_bytes(&g_vols[i]);
+        }
+        pthread_rwlock_unlock(&g_rw);
+        sb_printf(out, ",\"remote\":{\"mounts\":%d,\"records\":%llu,\"bytes\":%llu}",
+                  rm, (unsigned long long)rr, (unsigned long long)rb);
+    }
     sb_printf(out, ",\"remoteSync\":{\"running\":%s,\"last\":%llu}",
               __atomic_load_n(&g_remote_running, __ATOMIC_RELAXED) ? "true" : "false",
               (unsigned long long)g_remote_last_sync);

@@ -2800,13 +2800,15 @@
         (d.enabled ? '' : ' disabled') + '>立即重建</button></div>';
       const ms0 = d.mounts || [];
       const indexed = ms0.filter(m => m.indexed).length;
-      const recs = ms0.reduce((n, m) => n + (m.records || 0), 0);
+      const recs = d.totalRecords != null ? d.totalRecords : ms0.reduce((n, m) => n + (m.records || 0), 0);
+      const bytes = d.totalBytes || 0;
       const degraded = ms0.filter(m => m.indexed && m.acl === 'cifs' && /fallback/i.test(m.aclReason || ''));
       let state;
       if (!d.enabled) {
         state = '远程检索已关闭；本地与挂载检索不受影响。';
       } else {
-        state = '远程检索已开启 · ' + indexed + ' 个挂载已索引 · ' + recs.toLocaleString() + ' 条记录';
+        state = '远程检索已开启 · ' + indexed + ' 个挂载 · ' + recs.toLocaleString() + ' 条 · ' +
+          (bytes ? (bytes / 1048576).toFixed(1) + ' MB' : '0 MB');
         if (!ms0.length) state += ' · 未检测到远程挂载';
         if (degraded.length) state += ' · ACL 降级：' + degraded.length + ' 个 CIFS 使用 owner-only，仅影响远程';
         if (ms0.some(m => m.stale)) state += ' · 有挂载离线';
