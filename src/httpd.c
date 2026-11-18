@@ -755,7 +755,7 @@ static void unit_jobs_refresh(void) {
 }
 
 /* ---------- 单元事件队列（P8）：live 回调只入队，写盘由独立线程批量完成 ---------- */
-#define UE_QUEUE 4096
+#define UE_QUEUE 16384
 typedef struct {
     char    *path;
     uint8_t  flags;
@@ -4301,8 +4301,11 @@ static void handle_status(sbuf *out) {
     sb_json(out, g_err, strlen(g_err));
     size_t dels = 0;
     size_t adds = live_delta_count(&dels);
-    sb_printf(out, "\",\"live\":{\"adds\":%zu,\"dels\":%zu,\"overflow\":%s}",
-              adds, dels, live_overflowed() ? "true" : "false");
+    sb_printf(out, "\",\"live\":{\"adds\":%zu,\"dels\":%zu,\"overflow\":%s,"
+              "\"aclEvents\":%llu,\"aclDirty\":%s}",
+              adds, dels, live_overflowed() ? "true" : "false",
+              (unsigned long long)live_acl_events(),
+              live_acl_dirty() ? "true" : "false");
     {
         pthread_mutex_lock(&g_ue_mu);
         int qn = g_ue_count;
@@ -5522,6 +5525,33 @@ int httpd_serve(const xl_svc_opts *o) {
         }
         usb_tick();
         units_tick();
+        {
+            static uint64_t drop_seen;
+            uint64_t d = __atomic_load_n(&g_ue_dropped, __ATOMIC_RELAXED);
+            if (d && d != drop_seen) {
+                drop_seen = d;
+                if (!g_building) {
+                    fprintf(stderr, "xuanlan: 单元事件队列溢出（dropped=%llu），触发重建\n",
+                            (unsigned long long)d);
+                    start_build();
+                }
+            }
+        }
+        {
+            static uint64_t acl_seen;
+            if (!live_acl_dirty()) {
+                acl_seen = 0;
+            } else {
+                if (!acl_seen) acl_seen = now_ms();
+                /* ACL 批量变更常产生大量连续 ATTRIB，静默 5 秒后只重建一次 */
+                if (!g_building && now_ms() - acl_seen >= 5000) {
+                    live_clear_acl();
+                    acl_seen = 0;
+                    fprintf(stderr, "xuanlan: 检测到 ACL/属性变化，触发重建\n");
+                    start_build();
+                }
+            }
+        }
     }
     for (int i = 0; i < nls; i++) close(ls[i]);
     if (o->sock_path[0]) unlink(o->sock_path);

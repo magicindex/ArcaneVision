@@ -68,6 +68,8 @@ static struct {
 
     struct { char *dir; char name[XL_NAME_MAX + 1]; uint32_t mask; } q[LV_QUEUE];
     size_t qh, qt;
+    int acl_dirty;
+    uint64_t acl_events;
 } L;
 
 static uint64_t h64(const char *s) {
@@ -292,6 +294,17 @@ static void apply_one(const char *dir, const char *name, uint32_t mask) {
     if (cl <= 0 || (size_t)cl >= sizeof(path)) return;
     if (scan_skip_hidden() && path_hidden(path)) return;
 
+    /* ACL/xattr/属性变化：不重建当前事件，只标脏，由主循环触发一次重建。
+     * 新建文件也可能带 FAN_ATTRIB，必须排除 CREATE/MODIFY 等组合事件，
+     * 否则普通写入会误触发整卷重建。 */
+    if ((mask & FAN_ATTRIB) &&
+        !(mask & (FAN_CREATE | FAN_DELETE | FAN_MOVED_FROM | FAN_MOVED_TO |
+                  FAN_MODIFY | FAN_CLOSE_WRITE))) {
+        __atomic_store_n(&L.acl_dirty, 1, __ATOMIC_RELAXED);
+        __atomic_add_fetch(&L.acl_events, 1, __ATOMIC_RELAXED);
+        return;
+    }
+
     if (mask & (FAN_DELETE | FAN_MOVED_FROM)) {
         del_put2(path, (mask & FAN_ONDIR) != 0);
         return;
@@ -458,7 +471,8 @@ int live_start(const char *roots_csv, int verbose) {
     int marked = 0;
     for (int i = 0; i < L.nroots; i++) {
         if (fanotify_mark(L.fd, FAN_MARK_ADD | FAN_MARK_FILESYSTEM,
-                          FAN_CREATE | FAN_DELETE | FAN_MOVED_FROM | FAN_MOVED_TO | FAN_ONDIR,
+                          FAN_CREATE | FAN_DELETE | FAN_MOVED_FROM | FAN_MOVED_TO |
+                          FAN_ATTRIB | FAN_ONDIR,
                           AT_FDCWD, L.roots[i]) == 0) marked++;
         else if (verbose)
             fprintf(stderr, "xuanlan: fanotify_mark(%s): %s\n", L.roots[i], strerror(errno));
@@ -505,6 +519,9 @@ size_t live_delta_count(size_t *dels) {
 }
 
 int live_overflowed(void) { return __atomic_load_n(&L.fatal, __ATOMIC_RELAXED); }
+int live_acl_dirty(void) { return __atomic_load_n(&L.acl_dirty, __ATOMIC_RELAXED); }
+void live_clear_acl(void) { __atomic_store_n(&L.acl_dirty, 0, __ATOMIC_RELAXED); }
+uint64_t live_acl_events(void) { return __atomic_load_n(&L.acl_events, __ATOMIC_RELAXED); }
 
 int live_is_deleted(const char *path) {
     if (!L.started) return 0;

@@ -217,3 +217,56 @@ checksum = e012cd737c3d3a578c13ce75142fd70c
 - App Center 显示 0.9.0 / running。
 
 结论：**FnOSF10 本机 FPK 应用中心安装通过**。
+
+## 10. ACL 变更与压力测试（2026-11-19）
+
+### 10.1 实现
+
+- `live.c` fanotify mask 增加 `FAN_ATTRIB`；
+- 文件/子目录 chmod、chown、xattr 变化标记 `acl_dirty`；
+- `/api/status.live` 增加 `aclEvents` / `aclDirty`；
+- 主循环静默 5 秒后只触发一次重建，避免批量 ACL 变化造成重建风暴；
+- 新建文件可能携带 `FAN_ATTRIB`，已排除 `CREATE/DELETE/MOVE/MODIFY/CLOSE_WRITE` 组合事件；
+- 单元事件队列从 4096 提升到 16384；
+- 队列溢出时记录 dropped 并触发一次重建。
+
+### 10.2 ACL 变更验证
+
+测试根：`/vol1/@team/xl-stress`，hybrid + `isolatedGroups=[1001]`。
+
+单文件 `chmod 600`：
+
+```text
+aclEvents = 1
+aclDirty  = true
+5 秒后：检测到 ACL/属性变化，触发重建
+```
+
+重建后该文件从组单元查询中消失，符合 ACL 预期。
+
+批量 `chmod 640 stress-*.txt`（5000 个）：
+
+```text
+aclEvents = 5000
+重建日志   = 1 次
+events.queued = 0
+events.dropped = 0
+```
+
+验证了批量 ACL 事件合并为一次重建。
+
+### 10.3 压力测试
+
+5000 个文件快速创建：
+
+```text
+live.adds      = 5000
+events.queued  = 0（最终）
+events.dropped = 0
+delta.log      = 857,127 字节
+```
+
+单元 writer 队列峰值约 5553 条，最终全部排空，无丢弃。
+
+> 测试使用独立临时实例，生产 `xuanlan.service` 未受影响；测试后已删除
+> `/vol1/@team/xl-stress`、`/tmp/xl-stress` 和临时容器。
