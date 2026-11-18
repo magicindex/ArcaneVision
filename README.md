@@ -164,7 +164,10 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
 - 快照 checksum 对旧 checksum=0 快照保持兼容；
 - **子树级 ACL 增量重建**：ACL/xattr 变化只重扫变化路径所在的单元子树，合并旧快照后原子替换，
   不再触发共享索引/整卷重建；
-- `/api/status.live.aclEvents` / `aclDirty` 可观测。
+- `/api/status.live.aclEvents` / `aclDirty` 可观测；
+- **远程挂载 provider（MVP）**：检测 `/vol02` 下 CIFS/NFS/NFS4/WebDAV 挂载，
+  `/api/remote` 列出；设置 `XL_REMOTE_INDEX=1` 时纳入共享索引；
+- 远程卷按 `/vol02/<uid>-...` 做 **owner-only** 过滤，管理员可读；不进入隔离单元。
 
 ### 0.10.0 已完成
 
@@ -206,7 +209,7 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
 - [x] 快照 checksum / 更完整损坏检测；
 - [x] 子树级 ACL 增量重建（单元快照子树合并）；
 - [x] 容量/修复趋势图（/api/status.trend + 管理端趋势条）；
-- [ ] 远程挂载 provider（CIFS/NFS/WebDAV）。
+- [x] 远程挂载 provider（CIFS/NFS/WebDAV，owner-only MVP）。
 
 ### 正在做 / 下一步
 
@@ -591,9 +594,9 @@ scripts/build-fpk.sh      打包装包
 
 - 最新版本：**0.10.1（公测）**（2026-11-19）
 - 源码 tag：`v0.10.1`
-- FPK：`dist/xuanlan_0.10.1_amd64.fpk`（1,035,878 字节）
-- MD5：`2d49087c12bc8eabea974995dec9be45`
-- SHA-256：`567c1a6be4ea2b8406a9b7bc37532dc762b66ac52f4ac05e913e6a71398bb4c2`
+- FPK：`dist/xuanlan_0.10.1_amd64.fpk`（1,039,233 字节）
+- MD5：`8532e60d7de0a2b38e8fdacfdfc1ce2b`
+- SHA-256：`0801afce8131cc67525c8ab25a4eb55a443603c412ecffe25bc5d5fc5b8b88ac`
 - 发布页：[GitHub Release](https://github.com/magicindex/ArcaneVision/releases/tag/v0.10.1) ·
   [Gitea Release](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.10.1)
 - 安装包直链：

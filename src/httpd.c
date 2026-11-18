@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <mntent.h>
 #include <sys/xattr.h>
 #include <sys/time.h>
 #include <sys/un.h>
@@ -40,7 +41,7 @@
 #include "unitbuild.h"
 #include "unitdelta.h"
 
-#define MAX_VOL   8
+#define MAX_VOL   16
 #define SCOPE_MAX 512   /* 每个用户的检索范围条目上限（含排除项） */
 #define N_WORKERS 4
 #define Q_CAP     128
@@ -138,6 +139,9 @@ typedef struct {
     int      building;
     int      usb;                 /* 1 = USB 外挂卷，独立快照 */
     char     usb_id[128];         /* 文件系统 UUID（挂载名变化时用来认同一设备） */
+    int      remote;              /* 1 = CIFS/NFS/WebDAV 远程挂载，owner-only */
+    uid_t    remote_uid;          /* /vol02/<uid>-...；未知为 (uid_t)-1 */
+    char     remote_kind[16];
     uint64_t records;
     uint64_t built_at;
     uint64_t build_ms;
@@ -447,6 +451,61 @@ static void route_release(query_route_t *r) {
     r->nuc = 0;
 }
 
+static int remote_allows(int uid, int admin, const vol_t *v) {
+    if (!v->remote) return 1;
+    if (admin) return 1;
+    return v->remote_uid != (uid_t)-1 && (uid_t)uid == v->remote_uid;
+}
+
+static int remote_type(const char *type) {
+    return !strcmp(type, "cifs") || !strcmp(type, "smb3") ||
+           !strcmp(type, "nfs") || !strcmp(type, "nfs4") ||
+           !strcmp(type, "davfs");
+}
+
+/* 检测 fnOS 已挂载的远程目录；仅在 XL_REMOTE_INDEX=1 时加入索引。 */
+static int remote_add_mounts(void) {
+    if (!getenv("XL_REMOTE_INDEX") || !atoi(getenv("XL_REMOTE_INDEX"))) return 0;
+    FILE *f = setmntent("/proc/mounts", "r");
+    if (!f) return 0;
+    struct mntent *m;
+    int added = 0;
+    while ((m = getmntent(f)) != NULL) {
+        if (!remote_type(m->mnt_type)) continue;
+        if (strncmp(m->mnt_dir, "/vol02/", 7) != 0) continue;
+        if (g_nvols >= MAX_VOL) break;
+        int dup = 0;
+        for (int i = 0; i < g_nvols; i++)
+            if (!strcmp(g_vols[i].root, m->mnt_dir)) { dup = 1; break; }
+        if (dup) continue;
+        struct stat st;
+        if (stat(m->mnt_dir, &st) != 0 || !S_ISDIR(st.st_mode)) continue;
+        vol_t *v = &g_vols[g_nvols];
+        memset(v, 0, sizeof(*v));
+        snprintf(v->root, sizeof v->root, "%s", m->mnt_dir);
+        snprintf(v->remote_kind, sizeof v->remote_kind, "%s", m->mnt_type);
+        v->remote = 1;
+        v->remote_uid = (uid_t)-1;
+        const char *base = strrchr(m->mnt_dir, '/');
+        base = base ? base + 1 : m->mnt_dir;
+        char *end = NULL;
+        unsigned long owner = strtoul(base, &end, 10);
+        if (end && end != base && *end == '-') v->remote_uid = (uid_t)owner;
+        if (snprintf(v->file, sizeof(v->file), "%s/remote-%s.idx", g_idx_dir, base) >= (int)sizeof(v->file))
+            continue;
+        if (snapshot_open(v->file, &v->sn) == 0) {
+            v->ok = 1;
+            v->records = v->sn.h.rec_count;
+            v->built_at = v->sn.h.built_at;
+            dir_index_build(v);
+        }
+        g_nvols++;
+        added++;
+    }
+    endmntent(f);
+    return added;
+}
+
 /* 返回该请求应读取的卷集合：shared 或一个/多个隔离单元。 */
 static void route_for_uid(int uid, int admin, query_route_t *r) {
     memset(r, 0, sizeof(*r));
@@ -465,7 +524,8 @@ static void route_for_uid(int uid, int admin, query_route_t *r) {
         if (units[k].kind == XL_UNIT_SHARED) {
             r->shared = 1;
             for (int i = 0; i < g_nvols && r->n < (int)(sizeof r->vols / sizeof r->vols[0]); i++)
-                if (g_vols[i].ok) r->vols[r->n++] = &g_vols[i];
+                if (g_vols[i].ok && remote_allows(uid, admin, &g_vols[i]))
+                    r->vols[r->n++] = &g_vols[i];
             continue;
         }
         unit_cache_t *u = unit_cache_get(units[k].key);
@@ -1251,7 +1311,8 @@ static void *build_worker(void *arg) {
     g_build_start = now_ms();
     scan_set_include_team(g_scan_policy.mode != XL_SCAN_SHARED);
     live_clear();                      /* 基线即将重建，旧 delta 作废 */
-    for (int i = 0; i < g_nvols_local && !g_stop; i++) {
+    for (int i = 0; i < g_nvols && !g_stop; i++) {
+        if (g_vols[i].usb) continue;
         g_cur_vol = i;
         g_floor_after = 0;
         xl_scan_records = 0;
@@ -4381,6 +4442,26 @@ static pthread_mutex_t g_tc_mu = PTHREAD_MUTEX_INITIALIZER;
 static void handle_transcode(int fd, const char *qs, int uid);
 static void handle_thumb(sbuf *out, const char *qs, int uid, int *code, const char **ctype);
 
+static void handle_remote(sbuf *out, int admin) {
+    if (!admin) { sb_puts(out, "{\"error\":\"需要管理员权限\"}"); return; }
+    sb_puts(out, "{\"enabled\":");
+    sb_puts(out, getenv("XL_REMOTE_INDEX") && atoi(getenv("XL_REMOTE_INDEX")) ? "true" : "false");
+    sb_puts(out, ",\"mounts\":[");
+    int first = 1;
+    for (int i = 0; i < g_nvols; i++) {
+        vol_t *v = &g_vols[i];
+        if (!v->remote) continue;
+        if (!first) sb_puts(out, ",");
+        first = 0;
+        sb_puts(out, "{\"root\":\""); sb_json(out, v->root, strlen(v->root));
+        sb_puts(out, "\",\"kind\":\""); sb_json(out, v->remote_kind, strlen(v->remote_kind));
+        sb_printf(out, "\",\"uid\":%d,\"ok\":%s,\"records\":%llu}",
+                  v->remote_uid == (uid_t)-1 ? -1 : (int)v->remote_uid,
+                  v->ok ? "true" : "false", (unsigned long long)v->records);
+    }
+    sb_puts(out, "]}");
+}
+
 static void handle_status(sbuf *out) {
     uint64_t total = 0;
     int cur_vol = -1;
@@ -4997,6 +5078,8 @@ static void handle_client(int fd) {
         if (param(qs, "msg", msg, sizeof msg))
             fprintf(stderr, "xuanlan client: %.900s\n", msg);
         sb_puts(&body, "{\"ok\":true}");
+    } else if (!strcmp(pathonly, "/api/remote")) {
+        handle_remote(&body, admin);
     } else if (!strcmp(pathonly, "/api/scanmode/candidates")) {
         handle_scan_candidates(&body, uid, admin);
     } else if (!strcmp(pathonly, "/api/scanmode")) {
@@ -5580,6 +5663,7 @@ int httpd_serve(const xl_svc_opts *o) {
         g_nvols++;
     }
     g_nvols_local = g_nvols;
+    remote_add_mounts();
     if (!g_nvols) {
         fprintf(stderr, "xuanlan serve: 没有挂载点\n");
         return 2;

@@ -325,3 +325,12 @@ chmod 600 → 子树增量更新 → 查询再次为空
 ```
 
 日志确认只出现“ACL 子树增量更新”，没有整卷重建。
+
+
+## 15. 远程挂载 provider MVP（0.10.1）
+
+- 检测 `/vol02/` 下 `cifs` / `smb3` / `nfs` / `nfs4` / `davfs` 挂载；
+- `GET /api/remote` 返回挂载路径、类型、owner uid、索引状态、记录数；
+- 设置 `XL_REMOTE_INDEX=1` 时加入共享索引，索引文件 `idx/remote-<mount>.idx`；
+- 权限：从 `/vol02/<uid>-...` 解析 owner，只有 owner 或管理员可检索；不进入隔离单元；
+- 默认不开启远程索引，避免自动扫描大容量 CIFS 库；需要显式开启。
