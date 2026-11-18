@@ -362,3 +362,13 @@ chmod 600 → 子树增量更新 → 查询再次为空
 - `POST /api/remote/rebuild` 立即启动远程对账；
 - 关闭时删除远程卷与 `remote-*.idx`，开启时重新探测并构建；
 - 构建/对账进行中拒绝重复操作。
+
+
+## 18. CIFS 服务端 ACL 解析尝试（0.10.2）
+
+- 已对两个 CIFS 挂载执行 `mount -o remount,cifsacl`，`/proc/mounts` 已包含 `cifsacl`；
+- 实现 CIFS ACE 解析：`getcifsacl -r` → OWNER/ACL 行 → 本地用户名/组映射 → allow/deny；
+- 60 秒负缓存，避免 ACL 不可用时每个结果 fork；
+- 当前内核 6.18.18 下 `getcifsacl` 对两个共享均返回 `Operation not permitted`，
+  因此实际仍回退 owner-only；`/api/remote.aclReason` 可观测；
+- 结论：代码路径已具备，但服务端/内核未返回 security descriptor，需在支持 cifsacl 的挂载/内核环境验证。
