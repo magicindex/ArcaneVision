@@ -407,3 +407,11 @@ chmod 600 → 子树增量更新 → 查询再次为空
 - 设置页「本地检索范围」只管理 /vol1–/vol4；
 - 远程挂载、远程 ACL、远程凭据统一由「远程挂载」卡片管理；
 - 本地 `settings.json` 与远程 `remote_acl.json`/`remote.json` 不混用。
+
+
+## 23. 远程 ACL 用户 allowlist 设置（0.10.3）
+
+- 远程卡片每个挂载新增「授权用户」按钮；
+- `POST /api/remote/acl` 写入独立 `remote_acl.json`，不进入本地 settings/scope；
+- 只影响远程卷，本地检索与本地 ACL 完全独立；
+- 空列表表示仅 owner/管理员。

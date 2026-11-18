@@ -2823,7 +2823,10 @@
           (m.indexed ? ' · 已索引 ' + (m.records || 0) + ' 条' : ' · 未索引') +
           (m.stale ? ' · 离线' : '') +
           (m.acl ? ' · ACL ' + m.acl : '') +
-          (m.aclReason ? '（' + m.aclReason + '）' : '') + '</span></div></div>';
+          (m.aclReason ? '（' + m.aclReason + '）' : '') +
+          (m.users && m.users.length ? ' · 允许 uid ' + m.users.join(',') : '') +
+          '</span></div><button class="act remoteAcl" type="button" data-root="' +
+          esc(m.root) + '" data-users="' + esc((m.users || []).join(',')) + '">授权用户</button></div>';
       }
       box.innerHTML = h;
       const tg = box.querySelector('#remoteToggle');
@@ -2838,6 +2841,21 @@
             setTimeout(renderRemoteList, 800);
           }).catch(e => { alert('远程索引设置失败：' + (e && e.message || e)); tg.checked = !en; });
       };
+      box.querySelectorAll('.remoteAcl').forEach(btn => {
+        btn.onclick = () => {
+          const cur = btn.dataset.users || '';
+          const v = prompt('允许访问该远程挂载的本地 uid，逗号分隔（留空=仅 owner/管理员）：', cur);
+          if (v === null) return;
+          const users = v.split(',').map(x => parseInt(x.trim(), 10)).filter(x => x > 0);
+          fetch(API + 'remote/acl', { method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ root: btn.dataset.root, users }) })
+            .then(r => r.json()).then(x => {
+              if (!x || x.ok === false) throw new Error(x && x.error || '保存失败');
+              say('远程 ACL 已更新');
+              renderRemoteList();
+            }).catch(e => alert('远程 ACL 设置失败：' + (e && e.message || e)));
+        };
+      });
       const rb = box.querySelector('#remoteRebuild');
       if (rb) rb.onclick = () => {
         rb.disabled = true;

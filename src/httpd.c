@@ -505,6 +505,14 @@ static int remote_cfg_write(int enabled) {
     return 0;
 }
 
+static void remote_acl_config(vol_t *v);
+
+static void remote_acl_path(char *out, size_t cap) {
+    const char *cp = getenv("XL_REMOTE_ACL");
+    if (cp && *cp) { snprintf(out, cap, "%s", cp); return; }
+    snprintf(out, cap, "/vol1/@appconf/xuanlan/remote_acl.json");
+}
+
 static void remote_acl_config(vol_t *v) {
     snprintf(v->remote_acl, sizeof v->remote_acl, "owner");
     snprintf(v->remote_acl_reason, sizeof v->remote_acl_reason,
@@ -528,8 +536,8 @@ static void remote_acl_config(vol_t *v) {
     }
 
     /* 可选显式 ACL 映射，用于 CIFS/WebDAV 服务端 ACL 不可见时按用户授权。 */
-    const char *cp = getenv("XL_REMOTE_ACL");
-    if (!cp || !*cp) cp = "/vol1/@appconf/xuanlan/remote_acl.json";
+    char cp[1200];
+    remote_acl_path(cp, sizeof cp);
     FILE *f = fopen(cp, "r");
     if (!f) return;
     char buf[65536];
@@ -4923,13 +4931,16 @@ static void handle_remote(sbuf *out, int admin) {
         sb_puts(out, "{\"root\":\""); sb_json(out, v->root, strlen(v->root));
         sb_puts(out, "\",\"kind\":\""); sb_json(out, v->remote_kind, strlen(v->remote_kind));
         sb_printf(out, "\",\"uid\":%d,\"ok\":%s,\"records\":%llu,\"bytes\":%llu,\"indexed\":true,"
-                  "\"stale\":%s,\"lastOk\":%llu,\"acl\":\"%s\",\"aclReason\":\"%s\"}",
+                  "\"stale\":%s,\"lastOk\":%llu,\"acl\":\"%s\",\"aclReason\":\"%s\",\"users\":[",
                   v->remote_uid == (uid_t)-1 ? -1 : (int)v->remote_uid,
                   v->ok ? "true" : "false", (unsigned long long)v->records,
                   (unsigned long long)remote_index_bytes(v),
                   v->remote_fail_since ? "true" : "false",
                   (unsigned long long)v->remote_last_ok,
                   v->remote_acl, v->remote_acl_reason);
+        for (int u = 0; u < v->remote_nacluids; u++)
+            sb_printf(out, "%s%d", u ? "," : "", (int)v->remote_acluids[u]);
+        sb_puts(out, "]}");
     }
     /* 未启用索引时也列出 fnOS 已挂载的远程目录，便于 UI/运维启用 */
     FILE *f = setmntent("/proc/mounts", "r");
@@ -4957,6 +4968,59 @@ static void handle_remote(sbuf *out, int admin) {
         endmntent(f);
     }
     sb_puts(out, "]}");
+}
+
+static void handle_remote_acl_post(sbuf *out, const char *body, int admin) {
+    if (!admin) { sb_puts(out, "{\"ok\":false,\"error\":\"需要管理员权限\"}"); return; }
+    char root[512] = "";
+    json_str(body, "\"root\"", root, sizeof root, "");
+    if (!root[0]) { sb_puts(out, "{\"ok\":false,\"error\":\"missing root\"}"); return; }
+    unsigned int users[64];
+    int nu = parse_num_list_body(body, "\"users\"", users, 64);
+    if (nu < 0) nu = 0;
+
+    char cfg[8192];
+    size_t off = 0;
+    off += (size_t)snprintf(cfg + off, sizeof cfg - off, "{\"mounts\":[");
+    int first = 1;
+    for (int i = 0; i < g_nvols; i++) {
+        vol_t *v = &g_vols[i];
+        if (!v->remote) continue;
+        int use_new = !strcmp(v->root, root);
+        int n = use_new ? nu : v->remote_nacluids;
+        if (!n) continue;
+        if (!first) off += (size_t)snprintf(cfg + off, sizeof cfg - off, ",");
+        first = 0;
+        off += (size_t)snprintf(cfg + off, sizeof cfg - off, "{\"root\":\"");
+        /* root 来自 /proc/mounts，只含安全字符；仍做最小转义 */
+        for (const char *q = v->root; *q && off + 3 < sizeof cfg; q++) {
+            if (*q == '"' || *q == '\\') cfg[off++] = '\\';
+            cfg[off++] = *q;
+        }
+        off += (size_t)snprintf(cfg + off, sizeof cfg - off, "\",\"users\":[");
+        for (int u = 0; u < n; u++)
+            off += (size_t)snprintf(cfg + off, sizeof cfg - off, "%s%u", u ? "," : "", users[u]);
+        off += (size_t)snprintf(cfg + off, sizeof cfg - off, "]}");
+    }
+    snprintf(cfg + off, sizeof cfg - off, "]}");
+    char path[1200], tmp[1300];
+    remote_acl_path(path, sizeof path);
+    snprintf(tmp, sizeof tmp, "%s.tmp", path);
+    FILE *f = fopen(tmp, "w");
+    if (!f) { sb_puts(out, "{\"ok\":false,\"error\":\"cannot write acl\"}"); return; }
+    fchmod(fileno(f), 0600);
+    fputs(cfg, f); fflush(f); fsync(fileno(f));
+    if (fclose(f) != 0 || rename(tmp, path) != 0) { unlink(tmp); sb_puts(out, "{\"ok\":false,\"error\":\"write failed\"}"); return; }
+    for (int i = 0; i < g_nvols; i++) {
+        vol_t *v = &g_vols[i];
+        if (!v->remote) continue;
+        if (!strcmp(v->root, root)) {
+            v->remote_nacluids = nu;
+            for (int u = 0; u < nu; u++) v->remote_acluids[u] = (uid_t)users[u];
+        }
+        remote_acl_config(v);
+    }
+    sb_puts(out, "{\"ok\":true}");
 }
 
 static void handle_remote_post(sbuf *out, const char *body, int admin, int rebuild) {
@@ -5619,6 +5683,9 @@ static void handle_client(int fd) {
         if (param(qs, "msg", msg, sizeof msg))
             fprintf(stderr, "xuanlan client: %.900s\n", msg);
         sb_puts(&body, "{\"ok\":true}");
+    } else if (!strcmp(pathonly, "/api/remote/acl")) {
+        if (strcmp(method, "POST") != 0) { code = 405; sb_puts(&body, "{\"ok\":false,\"error\":\"use POST\"}"); }
+        else handle_remote_acl_post(&body, req_body, admin);
     } else if (!strcmp(pathonly, "/api/remote")) {
         if (strcmp(method, "POST") == 0) handle_remote_post(&body, req_body, admin, 0);
         else handle_remote(&body, admin);
