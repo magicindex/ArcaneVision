@@ -566,7 +566,7 @@ scripts/build-fpk.sh      打包装包
   [Gitea Release](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.9.0)
 - 安装包直链：
   [GitHub](https://github.com/magicindex/ArcaneVision/releases/download/v0.9.0/xuanlan_0.9.0_amd64.fpk) ·
-  [Gitea](http://192.168.3.200:3000/attachments/a563d8f9-ba11-4c21-bb3f-fa45895fe068)
+  [Gitea](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/download/v0.9.0/xuanlan_0.9.0_amd64.fpk)
 
 > 0.9.0 是公测版本：核心检索、团队空间单元索引、增量/修复链路已接入并有自动化回归；
 > 真机 fanotify、实体 FPK 安装与远程挂载 provider 仍建议按“正在做 / 未完成”逐项验收。
