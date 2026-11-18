@@ -2740,6 +2740,7 @@
       '（delta ' + mb(u.deltaBytes) + '）' +
       (u.alert ? ' · 容量告警' : '') +
       ' · 修复队列 ' + (r.queued || 0) + '（失败 ' + (r.failed || 0) + '）' +
+      ((r.units && r.units.length) ? ' · ' + r.units.slice(0, 3).map(x => x.key + '×' + x.fails).join('、') : '') +
       ' · 事件队列 ' + (e.queued || 0) + '（丢弃 ' + (e.dropped || 0) + '）' +
       (scanStatus && scanStatus.unitBuild
         ? ' · 正在构建 ' + scanStatus.unitBuild.key + ' ' +

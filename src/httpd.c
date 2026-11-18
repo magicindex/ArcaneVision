@@ -909,6 +909,43 @@ static int g_repair_stop, g_repair_started;
 static pthread_t g_repair_thread;
 static uint64_t g_repair_dropped;
 static uint64_t g_repair_failed;
+#define UREP_TRACK 64
+static struct {
+    char key[XL_SCAN_UNIT_MAX];
+    uint32_t fails;
+    uint64_t next_ms;
+} g_repair_track[UREP_TRACK];
+
+static void repair_track_fail(const char *key) {
+    pthread_mutex_lock(&g_repair_mu);
+    for (int i = 0; i < UREP_TRACK; i++) {
+        if (!g_repair_track[i].key[0]) {
+            snprintf(g_repair_track[i].key, sizeof g_repair_track[i].key, "%s", key);
+        }
+        if (!strcmp(g_repair_track[i].key, key)) {
+            uint32_t f = g_repair_track[i].fails + 1;
+            g_repair_track[i].fails = f;
+            unsigned shift = f > 8 ? 8 : f;
+            uint64_t delay = (1ull << shift) * 1000ull;
+            if (delay > 300000ull) delay = 300000ull;
+            g_repair_track[i].next_ms = now_ms() + delay;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_repair_mu);
+}
+
+static void repair_track_ok(const char *key) {
+    pthread_mutex_lock(&g_repair_mu);
+    for (int i = 0; i < UREP_TRACK; i++)
+        if (!strcmp(g_repair_track[i].key, key)) {
+            g_repair_track[i].key[0] = 0;
+            g_repair_track[i].fails = 0;
+            g_repair_track[i].next_ms = 0;
+            break;
+        }
+    pthread_mutex_unlock(&g_repair_mu);
+}
 
 static void unit_repair_enqueue(const char *key) {
     if (!key || !*key) return;
@@ -920,6 +957,11 @@ static void unit_repair_enqueue(const char *key) {
             return;
         }
     }
+    for (int i = 0; i < UREP_TRACK; i++)
+        if (!strcmp(g_repair_track[i].key, key) && g_repair_track[i].next_ms > now_ms()) {
+            pthread_mutex_unlock(&g_repair_mu);
+            return;
+        }
     if (g_repair_count >= UREP_Q) {
         __atomic_add_fetch(&g_repair_dropped, 1, __ATOMIC_RELAXED);
         pthread_mutex_unlock(&g_repair_mu);
@@ -973,11 +1015,12 @@ static void *unit_repair_worker(void *arg) {
         int rc = unit_build_one(&job);
         pthread_rwlock_unlock(&g_rw);
         if (rc == 0) {
+            repair_track_ok(key);
             fprintf(stderr, "xuanlan: unit repair 完成 %s\n", key);
         } else {
             __atomic_add_fetch(&g_repair_failed, 1, __ATOMIC_RELAXED);
-            fprintf(stderr, "xuanlan: unit repair 失败 %s，稍后重试\n", key);
-            sleep(2);          /* 简单退避，避免损坏单元被请求风暴反复重建 */
+            repair_track_fail(key);
+            fprintf(stderr, "xuanlan: unit repair 失败 %s，按单元退避重试\n", key);
         }
     }
     return NULL;
@@ -4315,9 +4358,23 @@ static void handle_status(sbuf *out) {
         pthread_mutex_lock(&g_repair_mu);
         int rq = g_repair_count;
         pthread_mutex_unlock(&g_repair_mu);
-        sb_printf(out, ",\"repair\":{\"queued\":%d,\"dropped\":%llu,\"failed\":%llu}", rq,
+        sb_printf(out, ",\"repair\":{\"queued\":%d,\"dropped\":%llu,\"failed\":%llu,\"units\":[",
+                  rq,
                   (unsigned long long)__atomic_load_n(&g_repair_dropped, __ATOMIC_RELAXED),
                   (unsigned long long)__atomic_load_n(&g_repair_failed, __ATOMIC_RELAXED));
+        pthread_mutex_lock(&g_repair_mu);
+        int first = 1;
+        for (int i = 0; i < UREP_TRACK; i++) {
+            if (!g_repair_track[i].key[0] || !g_repair_track[i].fails) continue;
+            if (!first) sb_puts(out, ",");
+            sb_printf(out, "{\"key\":\"%s\",\"fails\":%u,\"retryInMs\":%llu}",
+                      g_repair_track[i].key, g_repair_track[i].fails,
+                      g_repair_track[i].next_ms > now_ms()
+                        ? (unsigned long long)(g_repair_track[i].next_ms - now_ms()) : 0);
+            first = 0;
+        }
+        pthread_mutex_unlock(&g_repair_mu);
+        sb_puts(out, "]}");
     }
     sb_printf(out, ",\"transcode\":{\"ok\":%s,\"nvenc\":%s}",
               g_have_ffmpeg ? "true" : "false", g_have_nvenc ? "true" : "false");

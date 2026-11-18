@@ -140,9 +140,9 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
 
 ## 现在是什么状态
 
-当前版本 **0.9.0（公测）**，更新记录见 [CHANGELOG.md](CHANGELOG.md)，发布说明见
-[RELEASE_NOTES.md](RELEASE_NOTES.md)。0.9.0 的主题是**飞牛团队空间的按权限索引**：
-共享 / 隔离 / 混合三种模式，按用户或用户组生成独立单元索引，权限范围内才可检索。
+当前版本 **0.10.0（公测）**，更新记录见 [CHANGELOG.md](CHANGELOG.md)，发布说明见
+[RELEASE_NOTES.md](RELEASE_NOTES.md)。0.9.0 完成团队空间按权限索引；0.10.0 完成
+fanotify ACL 变更自愈、事件队列压力防护、修复退避，并在 FnOSF10 完成 FPK 应用中心安装回归。
 
 ### 方向
 
@@ -155,6 +155,18 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
 4. **可运维**：单元索引有 epoch 原子切换、增量 delta、损坏检测/自动重建、容量告警、
    `.trash` 回收与一键回滚。
 5. **不牺牲检索性能**：共享索引仍是 mmap + trigram；单元索引只读 mmap，增量走 live + delta。
+
+### 0.10.0 已完成
+
+- **fanotify ACL 自愈**：`FAN_ATTRIB` 属性/ACL 变化进入脏标记，静默 5 秒后只重建一次；
+- **批量 ACL 合并**：5000 个文件 chmod 只触发 1 次重建；
+- **压力防护**：单元事件队列 4096 → 16384；队列溢出记录 dropped 并触发重建；
+- **压力验证**：5000 文件快速创建，最终队列 0、dropped 0、delta 约 857KB；
+- **修复按单元退避**：`/api/status.repair.units` 展示单元失败次数/重试倒计时，
+  失败后指数退避（最长 300 秒），成功后清除；
+- **单元构建进度**：`/api/status.unitBuild`；管理端状态行显示；
+- **组单元 ACL 批量读取**：无 ACL 时只读一次 xattr；
+- **FPK 应用中心安装回归**：FnOSF10 本机正式安装 0.10.0 成功，服务和候选 API 正常。
 
 ### 0.9.0 已完成
 
@@ -179,16 +191,12 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
 - **测试**：新增 route / scanmode / unitbuild / unitdelta / group-intersection / epoch /
   units-admin / repair / UI 静态回归，全部接入 `make test`。
 
-### 0.10.0 阶段一（进行中）
+### 0.10.0 后续（未完成）
 
-- [x] 组单元文件 ACL 批量判定：无 ACL 时只读一次 xattr，再按 POSIX 位判断全部成员；
-- [x] `/api/status.unitBuild`：显示当前单元、卷、记录数、耗时；管理端状态行同步展示；
-- [x] 自动候选目录/用户组/用户勾选配置，替代手写 gid；
-- [x] 修复扫描模式数组只认字符串、导致勾选不落盘的解析 bug；
-- [x] 真机 fanotify → 队列 → 批量 delta → 重启恢复（独立临时实例，见
-      [docs/10](docs/10-真机fanotify与单元增量验证.md)）
-- [x] 实体 FPK 应用中心安装回归（FnOSF10 本机 profile 安装 0.9.0 通过，见 docs/10 §9）；
-- [ ] 快照 checksum、修复失败按单元计数、远程挂载 provider。
+- [ ] 快照 checksum / 更完整损坏检测；
+- [ ] 子树级 ACL 增量重建（当前 ACL 变化触发整卷重建）；
+- [ ] 容量/修复趋势图；
+- [ ] 远程挂载 provider（CIFS/NFS/WebDAV）。
 
 ### 正在做 / 下一步
 
@@ -215,12 +223,12 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
 - [x] 编译 + `smoke` / `api` / `scanmode` / `route` / `unitbuild` / `epoch` /
       `unitdelta` / `group-intersection` / `units-admin` / `repair` / `ui` 回归
 - [x] docs/09 §8 标注为未来设计，与当前实现对齐
-- [x] 版本号 0.9.0、README / CHANGELOG / RELEASE_NOTES
+- [x] 版本号 0.10.0、README / CHANGELOG / RELEASE_NOTES
 - [x] 真机 fanotify → 队列 → 批量 delta → 重启恢复（docs/10）
-- [x] 实体 FPK 应用中心安装回归（FnOSF10 本机 profile 安装 0.9.0 通过，见 docs/10 §9）
-- [x] FPK 构建：`dist/xuanlan_0.9.0_amd64.fpk`
-- [x] Gitea 推送 + tag `v0.9.0` + Release
-- [x] GitHub 推送 + tag `v0.9.0` + Release
+- [x] 实体 FPK 应用中心安装回归（FnOSF10 本机 profile 安装 0.10.0 通过）
+- [x] FPK 构建：`dist/xuanlan_0.10.0_amd64.fpk`
+- [ ] Gitea 推送 + tag `v0.10.0` + Release
+- [ ] GitHub 推送 + tag `v0.10.0` + Release
 
 ### 0.8.9–0.8.17 更新内容（历史）
 
@@ -571,19 +579,19 @@ scripts/build-fpk.sh      打包装包
 
 ## 版本与安装包
 
-- 最新版本：**0.9.0（公测）**（2026-11-18）
-- 源码 tag：`v0.9.0`
-- FPK：`dist/xuanlan_0.9.0_amd64.fpk`（1,021,895 字节）
-- MD5：`5089601a1cb1827acc8d23553f628ca1`
-- SHA-256：`da7120936393fb3d57a10d6279020d5246563f2aa7f9a1871fd0dfcd5ce28bb6`
-- 发布页：[GitHub Release](https://github.com/magicindex/ArcaneVision/releases/tag/v0.9.0) ·
-  [Gitea Release](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.9.0)
+- 最新版本：**0.10.0（公测）**（2026-11-19）
+- 源码 tag：`v0.10.0`
+- FPK：`dist/xuanlan_0.10.0_amd64.fpk`（1,026,888 字节）
+- MD5：`a31c49dafe06c1eea6068b169ea2c15d`
+- SHA-256：`53daa3004be390964e0e09f3f920bbc3cfe3d2624e92523b2bcede8d3a1a4da4`
+- 发布页：[GitHub Release](https://github.com/magicindex/ArcaneVision/releases/tag/v0.10.0) ·
+  [Gitea Release](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.10.0)
 - 安装包直链：
-  [GitHub](https://github.com/magicindex/ArcaneVision/releases/download/v0.9.0/xuanlan_0.9.0_amd64.fpk) ·
-  [Gitea](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/download/v0.9.0/xuanlan_0.9.0_amd64.fpk)
+  [GitHub](https://github.com/magicindex/ArcaneVision/releases/download/v0.10.0/xuanlan_0.10.0_amd64.fpk) ·
+  [Gitea](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/download/v0.10.0/xuanlan_0.10.0_amd64.fpk)
 
-> 0.9.0 是公测版本：核心检索、团队空间单元索引、增量/修复链路已接入并有自动化回归；
-> 真机 fanotify、实体 FPK 安装与远程挂载 provider 仍建议按“正在做 / 未完成”逐项验收。
+> 0.10.0 已完成 FnOSF10 本机应用中心安装；剩余 checksum、子树级 ACL 重建、趋势图、
+> 远程挂载 provider 仍在计划中。
 
 ## 路线图
 
@@ -595,14 +603,17 @@ scripts/build-fpk.sh      打包装包
   - 事件队列批量写、delta 压缩、容量告警、GC/回滚
   - 单元损坏检测与自动重建
   - 管理端三模式/分类组/状态/回滚
-- **0.10.x（进行中）**
-  - [x] 管理端自动候选/组名选择（当前用勾选）
-  - [x] 组单元 ACL 批量读取、单元构建进度
-  - [x] 真机 fanotify 端到端（新增/删除/批量/重启恢复）
-  - [x] 实体 FPK 应用中心安装回归（FnOSF10 本机 profile 安装 0.9.0 通过，见 docs/10 §9）
-  - [ ] 容量/修复趋势、修复失败按单元计数
-  - [ ] 快照 checksum / 更完整的损坏检测
-  - [ ] 远程挂载 provider（CIFS/NFS/WebDAV）设计落地
+- **0.10.0（已完成，公测）**
+  - fanotify ACL 变更自愈、批量 ACL 合并、压力防护
+  - 单元事件队列 16384、溢出重建、5000 文件压力验证
+  - 修复按单元退避、单元构建进度
+  - 自动候选/勾选配置、组单元 ACL 批量读取
+  - FnOSF10 本机 FPK 应用中心安装 0.10.0 成功
+- **0.10.x（后续）**
+  - 快照 checksum / 更完整损坏检测
+  - 子树级 ACL 增量重建
+  - 容量/修复趋势图
+  - 远程挂载 provider（CIFS/NFS/WebDAV）
 - **未来（待定）**
   - 索引 v3：`rec_scope` / `scope_masks` / 每用户 view（docs/09 §8，当前未实现）
   - P10 可选离线分析副本（CSV/Parquet/DB），不接检索路径

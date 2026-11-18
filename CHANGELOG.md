@@ -1,3 +1,14 @@
+## 0.10.0（公测）
+
+- fanotify `FAN_ATTRIB`：ACL/xattr/chmod/chown 变化标脏，静默 5 秒后只重建一次
+- 单元事件队列 4096 → 16384；溢出记录 dropped 并触发重建
+- 真机压力：5000 文件快速创建，队列最终 0、dropped 0、delta 约 857KB
+- 批量 ACL：5000 个文件 chmod 只触发 1 次重建
+- 修复按单元指数退避，`/api/status.repair.units` 展示失败次数/重试倒计时
+- `/api/status.unitBuild` 单元构建进度；管理端状态行显示
+- 组单元文件 ACL 批量读取（无 ACL 时只读一次 xattr）
+- FnOSF10 本机 FPK 应用中心安装 0.10.0 成功；服务、候选 API、索引数据正常
+
 ## 0.9.0（公测）
 
 - 团队空间：`@team` 扫描放行，`shared` / `isolated` / `hybrid` 三模式，管理员可按用户/组分类
