@@ -1022,7 +1022,12 @@ static int unit_json_write(const unit_job *j, const char *dir, char vols[][256],
     return 0;
 }
 
-static int unit_build_one(const unit_job *j) {
+static pthread_mutex_t g_ub_mu = PTHREAD_MUTEX_INITIALIZER;
+static char g_ub_key[XL_SCAN_UNIT_MAX];
+static char g_ub_vol[256];
+static uint64_t g_ub_start;
+
+static int unit_build_one_impl(const unit_job *j) {
     char dir[1200];
     if (xl_scan_unit_dir(g_idx_dir, j->key, dir, sizeof dir) < 0) return -1;
     if (mkdir(dir, 0700) != 0 && errno != EEXIST) return -1;
@@ -1052,6 +1057,13 @@ static int unit_build_one(const unit_job *j) {
         char out[1300], newp[1400];
         if (snprintf(out, sizeof out, "%s/%s", dir, base) >= (int)sizeof out) { failed++; continue; }
         snprintf(newp, sizeof newp, "%s.new", out);
+        pthread_mutex_lock(&g_ub_mu);
+        size_t vrl = strlen(v->root);
+        if (vrl >= sizeof g_ub_vol) vrl = sizeof g_ub_vol - 1;
+        memcpy(g_ub_vol, v->root, vrl);
+        g_ub_vol[vrl] = 0;
+        pthread_mutex_unlock(&g_ub_mu);
+        xl_scan_records = 0;
         if (xl_unit_scan_to_file(v->root, &subj, newp) == 0) {
             size_t nl = strlen(newp);
             if (nl >= sizeof news[nnew]) nl = sizeof news[nnew] - 1;
@@ -1088,6 +1100,21 @@ static int unit_build_one(const unit_job *j) {
     if (unit_json_write(j, dir, vols, nnew) < 0) return -1;
     fprintf(stderr, "xuanlan: unit %s 完成（%d 卷）\n", j->key, nnew);
     return 0;
+}
+
+static int unit_build_one(const unit_job *j) {
+    pthread_mutex_lock(&g_ub_mu);
+    snprintf(g_ub_key, sizeof g_ub_key, "%s", j->key);
+    g_ub_vol[0] = 0;
+    g_ub_start = now_ms();
+    xl_scan_records = 0;
+    pthread_mutex_unlock(&g_ub_mu);
+    int rc = unit_build_one_impl(j);
+    pthread_mutex_lock(&g_ub_mu);
+    g_ub_key[0] = 0;
+    g_ub_vol[0] = 0;
+    pthread_mutex_unlock(&g_ub_mu);
+    return rc;
 }
 
 static void units_build_all(void) {
@@ -4319,6 +4346,16 @@ static void handle_status(sbuf *out) {
         m = g_scan_policy.mode;
         pthread_mutex_unlock(&g_scan_policy_mu);
         sb_printf(out, ",\"scanMode\":\"%s\"", xl_scan_mode_name(m));
+        pthread_mutex_lock(&g_ub_mu);
+        if (g_ub_key[0]) {
+            sb_printf(out, ",\"unitBuild\":{\"key\":\"%s\",\"vol\":\"%s\",\"records\":%llu,\"elapsed_ms\":%llu}",
+                      g_ub_key, g_ub_vol,
+                      (unsigned long long)xl_scan_records,
+                      (unsigned long long)(now_ms() - g_ub_start));
+        } else {
+            sb_puts(out, ",\"unitBuild\":null");
+        }
+        pthread_mutex_unlock(&g_ub_mu);
     }
     sb_puts(out, ",\"version\":\"");
     sb_puts(out, XL_APP_VERSION);

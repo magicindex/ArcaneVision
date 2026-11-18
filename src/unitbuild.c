@@ -26,11 +26,8 @@ static int can_read(const xl_unit_subject *s, const char *path) {
     struct stat st;
     if (stat(path, &st) != 0) return 0;
     if (s->kind == 1) return perm_mode_readable(s->uid, path, &st);
-    /* 组单元精确交集：所有成员都可读才记录 */
-    if (s->nmembers <= 0) return 0;
-    for (int i = 0; i < s->nmembers; i++)
-        if (!perm_mode_readable(s->members[i], path, &st)) return 0;
-    return 1;
+    /* 组单元精确交集：所有成员都可读才记录；无 ACL 时只取一次 xattr。 */
+    return perm_mode_readable_all(s->members, s->nmembers, path, &st);
 }
 
 static int enter_cb(const char *path, void *ctx) {

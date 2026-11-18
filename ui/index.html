@@ -2740,7 +2740,12 @@
       '（delta ' + mb(u.deltaBytes) + '）' +
       (u.alert ? ' · 容量告警' : '') +
       ' · 修复队列 ' + (r.queued || 0) + '（失败 ' + (r.failed || 0) + '）' +
-      ' · 事件队列 ' + (e.queued || 0) + '（丢弃 ' + (e.dropped || 0) + '）';
+      ' · 事件队列 ' + (e.queued || 0) + '（丢弃 ' + (e.dropped || 0) + '）' +
+      (scanStatus && scanStatus.unitBuild
+        ? ' · 正在构建 ' + scanStatus.unitBuild.key + ' ' +
+          (scanStatus.unitBuild.vol || '') + ' ' +
+          (scanStatus.unitBuild.records || 0) + ' 条'
+        : '');
   }
   function refreshScanStatus(){
     fetch(API + 'status').then(r => r.json()).then(d => {

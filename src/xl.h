@@ -192,6 +192,8 @@ int perm_file_readable(uid_t uid, const char *path);
 int perm_dir_writable(uid_t uid, const char *dir);
 int perm_parent_writable(uid_t uid, const char *path);
 int perm_mode_readable(uid_t uid, const char *path, const struct stat *st);
+/* 组单元批量判定：无 ACL 时只读一次 xattr，再按 POSIX 位判断全部成员。 */
+int perm_mode_readable_all(const uid_t *uids, int n, const char *path, const struct stat *st);
 extern int perm_strict_home;
 void perm_set_strict_home(int on);
 

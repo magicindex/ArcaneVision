@@ -179,11 +179,21 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
 - **测试**：新增 route / scanmode / unitbuild / unitdelta / group-intersection / epoch /
   units-admin / repair / UI 静态回归，全部接入 `make test`。
 
+### 0.10.0 阶段一（进行中）
+
+- [x] 组单元文件 ACL 批量判定：无 ACL 时只读一次 xattr，再按 POSIX 位判断全部成员；
+- [x] `/api/status.unitBuild`：显示当前单元、卷、记录数、耗时；管理端状态行同步展示；
+- [x] 自动候选目录/用户组/用户勾选配置，替代手写 gid；
+- [x] 修复扫描模式数组只认字符串、导致勾选不落盘的解析 bug；
+- [ ] 真机 fanotify 端到端与实体 FPK 安装回归；
+- [ ] 快照 checksum、修复失败按单元计数、远程挂载 provider。
+
 ### 正在做 / 下一步
 
 - 真机 fanotify 端到端：事件 → 队列 → 批量 delta → 重启恢复 → 单元查询一致性。
 - 候选检测继续扩展共享目录/ACL user ACE 依据；容量/修复趋势可视化。
 - 单元健康检查的调度与 IO 限速（当前默认 60 秒、可用 `XL_UNITS_CHECK_SEC` 调整）。
+- 继续优化单元构建：目录级 ACL 缓存、构建并发/错峰、进度上报。
 - 组交集语义的产品确认：当前是“所有成员都可读”的公共范围；若需要成员并集需另设模式。
 - 远程挂载 provider 仍是设计稿（见 docs/09 §9），尚未接入 CIFS/NFS/WebDAV。
 
@@ -582,12 +592,13 @@ scripts/build-fpk.sh      打包装包
   - 事件队列批量写、delta 压缩、容量告警、GC/回滚
   - 单元损坏检测与自动重建
   - 管理端三模式/分类组/状态/回滚
-- **0.10.x（计划）**
-  - 真机 fanotify 端到端与 FPK 安装回归
-  - 管理端组名选择器、容量/修复趋势
-  - 单元健康检查限速、修复失败按单元计数
-  - 快照 checksum / 更完整的损坏检测
-  - 远程挂载 provider（CIFS/NFS/WebDAV）设计落地
+- **0.10.x（进行中）**
+  - [x] 管理端自动候选/组名选择（当前用勾选）
+  - [x] 组单元 ACL 批量读取、单元构建进度
+  - [ ] 真机 fanotify 端到端与 FPK 安装回归
+  - [ ] 容量/修复趋势、修复失败按单元计数
+  - [ ] 快照 checksum / 更完整的损坏检测
+  - [ ] 远程挂载 provider（CIFS/NFS/WebDAV）设计落地
 - **未来（待定）**
   - 索引 v3：`rec_scope` / `scope_masks` / 每用户 view（docs/09 §8，当前未实现）
   - P10 可选离线分析副本（CSV/Parquet/DB），不接检索路径

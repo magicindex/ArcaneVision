@@ -290,6 +290,26 @@ int perm_mode_readable(uid_t uid, const char *path, const struct stat *st) {
 }
 
 
+int perm_mode_readable_all(const uid_t *uids, int n, const char *path, const struct stat *st) {
+    if (!uids || n <= 0 || !path) return 0;
+    unsigned char buf[4096];
+    ssize_t acl = getxattr(path, "system.trim_acl", buf, sizeof buf);
+    if (acl >= 4 || (acl < 0 && errno == ERANGE)) {
+        for (int i = 0; i < n; i++)
+            if (!perm_mode_readable(uids[i], path, st)) return 0;
+        return 1;
+    }
+    /* 无 ACL（或 xattr 读取失败/过长）：逐成员看 POSIX；属主/自己家目录语义与
+     * perm_mode_readable 保持一致，避免把 mode 000 的自有文件误判为不可读。 */
+    for (int i = 0; i < n; i++) {
+        uid_t u = uids[i];
+        if (u == 0 || under_own_home(u, path)) continue;
+        if (st && st->st_uid == u) continue;
+        if (!st || !posix_bit(st, u, A_R)) return 0;
+    }
+    return 1;
+}
+
 /* 取目标用户的主组+附加组；供扫描模式解析用，不复用进程自身组。 */
 int perm_user_groups(uid_t uid, gid_t *out, int max) {
     if (!out || max <= 0) return 0;
