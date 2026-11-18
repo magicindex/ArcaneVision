@@ -3,7 +3,7 @@ CFLAGS  ?= -O2 -g -std=c11 -Wall -Wextra -Wno-unused-parameter -D_GNU_SOURCE
 LDFLAGS ?=
 LDLIBS  := -pthread
 
-SRC := src/main.c src/util.c src/scan.c src/index.c src/snapshot.c src/query.c src/fsreader_ext4.c src/httpd.c src/live.c src/perm.c src/fsops.c src/markdown.c
+SRC := src/main.c src/util.c src/scan.c src/index.c src/snapshot.c src/query.c src/fsreader_ext4.c src/httpd.c src/live.c src/perm.c src/fsops.c src/markdown.c src/scanmode.c src/units.c src/unitbuild.c src/unitdelta.c
 OBJ := $(SRC:.c=.o)
 BIN := bin/xuanlan
 
@@ -33,6 +33,15 @@ test: $(BIN) bin/markdown_test
 	./bin/markdown_test
 	./tests/smoke.sh
 	python3 tests/api_test.py $(BIN)
+	python3 tests/scanmode_test.py $(BIN)
+	python3 tests/route_test.py $(BIN)
+	python3 tests/unitbuild_test.py $(BIN)
+	python3 tests/epoch_test.py $(BIN)
+	python3 tests/unitdelta_test.py $(BIN)
+	python3 tests/group_intersection_test.py $(BIN)
+	python3 tests/units_admin_test.py $(BIN)
+	python3 tests/repair_test.py $(BIN)
+	python3 tests/ui_behavior_test.py
 	./tests/ext4_image_test.sh
 
 install: $(BIN)

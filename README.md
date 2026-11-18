@@ -16,9 +16,15 @@
 - **按账号授权**：unix socket 上的飞牛身份头才可信，TCP 必须 Cookie 认证，否则 `/api/*` 一律 401；
   逐目录按 `system.trim_acl` 求值，家目录可开「严格模式」，忽略「所有人」授权
 - **类型分类**：12 类图标与筛选条（文档/表格/演示/PDF/文本/代码/图片/视频/音频/压缩包…）
-- **图片预览**：点击图片结果全屏查看，←/→ 切换、Esc 关闭、点击背景关闭，可直接下载；
+- **图片预览**：双击图片结果全屏查看（文件默认双击打开，可在设置改为单击），←/→ 切换、Esc 关闭、点击背景关闭，可直接下载；
   底部缩略图条列出当前搜索到的全部图片，当前项高亮、点击即切换；预览顺序沿用当前搜索结果，
   不重新拉取列表
+- **鼠标操作**：桌面默认文件夹单击打开、文件/图片双击打开；设置 → 鼠标操作可分别改为
+  单击/双击，触屏始终单击打开
+- **视频预览**：内置播放器（浏览器直接打开/转码播放）控制条悬浮在画面底部，鼠标离开播放窗口即隐藏；空格暂停/播放，
+  ←/→ 快退/快进 5 秒；在线转码流同样适用
+- **团队空间隔离**：管理员可选共享 / 隔离 / 混合；混合模式默认共享，按组独立扫描，
+  未分类组回退共享；隔离用户按单元索引检索，单元缺失不回退
 - **即时预览**：内置 PDF 阅读器（按页宽适配）、EPUB 阅读器（章节/目录/图片）、
   Markdown 服务端渲染、文本/代码高亮底色、图片音视频直接播放；可关联飞牛「文档服务」
   「在线预览」；服务端转码支持 HDR→SDR 与纯音频
@@ -54,14 +60,31 @@ PDF 预览：内置 pdf.js，按页宽适配，可拖拽缩放或最大化。
 
 ![图片预览](docs/screenshots/image-preview.png)
 
-设置：打开位置、10 类格式关联、自动全盘扫描、忽略隐藏目录与系统杂项、USB 外挂检索、检索范围与严格模式。
+设置：打开位置、扫描模式、鼠标操作、10 类格式关联、自动全盘扫描、忽略隐藏目录与系统杂项、USB 外挂检索、检索范围与严格模式。
 
 ![设置](docs/screenshots/settings.png)
 
+桌面鼠标默认：文件夹单击打开，文件/图片双击打开；可在「设置 → 鼠标操作」分别改为双击/单击。
+触屏始终单击打开，不受该设置影响。
+
+| 设置项 | 默认值 |
+|---|---|
+| 打开位置 | 当前窗口子窗口 |
+| 扫描模式 | 共享（shared） |
+| 文件夹打开 | 单击 |
+| 文件 / 图片打开 | 双击 |
+| 忽略隐藏目录与系统杂项 | 开启 |
+| 严格模式 | 开启 |
+| USB 外挂检索 | 关闭 |
+| USB 挂载路径检测 | 开启 |
+| 自动全盘扫描 | 每天 03:00 |
+| 打开方式关联 | 代码/图片/音频/视频=在线预览；文档/表格/幻灯片=文档服务；PDF=内置阅读器；富文本=内置；压缩包=下载 |
+| 视频控制条 | 鼠标离开播放窗口即隐藏 |
+
 手机与桌面统一从飞牛网关进入：`https://<NAS>:5667/app/xuanlan/`。前端以当前页面路径解析
-API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏下单击结果直接打开，右侧
-`⋯` 打开操作面板；类型筛选横向滑动，页面滚动后右下角提供返回顶部按钮，设置与定位面板
-在窄屏上占满可用高度，回收站面板贴边显示。
+API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏下单击结果直接打开（不受
+鼠标设置影响），右侧 `⋯` 打开操作面板；类型筛选横向滑动，页面滚动后右下角提供返回顶部按钮，
+设置与定位面板在窄屏上占满可用高度，回收站面板贴边显示。
 
 ## PDF 阅读器
 
@@ -117,10 +140,73 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
 
 ## 现在是什么状态
 
-当前版本 **0.8.35**，更新记录见 [CHANGELOG.md](CHANGELOG.md)，本次发布说明见
-[RELEASE_NOTES.md](RELEASE_NOTES.md)。支持明暗双主题，默认使用飞牛账号身份与系统目录授权。
+当前版本 **0.9.0（公测）**，更新记录见 [CHANGELOG.md](CHANGELOG.md)，发布说明见
+[RELEASE_NOTES.md](RELEASE_NOTES.md)。0.9.0 的主题是**飞牛团队空间的按权限索引**：
+共享 / 隔离 / 混合三种模式，按用户或用户组生成独立单元索引，权限范围内才可检索。
 
-### 0.8.9–0.8.17 更新内容
+### 方向
+
+1. **快照是唯一检索路径**：不引入 MariaDB/PostgreSQL 作为检索后端；DB 最多作为未来的
+   离线分析副本，不参与搜索、ACL 或索引构建。
+2. **权限先于检索**：团队文件夹按 `system.trim_acl` 逐目录求值；无权限目录不进入该用户单元，
+   查询期再做一次实时 ACL 复核，默认 fail-closed。
+3. **管理员可控**：`shared` 单索引成本最低；`isolated` 每用户物理隔离；`hybrid` 默认共享、
+   按组隔离、未分类回退共享。
+4. **可运维**：单元索引有 epoch 原子切换、增量 delta、损坏检测/自动重建、容量告警、
+   `.trash` 回收与一键回滚。
+5. **不牺牲检索性能**：共享索引仍是 mmap + trigram；单元索引只读 mmap，增量走 live + delta。
+
+### 0.9.0 已完成
+
+- **团队空间扫描**：`scanMode != shared` 时放行卷根 `@team`，快照头记录 `XL_HDR_TEAM`；
+  旧快照自动重建。
+- **三种模式**：`shared` / `isolated` / `hybrid`；hybrid 下 `isolatedGroups` 按组独立扫描，
+  `shareGroups` 与未分类用户回退共享。
+- **按单元独立扫描**：`scan_tree_scoped()` 按主体 `x` 权限进入目录，不再从共享快照过滤。
+- **独立单元索引**：`idx/units/u<uid>/volN.idx`、`g<gid>/volN.idx` + `unit.json`；
+  组单元按成员 ACL **精确交集**生成。
+- **QueryRouter**：`/api/search` 与 `/api/dir` 按 uid 路由到共享或单元索引；
+  多单元合并去重；单元缺失/损坏 fail-closed，不回退共享。
+- **epoch 原子切换**：单元缓存按 `unit.json`/delta 的纳秒 mtime 加载新版本，旧请求按引用计数
+  延迟释放，不中断查询。
+- **实时增量**：fanotify → 全局 live + 单元 `delta.log`；查询合并，删除走墓碑/前缀删除。
+- **事件队列**：live 回调只入队，writer 线程批量写 delta，避免 live 锁内同步 IO。
+- **delta 运维**：按路径保留最后事件的压缩、16MB 上限、容量告警、`units gc/rollback/stats/compact`。
+- **损坏自愈**：加载期 + 周期 `units check`；损坏单元进入修复队列，后台重建；
+  `/api/status.repair` 暴露 queued/dropped/failed。
+- **管理端**：扫描模式、share/isolated 分类、用户覆盖、容量/修复/事件队列状态、回滚到共享。
+- **测试**：新增 route / scanmode / unitbuild / unitdelta / group-intersection / epoch /
+  units-admin / repair / UI 静态回归，全部接入 `make test`。
+
+### 正在做 / 下一步
+
+- 真机 fanotify 端到端：事件 → 队列 → 批量 delta → 重启恢复 → 单元查询一致性。
+- 管理端分类组从 gid 文本升级为组名选择器；容量/修复状态进一步可视化。
+- 单元健康检查的调度与 IO 限速（当前默认 60 秒、可用 `XL_UNITS_CHECK_SEC` 调整）。
+- 组交集语义的产品确认：当前是“所有成员都可读”的公共范围；若需要成员并集需另设模式。
+- 远程挂载 provider 仍是设计稿（见 docs/09 §9），尚未接入 CIFS/NFS/WebDAV。
+
+### 未完成 / 已知限制
+
+- **索引 v3 的 `rec_scope` / `scope_masks` / 每用户 view 尚未实现**；当前 shared 仍走查询期
+  ACL，单元模式走独立快照（docs/09 §8 已标注为未来设计）。
+- P10 可选离线分析副本（CSV/Parquet/DB）未做；DB 不进入运行时依赖。
+- 快照没有 checksum；损坏检测覆盖头部/记录范围，mmap 后原地截断仍可能 SIGBUS。
+- 单元独立扫描是 N 倍 IO；未做并发限速/错峰。
+- 组单元为精确交集，成员个人额外可见数据不进入组索引。
+- 远程挂载、SMB/CIFS、全文检索、索引加密仍不在本期范围。
+- UI 截图仍是 0.8.x 设置页，未包含扫描模式卡片。
+
+### 公测前紧急项
+
+- [x] 编译 + `smoke` / `api` / `scanmode` / `route` / `unitbuild` / `epoch` /
+      `unitdelta` / `group-intersection` / `units-admin` / `repair` / `ui` 回归
+- [x] docs/09 §8 标注为未来设计，与当前实现对齐
+- [x] 版本号 0.9.0、README / CHANGELOG / RELEASE_NOTES
+- [ ] 真机 fanotify 与实体 FPK 安装回归（当前环境无 fanotify 权限）
+- [ ] GitHub / Gitea 推送与 tag
+
+### 0.8.9–0.8.17 更新内容（历史）
 
 - 开机自启：`xuanlan.service` 改由随包 `start.sh` 读取 `service_port` / `xuanlan.conf`，
   不再写死 8971 与 `/vol1–4`
@@ -158,12 +244,12 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
 - 0.8.34：首页 USB 状态指示（未检测/已连接/索引中）、保存成功提示、重建前检查挂载
 - 0.8.35：USB 建索引期间检索范围也显示分区根节点
 
-### 问题清单与下一步计划
+### 0.8.x 历史问题清单
 
-> 更新：2026-11-13 · 状态以 `main`（0.8.35）为准。来源：0.8.17 代码审查、真机 U 盘测试、
+> 更新：2026-11-13 · 历史快照；0.9.0 的当前状态见上节。来源：0.8.17 代码审查、真机 U 盘测试、
 > GitHub Issues #1/#2、README 已知限制。
 
-#### 已完成（0.8.18–0.8.35）
+#### 已完成（0.8.18–0.8.35，历史）
 
 - [x] P0：ext4 裸扫目录块数组堆越界（ASan + 64 MiB 镜像可复现）— 0.8.18
 - [x] 设置 POST 超 16 KiB 静默截断、检索范围 64 项硬上限 — 0.8.18（128 KiB / 512 项，超限报错）
@@ -195,7 +281,7 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
 - [x] systemd unit / 应用中心路径写死 `/vol1` — 0.8.26 按实际安装路径生成 unit
 - [x] 目录列举与检索范围展开 O(N) — 0.8.26 建立 parent→child 索引
 
-#### 待处理
+#### 待处理（历史）
 
 | 优先级 | 问题 | 状态 | 计划 |
 |---|---|---|---|
@@ -442,44 +528,64 @@ src/index.c       trigram 稀疏表 + 分块位打包倒排
 src/snapshot.c    单文件快照，4KB 对齐段，mmap 直用
 src/query.c       候选求交、全名复核、Top-K、路径还原
 src/fsreader_ext4.c  ext4 裸设备读取（inode 位图 + extent 树 + 物理序目录块）
-src/httpd.c       HTTP/unix socket 服务、多卷快照、增量合并
-src/live.c        fanotify 增量（DFID 句柄还原 + delta 表）
+src/httpd.c       HTTP/unix socket 服务、多卷快照、QueryRouter、单元事件/修复
+src/live.c        fanotify 增量（DFID 句柄还原 + delta 表）+ 单元事件回调
 src/perm.c        TrimACL 二进制求值 + 继承 + POSIX 回落
+src/scanmode.c    扫描模式/组分类/回退解析
+src/units.c       units 布局、容量、GC、回滚
+src/unitbuild.c   按单元 Scope 独立扫描
+src/unitdelta.c   单元 delta 批量写/压缩
 src/main.c        CLI / serve
 docs/             架构、合规与净室说明
 CHANGELOG.md      版本更新记录
 RELEASE_NOTES.md  最新发布说明
 tests/smoke.sh    冒烟测试
 tests/ext4_image_test.sh  裸设备读取器与 getdents/find 的一致性测试
+tests/route_test.py        QueryRouter shared/isolated/hybrid 路由
+tests/unitbuild_test.py    单元独立生成（含 @team）
+tests/unitdelta_test.py    单元 delta add/delete 合并
+tests/group_intersection_test.py  组 ACL 精确交集
+tests/epoch_test.py        单元 epoch 原子切换
+tests/units_admin_test.py  delta 压缩 / GC / 回滚
+tests/repair_test.py       损坏单元自动重建
+tests/ui_behavior_test.py  鼠标/视频/扫描模式 UI 静态回归
 pkg/              FPK 打包源（manifest、cmd、wizard、ui、config）
 scripts/build-fpk.sh      打包装包
 ```
 
 ## 版本与安装包
 
-- 最新版本：**0.8.35**（2026-11-13）
-- 安装包：`xuanlan_0.8.35_amd64.fpk`（935,305 字节）
-- MD5：`b20b3dd35294927752baa6b9d6565622`
-- SHA-256：`f53974ceb6ff673728903b3a1bebafff30e2f00106f07411e3565a209a652e78`
-- 发布页：[GitHub](https://github.com/magicindex/ArcaneVision/releases/tag/v0.8.35) ·
-  [Gitea](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.8.35)
+- 最新版本：**0.9.0（公测）**（2026-11-18）
+- 源码 tag：`v0.9.0`
+- FPK：`dist/xuanlan_0.9.0_amd64.fpk`（1,011,138 字节）
+- MD5：`b724546fb28d9caf1abfee27d24a59ec`
+- SHA-256：`aa9c6e440fae0723a360c3061f1e0093508de51b88aa4c54db4604e9ca051437`
+- 发布页：[GitHub](https://github.com/magicindex/ArcaneVision/releases/tag/v0.9.0) ·
+  [Gitea](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.9.0)
+
+> 0.9.0 是公测版本：核心检索、团队空间单元索引、增量/修复链路已接入并有自动化回归；
+> 真机 fanotify、实体 FPK 安装与远程挂载 provider 仍建议按“正在做 / 未完成”逐项验收。
 
 ## 路线图
 
-- **P0 已完成**：扫描、索引、快照、查询、CLI
-- **P1 已完成**：ext4 裸设备扫描器（按公开的 on-disk 格式规范自行实现，顺序读 inode 表后按物理块推进），冷建从 15 分钟降到约 7 分钟/370 万条
-- **P2 已完成**：fanotify 文件系统标记增量 + 周期对账（默认 6 小时）
-- **P3 已完成**：TrimACL 求值通过样本与真机验证；身份取自飞牛会话头 `X-Trim-Userid`，多用户结果按权限过滤
-- **P4 已完成**：Web UI、FPK 打包；已在飞牛 fnOS 真机安装运行，登录身份与目录授权均取自系统
-- **P5 已完成（0.7.x）**：明暗双主题、安全加固（socket 对端校验、软链逃逸、回收站路径）、
-  服务生命周期与应用中心状态对齐
-- **P6 已完成（0.8.9–0.8.17）**：开机自启参数化、目录树三态、隐藏/杂项过滤、USB 外挂检索、
-  设置页视觉整理
-- **P7 已完成（0.8.18–0.8.35）**：P0 越界与设置/文件操作安全加固、搜索分页、USB 真机适配、
-  分区根节点与目录树深度整理
-- **P6 已完成（0.8.0）**：索引 v2 记录真实 `size/mtime` 并按真实时间排序；目录增量子树；
-  fail-closed 身份与文件级读写权限；HDR/纯音频转码；`--no-tcp`；查询 Top-K 与快照加固
-- **下一步（0.9.x）**：索引加密、SMB/CIFS 与全文检索、目录/ACL 的 O(N) 优化
+- **0.9.0（已完成，公测）**
+  - 团队空间 `@team` 扫描；shared / isolated / hybrid 三模式
+  - 按用户/组独立扫描，`idx/units/<unit>/volN.idx` + `unit.json`
+  - QueryRouter 路由、单元缺失 fail-closed
+  - 单元 epoch 原子切换、live + delta、组精确交集
+  - 事件队列批量写、delta 压缩、容量告警、GC/回滚
+  - 单元损坏检测与自动重建
+  - 管理端三模式/分类组/状态/回滚
+- **0.10.x（计划）**
+  - 真机 fanotify 端到端与 FPK 安装回归
+  - 管理端组名选择器、容量/修复趋势
+  - 单元健康检查限速、修复失败按单元计数
+  - 快照 checksum / 更完整的损坏检测
+  - 远程挂载 provider（CIFS/NFS/WebDAV）设计落地
+- **未来（待定）**
+  - 索引 v3：`rec_scope` / `scope_masks` / 每用户 view（docs/09 §8，当前未实现）
+  - P10 可选离线分析副本（CSV/Parquet/DB），不接检索路径
+  - SMB/CIFS 统一索引、全文检索、索引加密
 
 ## 许可
 

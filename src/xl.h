@@ -18,6 +18,7 @@
 #define XL_VERSION     2u
 #define XL_HDR_SKIP_HIDDEN 1u   /* 快照头 flags 位：建索引时跳过了 . / @ 隐藏项 */
 #define XL_HDR_SCAN_RULES  2u   /* 快照头 flags 位：使用含 Thumbs.db/desktop.ini 等杂项过滤的扫描规则 */
+#define XL_HDR_TEAM        4u   /* 快照头 flags 位：已放行卷根 @team 团队空间 */
 #define XL_HDR_SIZE    128u
 #define XL_ALIGN       4096u
 #define XL_BLOCK       128u   /* 倒排块内条目数 */
@@ -96,12 +97,20 @@ typedef struct {
 void store_init(xl_store *s);
 void store_free(xl_store *s);
 int  scan_tree(const char *root, xl_store *s, int want_stat, int verbose);
+/* 按 Scope 独立遍历：enter_dir 决定能否进入子树，file_ok 决定文件是否记录。
+ * 不可列但可穿越的目录仍会记录为结构节点，查询期 ACL 负责隐藏。 */
+typedef int (*xl_scan_allow_fn)(const char *path, void *ctx);
+int  scan_tree_scoped(const char *root, xl_store *s, int want_stat, int verbose,
+                      xl_scan_allow_fn enter_dir, xl_scan_allow_fn file_ok, void *ctx);
 void scan_add_exclude(const char *prefix);
 int  scan_has_exclude(void);
 /* 忽略 . / @ 开头的隐藏项，以及 Thumbs.db、desktop.ini 等系统杂项（默认开启；
  * 由设置 skipHidden 控制） */
 void scan_set_skip_hidden(int on);
 int  scan_skip_hidden(void);
+/* 放行卷根 @team 容器；仅供团队空间/隔离单元构建使用 */
+void scan_set_include_team(int on);
+int  scan_include_team(void);
 int  scan_name_hidden(const char *name);
 /* 可直接用于 getdents/ext4 目录项：name 不要求 NUL 结尾 */
 int  scan_name_skip(const char *name, size_t len);
@@ -177,6 +186,7 @@ int httpd_serve(const xl_svc_opts *o);
 
 /* ---- perm.c ---- */
 int perm_check(uid_t uid, const char *path, int need, int is_dir);
+int perm_user_groups(uid_t uid, gid_t *out, int max);
 int perm_dir_listable(uid_t uid, const char *dir);
 int perm_file_readable(uid_t uid, const char *path);
 int perm_dir_writable(uid_t uid, const char *dir);
@@ -206,6 +216,10 @@ size_t live_query(const char *needle, xl_live_hit **out);
 size_t live_dir(const char *dir, xl_live_hit **out);
 int    live_is_deleted(const char *path);
 int    live_overflowed(void);
+/* 增量事件回调：用于写单元级 delta（回调在 live 锁内，须快速返回） */
+typedef void (*xl_live_event_fn)(const char *path, int deleted, uint8_t flags,
+                                 uint32_t size, uint32_t mtime, void *ud);
+void   live_set_event_cb(xl_live_event_fn cb, void *ud);
 
 /* ---- 权限（trimacl / POSIX ACL） ---- */
 #endif

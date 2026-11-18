@@ -1,3 +1,15 @@
+## 0.9.0（公测）
+
+- 团队空间：`@team` 扫描放行，`shared` / `isolated` / `hybrid` 三模式，管理员可按用户/组分类
+- 按用户/用户组独立扫描生成 `idx/units/<unit>/volN.idx` + `unit.json`；组单元按成员 ACL 精确交集
+- QueryRouter 接入 `/api/search`、`/api/dir`；单元缺失/损坏 fail-closed
+- 单元 epoch/引用计数原子切换；live + 单元 `delta.log` 增量
+- live 回调改为事件队列 + writer 批量写；delta 按路径压缩、容量告警
+- 单元损坏检测与自动重建；`units gc/rollback/stats/compact/check` CLI
+- 管理端扫描模式、分类组、容量/修复状态、回滚按钮
+- README 补充 0.9.0 方向、已完成、未完成、正在做与待定事项
+- 测试新增 route/scanmode/unitbuild/unitdelta/group-intersection/epoch/units-admin/repair/UI
+
 ## 0.8.35
 
 - USB 建索引期间，检索范围也立即显示 USB 分区根节点；之前必须等索引完成并重开设置才会出现

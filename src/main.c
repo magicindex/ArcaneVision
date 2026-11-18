@@ -4,6 +4,7 @@
  *   xuanlan info  --index FILE
  */
 #include "xl.h"
+#include "scanmode.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,7 +46,14 @@ static void usage(void) {
           "  xuanlan dump  --index FILE\n"
           "  xuanlan serve [--port N] [--bind ADDR] [--socket PATH] [--no-socket]\n"
           "                [--no-tcp] [--ui DIR] [--index-dir DIR]\n"
-          "                [--roots /vol1,/vol3,...] [--exclude DIR]...\n", stderr);
+          "                [--roots /vol1,/vol3,...] [--exclude DIR]...\n"
+          "  xuanlan scanmode --config FILE --uid N [--gids 1,2] [--json]\n"
+          "  xuanlan units init --index-dir DIR\n"
+          "  xuanlan units stats --index-dir DIR\n"
+          "  xuanlan units gc --index-dir DIR [--active u1000,g9001] [--grace-days 7] [--purge]\n"
+          "  xuanlan units rollback --index-dir DIR [--purge]\n"
+          "  xuanlan units compact --index-dir DIR [--threshold-mb 4]\n"
+          "  xuanlan units check --index-dir DIR\n", stderr);
 }
 
 /* 默认索引卷：只取 /proc/self/mounts 里实际挂载的 /vol1–/vol8，避免把残留空目录当卷 */
@@ -80,9 +88,145 @@ static void detect_default_roots(char *out, size_t cap) {
     if (!n) snprintf(out, cap, "/vol1,/vol2,/vol3,/vol4");
 }
 
+static int parse_id_list(const char *s, unsigned int *out, int max) {
+    int n = 0;
+    while (s && *s && n < max) {
+        while (*s == ' ' || *s == ',') s++;
+        if (!*s) break;
+        char *e = NULL;
+        unsigned long v = strtoul(s, &e, 10);
+        if (e == s) break;
+        out[n++] = (unsigned int)v;
+        s = e;
+    }
+    return n;
+}
+
+static int cmd_scanmode(int argc, char **argv) {
+    const char *cfg = NULL;
+    int uid = -1, json = 0;
+    unsigned int gidv[XL_SCAN_ARRAY_MAX];
+    int ngids = 0;
+    for (int i = 2; i < argc; i++) {
+        if (!strcmp(argv[i], "--config") && i + 1 < argc) cfg = argv[++i];
+        else if (!strcmp(argv[i], "--uid") && i + 1 < argc) uid = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--gids") && i + 1 < argc) ngids = parse_id_list(argv[++i], gidv, XL_SCAN_ARRAY_MAX);
+        else if (!strcmp(argv[i], "--json")) json = 1;
+        else { fprintf(stderr, "xuanlan scanmode: unknown %s\n", argv[i]); return 2; }
+    }
+    if (uid < 0) {
+        fprintf(stderr, "用法: xuanlan scanmode --config FILE --uid N [--gids 1,2] [--json]\n");
+        return 2;
+    }
+    xl_scan_policy p;
+    if (xl_scan_policy_load(cfg, &p) < 0) {
+        fprintf(stderr, "xuanlan scanmode: 无法读取 %s\n", cfg ? cfg : "(default)");
+        return 1;
+    }
+    gid_t gids[XL_SCAN_ARRAY_MAX];
+    for (int i = 0; i < ngids; i++) gids[i] = (gid_t)gidv[i];
+    xl_scan_unit units[XL_SCAN_ARRAY_MAX];
+    int n = xl_scan_resolve(&p, (uid_t)uid, gids, ngids, units, XL_SCAN_ARRAY_MAX);
+    if (json) {
+        printf("{\"mode\":\"%s\",\"uid\":%d,\"units\":[", xl_scan_mode_name(p.mode), uid);
+        for (int i = 0; i < n; i++) {
+            if (i) putchar(',');
+            const char *kind = units[i].kind == XL_UNIT_GROUP ? "group"
+                             : (units[i].kind == XL_UNIT_USER ? "user" : "shared");
+            printf("{\"unit\":\"%s\",\"kind\":\"%s\",\"gid\":%u,\"uid\":%u,\"fallback\":%s}",
+                   units[i].key, kind, (unsigned)units[i].gid, (unsigned)units[i].uid,
+                   units[i].fallback ? "true" : "false");
+        }
+        puts("]}");
+    } else {
+        for (int i = 0; i < n; i++)
+            printf("mode=%s uid=%d unit=%s kind=%s fallback=%d\n",
+                   xl_scan_mode_name(p.mode), uid, units[i].key,
+                   units[i].kind == XL_UNIT_GROUP ? "group" :
+                   (units[i].kind == XL_UNIT_USER ? "user" : "shared"),
+                   units[i].fallback);
+    }
+    return 0;
+}
+
+static int cmd_units(int argc, char **argv) {
+    if (argc < 3) {
+        fprintf(stderr, "用法: xuanlan units init|stats|gc|rollback|compact ...\n");
+        return 2;
+    }
+    const char *sub = argv[2];
+    const char *dir = NULL;
+    const char *active_csv = NULL;
+    int grace = 7, purge = 0, threshold_mb = 4;
+    for (int i = 3; i < argc; i++) {
+        if (!strcmp(argv[i], "--index-dir") && i + 1 < argc) dir = argv[++i];
+        else if (!strcmp(argv[i], "--active") && i + 1 < argc) active_csv = argv[++i];
+        else if (!strcmp(argv[i], "--grace-days") && i + 1 < argc) grace = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--threshold-mb") && i + 1 < argc) threshold_mb = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--purge")) purge = 1;
+        else { fprintf(stderr, "xuanlan units: unknown %s\n", argv[i]); return 2; }
+    }
+    if (!dir) { fprintf(stderr, "xuanlan units: --index-dir required\n"); return 2; }
+
+    if (!strcmp(sub, "init")) {
+        char err[256];
+        if (xl_units_init(dir, err, sizeof err) < 0) { fprintf(stderr, "xuanlan units: %s\n", err); return 1; }
+        printf("units: %s/units\n", dir);
+        return 0;
+    }
+    if (!strcmp(sub, "stats")) {
+        int count; uint64_t bytes, delta;
+        xl_units_capacity(dir, &count, &bytes, &delta);
+        printf("units=%d bytes=%llu delta_bytes=%llu\n", count,
+               (unsigned long long)bytes, (unsigned long long)delta);
+        return 0;
+    }
+    if (!strcmp(sub, "check")) {
+        char bad[XL_SCAN_ARRAY_MAX][XL_SCAN_UNIT_MAX];
+        int checked = 0;
+        int n = xl_units_check(dir, bad, XL_SCAN_ARRAY_MAX, &checked);
+        printf("units check: checked=%d bad=%d\n", checked, n);
+        for (int i = 0; i < n; i++) printf("bad %s\n", bad[i]);
+        return n ? 1 : 0;
+    }
+    if (!strcmp(sub, "compact")) {
+        if (threshold_mb < 1) threshold_mb = 1;
+        xl_units_compact_deltas(dir, (uint64_t)threshold_mb * 1024 * 1024);
+        printf("units compact: threshold=%d MB\n", threshold_mb);
+        return 0;
+    }
+    if (!strcmp(sub, "rollback")) {
+        if (xl_units_rollback(dir, purge) < 0) { fprintf(stderr, "xuanlan units: rollback failed\n"); return 1; }
+        printf("units rollback: scanMode=shared%s\n", purge ? " (units moved to trash)" : "");
+        return 0;
+    }
+    if (!strcmp(sub, "gc")) {
+        char *buf = active_csv ? strdup(active_csv) : NULL;
+        const char *active[XL_SCAN_ARRAY_MAX];
+        int n = 0;
+        if (buf) {
+            char *save = NULL;
+            for (char *t = strtok_r(buf, ",", &save); t && n < XL_SCAN_ARRAY_MAX; t = strtok_r(NULL, ",", &save)) {
+                while (*t == ' ') t++;
+                if (*t) active[n++] = t;
+            }
+        }
+        int removed = 0;
+        xl_units_gc(dir, active, n, grace, purge, &removed);
+        printf("units gc: removed=%d grace=%d purge=%d\n", removed, grace, purge);
+        free(buf);
+        return 0;
+    }
+    fprintf(stderr, "xuanlan units: unknown subcommand %s\n", sub);
+    return 2;
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) { usage(); return 2; }
     const char *cmd = argv[1];
+
+    if (strcmp(cmd, "scanmode") == 0) return cmd_scanmode(argc, argv);
+    if (strcmp(cmd, "units") == 0) return cmd_units(argc, argv);
 
     if (strcmp(cmd, "build") == 0) {
         const char *root = NULL, *out = NULL, *device = NULL;

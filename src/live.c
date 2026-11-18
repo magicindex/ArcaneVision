@@ -44,6 +44,14 @@ typedef struct {
     size_t cap, used;
 } lv_map;
 
+static xl_live_event_fn g_event_cb;
+static void *g_event_ud;
+
+void live_set_event_cb(xl_live_event_fn cb, void *ud) {
+    g_event_cb = cb;
+    g_event_ud = ud;
+}
+
 static struct {
     pthread_mutex_t mu;
     pthread_cond_t  cv;
@@ -180,6 +188,7 @@ static void add_put(const char *path, const xl_store_stat *st) {
     L.adds[L.adds_n].flags = st->flags;
     map_put(&L.add_map, k, (uint32_t)L.adds_n);
     L.adds_n++;
+    if (g_event_cb) g_event_cb(path, 0, st->flags, st->size, st->mtime, g_event_ud);
     map_del(&L.del_map, k);
 }
 
@@ -213,6 +222,7 @@ static void del_put2(const char *path, int prefix) {
     L.dels[L.dels_n].active = 1;
     map_put(&L.del_map, k, (uint32_t)L.dels_n);
     L.dels_n++;
+    if (g_event_cb) g_event_cb(path, 1, prefix ? XL_F_DIR : 0, 0, 0, g_event_ud);
 }
 
 
@@ -263,7 +273,10 @@ static int path_hidden(const char *path) {
         while (*p == '/') p++;
         const char *e = strchr(p, '/');
         size_t n = e ? (size_t)(e - p) : strlen(p);
-        if (n && scan_name_skip(p, n)) return 1;
+        if (n && scan_name_skip(p, n)) {
+            if (!(scan_include_team() && n == 5 && !memcmp(p, "@team", 5)))
+                return 1;
+        }
         if (!e) break;
         p = e + 1;
     }

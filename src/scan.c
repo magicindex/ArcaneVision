@@ -46,9 +46,13 @@ int scan_has_exclude(void) { return g_excl_n > 0; }
 /* 隐藏项：. 开头（.DS_Store、.recycle）或 @ 开头（@eaDir 等群晖/fnOS 元数据目录）。
  * 默认跳过；设置页「忽略隐藏目录」关闭后可重新纳入索引。 */
 static int g_skip_hidden = 1;
+/* 团队空间：默认仍是隐藏项；启用后仅放行卷根的 @team 容器。 */
+static int g_include_team = 0;
 
 void scan_set_skip_hidden(int on) { g_skip_hidden = on ? 1 : 0; }
 int  scan_skip_hidden(void) { return g_skip_hidden; }
+void scan_set_include_team(int on) { g_include_team = on ? 1 : 0; }
+int  scan_include_team(void) { return g_include_team; }
 int  scan_name_hidden(const char *name) {
     return name && (name[0] == '.' || name[0] == '@');
 }
@@ -168,8 +172,11 @@ static int walk(xl_store *s, uint32_t self, const char *path, int want_stat,
             if (name[0] == '.' && (name[1] == 0 || (name[1] == '.' && name[2] == 0)))
                 continue;
             size_t nlen = strlen(name);
-            if (g_skip_hidden && scan_name_skip(name, nlen))
-                continue;
+            if (g_skip_hidden && scan_name_skip(name, nlen)) {
+                int team_root = g_include_team && depth == 0 && nlen == 5 &&
+                                memcmp(name, "@team", 5) == 0;
+                if (!team_root) continue;
+            }
             if (nlen == 0 || nlen > XL_NAME_MAX) continue;
 
             uint8_t flags = 0;
@@ -234,6 +241,99 @@ int scan_tree(const char *root, xl_store *s, int want_stat, int verbose) {
 
     uint32_t root_idx = add_rec(s, XL_ROOT, "", 0, XL_F_DIR, 0, 0);
     int rc = walk(s, root_idx, r, want_stat, verbose, 0);
+    if (verbose) fprintf(stderr, "\r  scanned %u\n", s->n);
+    free(r);
+    return rc;
+}
+
+
+/* ---------- 按 Scope 的独立遍历（P5） ---------- */
+static int walk_scoped(xl_store *s, uint32_t self, const char *path, int want_stat,
+                       int verbose, int depth, xl_scan_allow_fn enter_dir,
+                       xl_scan_allow_fn file_ok, void *ctx) {
+    int fd = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (fd < 0) return -1;
+
+    if (depth > 0) {
+        struct stat st;
+        if (fstat(fd, &st) == 0 && st.st_dev != g_scan_dev) {
+            if (strstr(path, "/overlay2/") || strstr(path, "/merged")) {
+                close(fd);
+                return 0;
+            }
+        }
+    }
+
+    char buf[64 * 1024] __attribute__((aligned(8)));
+    char child[PATH_MAX];
+    int rc = 0;
+    for (;;) {
+        long n = syscall(SYS_getdents64, fd, buf, sizeof(buf));
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            rc = -1;
+            break;
+        }
+        if (n == 0) break;
+        for (long off = 0; off < n;) {
+            struct linux_dirent64 *d = (struct linux_dirent64 *)(buf + off);
+            off += d->d_reclen;
+            const char *name = d->d_name;
+            if (name[0] == '.' && (name[1] == 0 || (name[1] == '.' && name[2] == 0)))
+                continue;
+            size_t nlen = strlen(name);
+            if (g_skip_hidden && scan_name_skip(name, nlen)) {
+                int team_root = g_include_team && depth == 0 && nlen == 5 &&
+                                memcmp(name, "@team", 5) == 0;
+                if (!team_root) continue;
+            }
+            if (nlen == 0 || nlen > XL_NAME_MAX) continue;
+            if (snprintf(child, sizeof child, "%s/%s", path, name) >= (int)sizeof child)
+                continue;
+            if (excluded(child)) continue;
+
+            uint8_t flags = 0;
+            if (d->d_type == DT_DIR) flags |= XL_F_DIR;
+            else if (d->d_type == DT_LNK) flags |= XL_F_LINK;
+
+            uint32_t size = 0, mtime = 0;
+            if (want_stat || d->d_type == DT_UNKNOWN) {
+                struct stat st;
+                if (fstatat(fd, name, &st, AT_SYMLINK_NOFOLLOW) == 0) {
+                    if (!(flags & XL_F_DIR)) size = (uint32_t)st.st_size;
+                    mtime = (uint32_t)st.st_mtime;
+                }
+            }
+
+            if (flags & XL_F_DIR) {
+                if (enter_dir && !enter_dir(child, ctx)) continue;
+                uint32_t idx = add_rec(s, self, name, nlen, flags, 0, mtime);
+                if (depth < 512)
+                    walk_scoped(s, idx, child, want_stat, verbose, depth + 1,
+                                enter_dir, file_ok, ctx);
+            } else {
+                if (file_ok && !file_ok(child, ctx)) continue;
+                add_rec(s, self, name, nlen, flags, size, mtime);
+            }
+        }
+    }
+    close(fd);
+    return rc;
+}
+
+int scan_tree_scoped(const char *root, xl_store *s, int want_stat, int verbose,
+                     xl_scan_allow_fn enter_dir, xl_scan_allow_fn file_ok, void *ctx) {
+    char *r = realpath(root, NULL);
+    if (!r) r = strdup(root);
+    if (!r) return -1;
+    size_t n = strlen(r);
+    while (n > 1 && r[n - 1] == '/') r[--n] = 0;
+    if (excluded(r)) { free(r); return -1; }
+    struct stat rst;
+    g_scan_dev = (stat(r, &rst) == 0) ? rst.st_dev : 0;
+    uint32_t root_idx = add_rec(s, XL_ROOT, "", 0, XL_F_DIR, 0, 0);
+    int rc = walk_scoped(s, root_idx, r, want_stat, verbose, 0,
+                         enter_dir, file_ok, ctx);
     if (verbose) fprintf(stderr, "\r  scanned %u\n", s->n);
     free(r);
     return rc;

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HTTP API 基础回归：admin 头优先级、兜底开关、JSON 校验、缩略图缓存。"""
+"""HTTP API 基础回归：admin 头优先级、兜底开关、JSON 校验、鼠标设置持久化、缩略图缓存。"""
 import base64, json, os, pwd, socket, subprocess, sys, tempfile, time, urllib.parse
 
 BIN = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else "bin/xuanlan")
@@ -77,6 +77,54 @@ try:
     expect("bad json body", json.loads(body).get("error"), "bad json")
     st, body, _ = req("POST", "/api/settings", dict(base, **{"x-trim-isadmin": "1"}), b'{"strictHome":true}')
     expect("settings ok", json.loads(body).get("ok"), True)
+
+    # 扫描模式：默认 shared；POST 三模式与分类；非管理员拒绝
+    st, body, _ = req("GET", "/api/scanmode", base)
+    sm = json.loads(body)
+    expect("scanmode default", sm.get("mode"), "shared")
+    expect("scanmode empty groups", sm.get("isolatedGroups"), [])
+    st, body, _ = req("POST", "/api/scanmode", dict(base, **{"x-trim-isadmin": "1"}),
+                      json.dumps({"scanMode": "hybrid", "shareGroups": ["9001"],
+                                  "isolatedGroups": ["9002"], "shareUsers": ["1000"],
+                                  "isolatedUsers": ["1001"]}).encode())
+    expect("scanmode save", json.loads(body).get("ok"), True)
+    st, body, _ = req("GET", "/api/scanmode", base)
+    sm = json.loads(body)
+    expect("scanmode mode", sm.get("mode"), "hybrid")
+    expect("scanmode isolatedGroups", sm.get("isolatedGroups"), [9002])
+    st, body, _ = req("POST", "/api/scanmode", {"x-nas-uid": other_uid},
+                      b'{"scanMode":"isolated"}')
+    expect("scanmode non-admin", json.loads(body).get("ok"), False)
+
+    # 鼠标打开方式：默认文件夹单击、文件双击；POST 后可持久化，非法值回落默认
+    st, body, _ = req("GET", "/api/settings", base)
+    d = json.loads(body)
+    expect("click default folder", d.get("clickFolder"), "single")
+    expect("click default file", d.get("clickFile"), "double")
+    st, body, _ = req("POST", "/api/settings", dict(base, **{"x-trim-isadmin": "1"}),
+                      json.dumps({"openWith": {}, "clickFolder": "double",
+                                  "clickFile": "single", "strictHome": True}).encode())
+    expect("click save ok", json.loads(body).get("ok"), True)
+    st, body, _ = req("GET", "/api/settings", base)
+    d = json.loads(body)
+    expect("click saved folder", d.get("clickFolder"), "double")
+    expect("click saved file", d.get("clickFile"), "single")
+    # 旧客户端不带新字段：沿用已保存值，不被重置
+    st, body, _ = req("POST", "/api/settings", dict(base, **{"x-trim-isadmin": "1"}),
+                      b'{"openWith":{},"strictHome":true}')
+    expect("click legacy save ok", json.loads(body).get("ok"), True)
+    st, body, _ = req("GET", "/api/settings", base)
+    d = json.loads(body)
+    expect("click legacy folder kept", d.get("clickFolder"), "double")
+    expect("click legacy file kept", d.get("clickFile"), "single")
+    st, body, _ = req("POST", "/api/settings", dict(base, **{"x-trim-isadmin": "1"}),
+                      b'{"openWith":{},"clickFolder":"bogus","clickFile":"bogus"}')
+    expect("click bad save ok", json.loads(body).get("ok"), True)
+    st, body, _ = req("GET", "/api/settings", base)
+    d = json.loads(body)
+    expect("click clamp folder", d.get("clickFolder"), "single")
+    expect("click clamp file", d.get("clickFile"), "double")
+
     path = urllib.parse.quote(IMG)
     st, body, head = req("GET", "/api/thumb?path=" + path + "&w=96", {"x-nas-uid": "0"})
     if st == 200:

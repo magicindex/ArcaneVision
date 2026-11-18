@@ -288,3 +288,21 @@ int perm_mode_readable(uid_t uid, const char *path, const struct stat *st) {
     if (st && st->st_uid == uid) return 1;
     return posix_bit(st, uid, A_R);
 }
+
+
+/* 取目标用户的主组+附加组；供扫描模式解析用，不复用进程自身组。 */
+int perm_user_groups(uid_t uid, gid_t *out, int max) {
+    if (!out || max <= 0) return 0;
+    struct passwd *pw = getpwuid(uid);
+    if (!pw) return 0;
+    gid_t gl[64];
+    int n = 64;
+    if (getgrouplist(pw->pw_name, pw->pw_gid, gl, &n) < 0) {
+        out[0] = pw->pw_gid;
+        return 1;
+    }
+    if (n > max) n = max;
+    if (n > 64) n = 64;
+    memcpy(out, gl, sizeof(gid_t) * (size_t)n);
+    return n;
+}

@@ -178,6 +178,29 @@
   .openwin .ppages{flex:1;overflow:auto;display:flex;justify-content:center;padding:14px 12px 24px;min-height:0}
   .openwin .ppages canvas{display:block;box-shadow:0 6px 26px rgba(0,0,0,.55);border-radius:2px;background:#fff}
   .openwin .phint{color:#7f93b3;font-size:12.5px;padding:30px 0}
+  /* 视频预览：自定义控制条，鼠标离开播放窗口即隐藏，避免遮挡画面 */
+  .openwin #videoview{display:none;flex:1;flex-direction:column;min-height:0;background:#000;position:relative;overflow:hidden}
+  .openwin #videoview.on{display:flex}
+  .openwin #vvideo{flex:1;width:100%;min-height:0;object-fit:contain;background:#000;cursor:pointer;outline:none}
+  .openwin .vbar{position:absolute;left:0;right:0;bottom:0;z-index:2;display:flex;align-items:center;gap:8px;
+    padding:22px 12px 11px;background:linear-gradient(180deg,rgba(0,0,0,0),rgba(0,0,0,.82));
+    opacity:0;transform:translateY(8px);pointer-events:none;transition:opacity .16s,transform .16s}
+  .openwin #videoview.ctrlon .vbar{opacity:1;transform:none;pointer-events:auto}
+  .openwin .vbar button{font-size:11.5px;padding:4px 9px;border-radius:6px;cursor:pointer;
+    color:#dbe8f8;background:rgba(10,16,26,.55);border:1px solid rgba(160,190,230,.28)}
+  .openwin .vbar button:hover{color:#fff;border-color:rgba(120,220,210,.6)}
+  .openwin .vbar #vtime{font-size:11.5px;color:#dbe8f8;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .openwin .vbar input[type=range]{accent-color:#59d3c8;height:16px;min-width:60px}
+  .openwin .vbar #vseek{flex:1}
+  .openwin .vbar #vvol{width:68px;flex:none}
+  .openwin #vhint{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:2;
+    font-size:11px;color:#dbe8f8;background:rgba(8,14,24,.62);border:1px solid rgba(160,190,230,.2);
+    border-radius:999px;padding:4px 12px;opacity:0;transition:opacity .16s;pointer-events:none;white-space:nowrap}
+  .openwin #videoview.ctrlon #vhint{opacity:.9}
+  @media(max-width:620px),(pointer:coarse){
+    .openwin .vbar #vvol{display:none}
+    .openwin .vbar{padding-bottom:max(11px,env(safe-area-inset-bottom))}
+  }
   /* 图片预览：全屏查看、左右切换、键盘操作；列表来自当前搜索 items，不重新请求 */
   .imgview{position:fixed;top:0;right:0;bottom:0;left:0;z-index:260;display:none;
     flex-direction:column;background:#05080d;color:#d9e5f5}
@@ -316,8 +339,11 @@
   @media (max-width:720px){ .setbox .agrid{grid-template-columns:1fr} }
   .setbox .row2:hover{background:rgba(80,150,170,.08)}
   .setbox .k{flex:1;font-size:13px;color:#c2d0e6}
-  .setbox select{background:#101826;color:#cfdcf0;border:1px solid rgba(120,160,220,.25);
+  .setbox select,.setbox input[type=text]{background:#101826;color:#cfdcf0;border:1px solid rgba(120,160,220,.25);
     border-radius:8px;padding:5px 8px;font-size:12.5px;outline:none}
+  .setbox input[type=text]{flex:1;min-width:0}
+  html[data-theme="light"] .setbox select,html[data-theme="light"] .setbox input[type=text]{
+    background:#f7f9fc;color:#33415a;border-color:rgba(15,23,42,.16)}
   .setbox .hint{font-size:12px;color:#6e7f9f;line-height:1.7;margin-top:6px}
   .setbox .ok{color:#59d3c8}
   .setbox .bad{color:#e2896a}
@@ -781,6 +807,14 @@
     '<span id="pgcount">– / –</span><button id="pgnext">›</button><span class="sp"></span>' +
     '<button id="pgfit">适应宽度</button><button id="pgout">−</button>' +
     '<button id="pgin">+</button></div><div class="ppages" id="ppages"></div></div>' +
+    '<div id="videoview"><video id="vvideo" playsinline preload="metadata" tabindex="0"></video>' +
+    '<div class="vbar"><button id="vplay" type="button" aria-label="播放或暂停">▶</button>' +
+    '<span id="vtime">0:00 / 0:00</span>' +
+    '<input id="vseek" type="range" min="0" max="1000" value="0" step="1" aria-label="播放进度">' +
+    '<button id="vmute" type="button" aria-label="静音">音量</button>' +
+    '<input id="vvol" type="range" min="0" max="100" value="100" step="1" aria-label="音量">' +
+    '<button id="vfull" type="button" aria-label="全屏">全屏</button></div>' +
+    '<div id="vhint">空格 播放/暂停 · ←/→ 快退/快进 5 秒</div></div>' +
     '<div class="rsz"></div>';
   document.body.appendChild(openwin);
   const owframe = openwin.querySelector('#owframe');
@@ -844,6 +878,129 @@
   let pdfLib = null, pdfDoc = null, pdfPage = 1, pdfFit = true, pdfZoom = 1;
   const pdfView = openwin.querySelector('#pdfview');
   const pdfPages = openwin.querySelector('#ppages');
+  // ---- 内置视频播放器 ----
+  const videoView = openwin.querySelector('#videoview');
+  const vvideo = openwin.querySelector('#vvideo');
+  const vplay = openwin.querySelector('#vplay');
+  const vtime = openwin.querySelector('#vtime');
+  const vseek = openwin.querySelector('#vseek');
+  const vmute = openwin.querySelector('#vmute');
+  const vvol = openwin.querySelector('#vvol');
+  const vfull = openwin.querySelector('#vfull');
+  let vHideTimer = 0, vHover = false;
+
+  function fmtVideoTime(sec){
+    if (!isFinite(sec) || sec < 0) return '0:00';
+    sec = Math.floor(sec);
+    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+    return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s).padStart(2, '0');
+  }
+  function videoSyncTime(){
+    const cur = vvideo.currentTime || 0, dur = vvideo.duration;
+    vtime.textContent = fmtVideoTime(cur) + ' / ' + fmtVideoTime(dur);
+    if (isFinite(dur) && dur > 0) {
+      vseek.disabled = false;
+      vseek.value = String(Math.min(1000, Math.round(cur / dur * 1000)));
+    } else {
+      vseek.disabled = true;
+    }
+  }
+  function videoSyncPlay(){
+    vplay.textContent = vvideo.paused ? '▶' : '❚❚';
+    vplay.setAttribute('aria-label', vvideo.paused ? '播放' : '暂停');
+  }
+  function videoShowControls(){
+    if (!videoView.classList.contains('on')) return;
+    videoView.classList.add('ctrlon');
+    clearTimeout(vHideTimer);
+    if (!vvideo.paused) {
+      vHideTimer = setTimeout(() => {
+        if (!vHover && !vvideo.paused) videoView.classList.remove('ctrlon');
+      }, 2600);
+    }
+  }
+  function videoHideControls(){
+    clearTimeout(vHideTimer);
+    videoView.classList.remove('ctrlon');
+  }
+  function videoToggle(){
+    if (vvideo.paused) {
+      const p = vvideo.play();
+      if (p && p.catch) p.catch(() => {});
+    } else {
+      vvideo.pause();
+    }
+    videoShowControls();
+  }
+  function videoSeekBy(delta){
+    if (!isFinite(delta)) return;
+    const cur = vvideo.currentTime || 0;
+    const max = isFinite(vvideo.duration) ? vvideo.duration : Infinity;
+    vvideo.currentTime = Math.max(0, Math.min(max, cur + delta));
+    videoSyncTime();
+    videoShowControls();
+  }
+  function videoStop(){
+    try { vvideo.pause(); } catch (e) {}
+    vvideo.removeAttribute('src');
+    try { vvideo.load(); } catch (e) {}
+    videoView.classList.remove('on', 'ctrlon');
+    clearTimeout(vHideTimer);
+    vHover = false;
+  }
+  function openVideo(url, title){
+    if (openIn !== 'embed') { videoStop(); window.open(url, '_blank'); return; }
+    if (url.indexOf('/api/transcode') < 0) setOwTag('');
+    owUrl = url;
+    setOwBrowser();
+    pdfHide();
+    owframe.style.display = 'none';
+    owframe.removeAttribute('src');
+    owframe.removeAttribute('srcdoc');
+    openwin.querySelector('#owtitle').textContent = title || '视频';
+    videoView.classList.add('on');
+    openwin.classList.add('on');
+    applyOw();
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    vvideo.src = url;
+    vvideo.load();
+    try { vvideo.focus({ preventScroll: true }); } catch (e) { try { vvideo.focus(); } catch (e2) {} }
+    const p = vvideo.play();
+    if (p && p.catch) p.catch(() => {});
+    videoSyncPlay();
+    videoSyncTime();
+    videoShowControls();
+  }
+  vvideo.addEventListener('click', videoToggle);
+  vplay.addEventListener('click', videoToggle);
+  vvideo.addEventListener('play', () => { videoSyncPlay(); videoShowControls(); });
+  vvideo.addEventListener('pause', () => { videoSyncPlay(); videoShowControls(); });
+  vvideo.addEventListener('ended', () => { videoSyncPlay(); videoShowControls(); });
+  vvideo.addEventListener('timeupdate', videoSyncTime);
+  vvideo.addEventListener('loadedmetadata', () => { videoSyncTime(); videoShowControls(); });
+  vseek.addEventListener('input', () => {
+    if (!isFinite(vvideo.duration) || vvideo.duration <= 0) return;
+    vvideo.currentTime = vvideo.duration * (Number(vseek.value) / 1000);
+    videoSyncTime();
+  });
+  const videoSyncVolume = () => {
+    vmute.textContent = vvideo.muted || vvideo.volume === 0 ? '静音中' : '音量';
+    vvol.value = String(Math.round((vvideo.muted ? 0 : vvideo.volume) * 100));
+  };
+  vmute.addEventListener('click', () => { vvideo.muted = !vvideo.muted; videoSyncVolume(); });
+  vvol.addEventListener('input', () => { vvideo.volume = Number(vvol.value) / 100; vvideo.muted = false; videoSyncVolume(); });
+  vvideo.addEventListener('volumechange', videoSyncVolume);
+  vfull.addEventListener('click', () => {
+    const el = videoView;
+    if (document.fullscreenElement) { document.exitFullscreen && document.exitFullscreen(); return; }
+    const fn = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (fn) fn.call(el);
+  });
+  videoView.addEventListener('mouseenter', () => { vHover = true; videoShowControls(); });
+  videoView.addEventListener('mousemove', videoShowControls);
+  videoView.addEventListener('mouseleave', () => { vHover = false; videoHideControls(); });
+  videoSyncPlay();
+  videoSyncVolume();
   function pdfHide(){
     pdfView.classList.remove('on');
     pdfPages.innerHTML = '';
@@ -853,6 +1010,7 @@
   async function openPdf(url, title){
     owUrl = url;
     setOwBrowser();
+    videoStop();
     openwin.querySelector('#owtitle').textContent = title || 'PDF';
     owframe.style.display = 'none';
     owframe.removeAttribute('srcdoc');
@@ -938,11 +1096,26 @@
     owframe.removeAttribute('sandbox');
     owframe.src = 'about:blank';
     pdfHide();
+    videoStop();
   }
   openwin.querySelector('#owclose').onclick = closeOpen;
   openwin.querySelector('#owbrowser').onclick = () => owUrl && window.open(owUrl, '_blank');
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && openwin.classList.contains('on')) closeOpen();
+  });
+  document.addEventListener('keydown', e => {
+    if (!videoView.classList.contains('on') || !openwin.classList.contains('on')) return;
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.tagName === 'BUTTON' || t.isContentEditable)) return;
+    const sm = document.querySelector('.setmask');
+    if (sm && sm.classList.contains('on')) return;
+    if (e.code === 'Space' || e.key === ' ') {
+      e.preventDefault(); e.stopPropagation(); videoToggle();
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault(); videoSeekBy(-5);
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault(); videoSeekBy(5);
+    }
   });
   let owUserToggled = false;
   function openURL(url, title){
@@ -952,6 +1125,7 @@
     owUrl = url;
     setOwBrowser();
     pdfHide();
+    videoStop();
     owframe.style.display = '';
     owframe.removeAttribute('srcdoc');
     owframe.removeAttribute('sandbox');
@@ -1019,7 +1193,7 @@
     const url = API + 'transcode?path=' + encodeURIComponent(p) + '&q=1080';
     setOwTag('转码 1080p');
     say('正在转码播放（1080p，' + (why || '兼容模式') + '）');
-    openURL(url, baseName(p));
+    openVideo(url, baseName(p));
   }
 
   function setOwTag(text){
@@ -1097,6 +1271,7 @@
         return;
       }
       if (catOfExt(extOf(p)) === 'rich') { openRich(p); return; }
+      if (catOfExt(extOf(p)) === 'video') { openVideo(API + 'file?path=' + encodeURIComponent(p), baseName(p)); return; }
     }
     if (how === 'docs') openDoc(p);
     else if (how === 'fnpreview') {
@@ -1113,6 +1288,7 @@
       const isMd = isMdExt(ext);
       const vcat = catOfExt(ext);
       if (ext === 'epub') { openEpub(p); return; }
+      if (vcat === 'video') { openVideo(API + 'file?path=' + encodeURIComponent(p), baseName(p)); return; }
       if (vcat === 'rich') { openRich(p); return; }
       if (vcat === 'pdf' && !isPdf && !isMd) { noBuiltinPreview(p, '该格式无法用内置阅读器打开'); return; }
       const vpath = isMd ? 'markdown' : ((vcat === 'text' || vcat === 'code') ? 'text' : 'file');
@@ -2277,13 +2453,16 @@
       li.onclick = e => {
         if (e.target.closest('button, input')) return;
         sel = idx; paintSel();
-        if (isImage(it)) { openImageViewer(it, items); return; }
-        if (coarse) openEntry(it);
+        if (coarse) { openEntry(it, items); return; }
+        if (clickModeOf(it) === 'single') {
+          const now = Date.now();
+          if (!li._openedAt || now - li._openedAt > 350) { li._openedAt = now; openEntry(it, items); }
+        }
       };
       li.ondblclick = e => {
-        if (coarse || e.target.closest('button, input') || isImage(it)) return;
+        if (coarse || e.target.closest('button, input')) return;
         sel = idx; paintSel();
-        openEntry(it);
+        if (clickModeOf(it) === 'double') openEntry(it, items);
       };
       li.oncontextmenu = e => { e.preventDefault(); sel = idx; paintSel(); showCtx(e.clientX, e.clientY, it); };
       frag.appendChild(li);
@@ -2323,6 +2502,11 @@
   finder.addEventListener('click', e => { if (e.target === finder) closeFinder(); });
   finder.querySelector('.x').onclick = closeFinder;
 
+  // 鼠标打开方式：默认文件夹单击、文件双击；可在设置里分别改；触屏固定单击
+  function clickModeOf(it){
+    return it.dir ? (settings.clickFolder === 'double' ? 'double' : 'single')
+                  : (settings.clickFile === 'single' ? 'single' : 'double');
+  }
   function openEntry(it, source){
     if (it.dir) showDir(it.path, null);
     else if (isImage(it)) openImageViewer(it, source && source.length ? source : items);
@@ -2356,7 +2540,17 @@
           row.innerHTML = '<div class="ic">' + catIcon(it.dir ? 'dir' : (it.cat || 'other'), 16) + '</div>' +
                           '<div class="nm">' + esc(it.name) + '</div>' +
                           '<div class="meta">' + (it.dir ? '' : fmtSize(it.size) + ' · ' + fmtTime(it.mtime)) + '</div>';
-          row.onclick = () => openEntry(it, items);
+          row.onclick = e => {
+            if (coarse) { openEntry(it, items); return; }
+            if (clickModeOf(it) === 'single') {
+              const now = Date.now();
+              if (!row._openedAt || now - row._openedAt > 350) { row._openedAt = now; openEntry(it, items); }
+            }
+          };
+          row.ondblclick = e => {
+            if (coarse || clickModeOf(it) !== 'double') return;
+            e.preventDefault(); openEntry(it, items);
+          };
           row.oncontextmenu = e => { e.preventDefault(); ctxItem = it; showCtx(e.clientX, e.clientY, it); };
           list.appendChild(row);
         }
@@ -2384,7 +2578,10 @@
     ['video', '视频', ['mp4','mkv','mov','avi','webm','wmv','flv','m4v','mpg','mpeg','ts','m2ts','rmvb','3gp'], OPTS_MEDIA, 'fnpreview'],
     ['archive', '压缩包', ['zip','rar','7z','tar','gz','tgz','bz2','xz','zst','lz4','iso'], OPTS_DL, 'download']
   ];
-  let settings = { openWith: {}, onlyoffice: { installed: false, running: false }, preview: { installed: false, running: false } };
+  let settings = { openWith: {}, clickFolder: 'single', clickFile: 'double',
+                   scanMode: 'shared', shareGroups: [], isolatedGroups: [],
+                   shareUsers: [], isolatedUsers: [],
+                   onlyoffice: { installed: false, running: false }, preview: { installed: false, running: false } };
   let checked = new Set();
   let excluded = new Set();
   let showAll = localStorage.getItem('xl_all') === '1';
@@ -2394,6 +2591,31 @@
     '<section class="scard"><h3>打开位置</h3><div class="row2"><div class="k">文件与文档打开于</div>' +
     '<select id="openIn"><option value="embed">当前窗口子窗口</option><option value="window">新窗口（新标签页）</option>' +
     '</select></div></section>' +
+    '<section class="scard" id="scanCard"><h3>扫描模式</h3>' +
+    '<div class="row2"><div class="k">模式</div><select id="scanMode">' +
+    '<option value="shared">共享（单份索引，按权限视图裁剪）</option>' +
+    '<option value="isolated">隔离（每用户一份索引）</option>' +
+    '<option value="hybrid">混合（默认共享，按组隔离）</option></select></div>' +
+    '<div class="hint" id="scanModeHint"></div>' +
+    '<div id="scanHybrid">' +
+    '<div class="row2"><div class="k">share 组（gid，逗号分隔）</div>' +
+    '<input id="shareGroups" type="text" placeholder="例如 9001,9002"></div>' +
+    '<div class="row2"><div class="k">isolated 组（gid，逗号分隔）</div>' +
+    '<input id="isolatedGroups" type="text" placeholder="例如 9010,9011"></div>' +
+    '<div class="row2"><div class="k">share 用户（uid，逗号分隔）</div>' +
+    '<input id="shareUsers" type="text" placeholder="可选"></div>' +
+    '<div class="row2"><div class="k">isolated 用户（uid，逗号分隔）</div>' +
+    '<input id="isolatedUsers" type="text" placeholder="可选"></div>' +
+    '<div class="hint">默认 shared；hybrid 下 isolated 组按组独立扫描，未分类/未命中回退 shared；isolated 为每用户独立索引。用户覆盖优先于组，隔离组优先于共享组；保存后自动重建索引。</div>' +
+    '<div class="hint" id="scanStatus"></div>' +
+    '<div class="row2"><div class="k">回滚</div><button class="act" id="scanRollback" type="button">回滚到共享</button></div>' +
+    '</div></section>' +
+    '<section class="scard"><h3>鼠标操作</h3>' +
+    '<div class="row2"><div class="k">文件夹打开</div><select id="clickFolder">' +
+    '<option value="single">单击</option><option value="double">双击</option></select></div>' +
+    '<div class="row2"><div class="k">文件 / 图片打开</div><select id="clickFile">' +
+    '<option value="single">单击</option><option value="double">双击</option></select></div>' +
+    '<div class="hint">默认：文件夹单击、文件双击；触屏始终单击打开。</div></section>' +
     '<section class="scard"><h3>打开方式关联</h3><div id="assoc"></div>' +
     '<div class="hint" id="ooHint"></div>' +
     '<div class="hint" id="pvHint"></div></section>' +
@@ -2423,12 +2645,74 @@
     '<div class="foot"><button class="act" id="setClose">关闭</button>' +
     '<button class="act primary" id="setSave">保存</button></div></div>';
   document.body.appendChild(setmask);
+  setmask.querySelector('#scanRollback').onclick = () => {
+    if (!confirm('回滚到共享模式？所有用户将回到共享索引，单元索引保留待清理。')) return;
+    fetch(API + 'scanmode', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ scanMode: 'shared', shareGroups: [], isolatedGroups: [],
+                             shareUsers: [], isolatedUsers: [] }) })
+      .then(r => r.json()).then(d => {
+        if (d && d.ok === false) throw new Error(d.error || '回滚失败');
+        settings.scanMode = 'shared';
+        settings.shareGroups = []; settings.isolatedGroups = [];
+        settings.shareUsers = []; settings.isolatedUsers = [];
+        renderSettings();
+        say('已回滚到共享模式，正在重建');
+      }).catch(e => alert('回滚失败：' + (e && e.message || e)));
+  };
   const oo = () => settings.onlyoffice || {};
   function docsAvailable(){ const o = oo(); return !!(o.installed && o.running); }
 
+  let scanStatus = null;
+  function renderScanStatus(){
+    const el = setmask.querySelector('#scanStatus');
+    if (!el) return;
+    const u = (scanStatus && scanStatus.units) || {};
+    const r = (scanStatus && scanStatus.repair) || {};
+    const e = (scanStatus && scanStatus.events) || {};
+    const mb = (n) => ((n || 0) / 1048576).toFixed(1) + ' MB';
+    el.textContent = '单元 ' + (u.count || 0) + ' 个 · ' + mb(u.bytes) +
+      '（delta ' + mb(u.deltaBytes) + '）' +
+      (u.alert ? ' · 容量告警' : '') +
+      ' · 修复队列 ' + (r.queued || 0) + '（失败 ' + (r.failed || 0) + '）' +
+      ' · 事件队列 ' + (e.queued || 0) + '（丢弃 ' + (e.dropped || 0) + '）';
+  }
+  function refreshScanStatus(){
+    fetch(API + 'status').then(r => r.json()).then(d => {
+      scanStatus = d;
+      renderScanStatus();
+    }).catch(() => {});
+  }
   function renderSettings(){
     const oiSel = setmask.querySelector('#openIn');
     if (oiSel) oiSel.value = openIn;
+    const cfSel = setmask.querySelector('#clickFolder');
+    if (cfSel) cfSel.value = settings.clickFolder === 'double' ? 'double' : 'single';
+    const cfileSel = setmask.querySelector('#clickFile');
+    if (cfileSel) cfileSel.value = settings.clickFile === 'single' ? 'single' : 'double';
+    {
+      const card = setmask.querySelector('#scanCard');
+      const isAdmin = !!(settings.scopeAvailable && settings.scopeAvailable.admin);
+      if (card) card.style.display = isAdmin ? '' : 'none';
+      const sm = setmask.querySelector('#scanMode');
+      if (sm) sm.value = settings.scanMode || 'shared';
+      const txt = a => (a || []).join(',');
+      const sg = setmask.querySelector('#shareGroups'); if (sg) sg.value = txt(settings.shareGroups);
+      const ig = setmask.querySelector('#isolatedGroups'); if (ig) ig.value = txt(settings.isolatedGroups);
+      const su = setmask.querySelector('#shareUsers'); if (su) su.value = txt(settings.shareUsers);
+      const iu = setmask.querySelector('#isolatedUsers'); if (iu) iu.value = txt(settings.isolatedUsers);
+      const syncScan = () => {
+        const m = sm ? sm.value : 'shared';
+        const hy = setmask.querySelector('#scanHybrid');
+        if (hy) hy.style.display = m === 'hybrid' ? '' : 'none';
+        const h = setmask.querySelector('#scanModeHint');
+        if (h) h.textContent = m === 'shared' ? '所有人共用一份索引，成本最低；结果按 ACL 视图裁剪。'
+          : m === 'isolated' ? '每个用户一份索引，物理隔离；构建/存储约为用户数倍。'
+          : '默认共享；isolated 组按组独立扫描，未分类组回退共享。';
+      };
+      if (sm) sm.onchange = syncScan;
+      syncScan();
+      renderScanStatus();
+    }
     const box = setmask.querySelector('#assoc');
     box.className = 'agrid';
     box.innerHTML = '';
@@ -2750,6 +3034,7 @@
   function openSettings(){
     setmask.classList.add('on');
     renderSettings();
+    refreshScanStatus();
   }
   setmask.addEventListener('click', e => { if (e.target === setmask) setmask.classList.remove('on'); });
   setmask.querySelector('#setClose').onclick = () => setmask.classList.remove('on');
@@ -2784,21 +3069,42 @@
       hours: parseInt(setmask.querySelector('#rbHours').value || '6', 10)
     };
     const oi = setmask.querySelector('#openIn').value;
+    const clickFolder = setmask.querySelector('#clickFolder').value === 'double' ? 'double' : 'single';
+    const clickFile = setmask.querySelector('#clickFile').value === 'single' ? 'single' : 'double';
+    const scanMode = setmask.querySelector('#scanMode') ? setmask.querySelector('#scanMode').value : 'shared';
+    const numList = id => (setmask.querySelector('#' + id).value || '')
+      .split(',').map(x => x.trim()).filter(Boolean).map(x => String(parseInt(x, 10))).filter(x => x !== 'NaN');
     const strictHome = !!setmask.querySelector('#strictHome').checked;
     const skipHidden = !!setmask.querySelector('#skipHidden').checked;
     const usbEnabled = !!setmask.querySelector('#usbEnabled').checked;
     const usbWatch = !!setmask.querySelector('#usbWatch').checked;
     fetch(API + 'settings', { method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ openWith: ow, openIn: oi, strictHome, skipHidden, usbEnabled, usbWatch,
-                             scope, rebuild, settingsVersion: 2 }) })
+      body: JSON.stringify({ openWith: ow, openIn: oi, clickFolder, clickFile,
+                             strictHome, skipHidden, usbEnabled, usbWatch,
+                             scope, rebuild, settingsVersion: 3 }) })
       .then(r => r.json()).then(d => {
         if (d && d.ok === false) {
-          alert('保存失败：' + (d.error || '未知错误'));
-          return;
+          throw new Error(d.error || '未知错误');
         }
-        settings.openWith = ow; settings.scope = scope; settings.settingsVersion = 2; openIn = oi;
+        settings.openWith = ow; settings.scope = scope; settings.settingsVersion = 3; openIn = oi;
+        settings.clickFolder = clickFolder; settings.clickFile = clickFile;
+        settings.scanMode = scanMode;
+        settings.shareGroups = numList('shareGroups');
+        settings.isolatedGroups = numList('isolatedGroups');
+        settings.shareUsers = numList('shareUsers');
+        settings.isolatedUsers = numList('isolatedUsers');
         settings.strictHome = strictHome; settings.skipHidden = skipHidden;
         settings.usbEnabled = usbEnabled; settings.usbWatch = usbWatch;
+        const adminScan = !!(settings.scopeAvailable && settings.scopeAvailable.admin);
+        if (!adminScan) return;
+        return fetch(API + 'scanmode', { method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ scanMode, shareGroups: settings.shareGroups,
+            isolatedGroups: settings.isolatedGroups, shareUsers: settings.shareUsers,
+            isolatedUsers: settings.isolatedUsers }) })
+          .then(r => r.json()).then(sd => {
+            if (sd && sd.ok === false) throw new Error(sd.error || '扫描模式保存失败');
+          });
+      }).then(() => {
         setmask.classList.remove('on');
         say('设置已保存');
         search();
@@ -2831,14 +3137,26 @@
     d.settingsVersion = 2;
     return d;
   }
+  function loadScanMode(){
+    return fetch(API + 'scanmode').then(r => r.json()).then(d => {
+      if (!d || d.error) return;
+      settings.scanMode = d.mode || 'shared';
+      settings.shareGroups = d.shareGroups || [];
+      settings.isolatedGroups = d.isolatedGroups || [];
+      settings.shareUsers = d.shareUsers || [];
+      settings.isolatedUsers = d.isolatedUsers || [];
+    }).catch(() => {});
+  }
   function loadSettings(){
     fetch(API + 'settings' + (showAll ? '?all=1' : '')).then(r => r.json()).then(d => {
       d = migrateOpenWith(d); settings = d; openIn = d.openIn === 'window' ? 'window' : 'embed';
+      return loadScanMode();
     }).catch(() => {});
   }
   function reloadSettings(){
     fetch(API + 'settings' + (showAll ? '?all=1' : '')).then(r => r.json()).then(d => {
-      d = migrateOpenWith(d); settings = d; openIn = d.openIn === 'window' ? 'window' : 'embed'; renderSettings();
+      d = migrateOpenWith(d); settings = d; openIn = d.openIn === 'window' ? 'window' : 'embed';
+      return loadScanMode().then(() => renderSettings());
     }).catch(() => {});
   }
   loadSettings();

@@ -16,6 +16,7 @@
 #include <poll.h>
 #include <limits.h>
 #include <pwd.h>
+#include <grp.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -33,6 +34,10 @@
 #include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
+
+#include "scanmode.h"
+#include "unitbuild.h"
+#include "unitdelta.h"
 
 #define MAX_VOL   8
 #define SCOPE_MAX 512   /* 每个用户的检索范围条目上限（含排除项） */
@@ -237,6 +242,268 @@ static char g_err[256];
 static char g_idx_dir[1024];
 static char g_trash[1100];
 
+/* ---------- 扫描模式与隔离单元路由（P2） ---------- */
+#define XL_UNIT_CACHE_MAX 64
+typedef struct {
+    char    key[XL_SCAN_UNIT_MAX];
+    int     loaded;
+    int     ok;
+    int     missing;    /* 1 = 某个共享卷没有对应单元索引 */
+    int     nvols;
+    uint64_t epoch;     /* unit.json/delta 的 mtime(ns)；变化时加载新版本 */
+    int     refs;       /* 正在使用该单元的请求数 */
+    int     dead;       /* 已释放，可复用槽位 */
+    vol_t   vols[MAX_VOL];
+    xl_unit_delta_set delta;   /* 单元级增量日志（快照之外） */
+} unit_cache_t;
+
+typedef struct {
+    vol_t  *vols[MAX_VOL * XL_SCAN_ARRAY_MAX];
+    int     n;
+    int     shared;     /* 1 = 共享索引 */
+    int     missing;    /* 1 = 隔离单元缺失/不可读 */
+    unit_cache_t *ucs[XL_SCAN_ARRAY_MAX];
+    int     nuc;
+} query_route_t;
+
+static unit_cache_t g_units[XL_UNIT_CACHE_MAX];
+static int g_nunits;
+static pthread_mutex_t g_units_mu = PTHREAD_MUTEX_INITIALIZER;
+static xl_scan_policy g_scan_policy;
+static pthread_mutex_t g_scan_policy_mu = PTHREAD_MUTEX_INITIALIZER;
+static time_t g_scan_policy_mtime;
+static int g_scan_policy_loaded;
+
+static void scan_policy_path(char *out, size_t cap) {
+    char tmp[1200];
+    snprintf(tmp, sizeof tmp, "%s", g_idx_dir);
+    char *sl = strrchr(tmp, '/');
+    if (sl) *sl = 0;
+    snprintf(out, cap, "%s/scope.json", tmp);
+}
+
+static void unit_jobs_refresh(void);
+static void unit_repair_enqueue(const char *key);
+static void start_build(void);
+
+static void scanmode_path(char *out, size_t cap) {
+    char tmp[1200];
+    snprintf(tmp, sizeof tmp, "%s", g_idx_dir);
+    char *sl = strrchr(tmp, '/');
+    if (sl) *sl = 0;
+    snprintf(out, cap, "%s/scanmode.json", tmp);
+}
+
+static void scan_policy_refresh(void) {
+    char sp[1300];
+    scan_policy_path(sp, sizeof sp);
+    struct stat st;
+    time_t m = (stat(sp, &st) == 0) ? st.st_mtime : 0;
+    char mp0[1300];
+    scanmode_path(mp0, sizeof mp0);
+    if (stat(mp0, &st) == 0 && st.st_mtime > m) m = st.st_mtime;
+    pthread_mutex_lock(&g_scan_policy_mu);
+    if (!g_scan_policy_loaded || m != g_scan_policy_mtime) {
+        xl_scan_policy p;
+        if (xl_scan_policy_load(sp, &p) != 0) xl_scan_policy_load(NULL, &p);
+        /* 管理端覆盖层：只覆盖模式与分类，不动 scope.json 的其它字段 */
+        char mp[1300];
+        scanmode_path(mp, sizeof mp);
+        xl_scan_policy ov;
+        if (xl_scan_policy_load(mp, &ov) == 0 && access(mp, R_OK) == 0) {
+            p.mode = ov.mode;
+            p.n_share_groups = ov.n_share_groups;
+            memcpy(p.share_groups, ov.share_groups, sizeof(p.share_groups));
+            p.n_isolated_groups = ov.n_isolated_groups;
+            memcpy(p.isolated_groups, ov.isolated_groups, sizeof(p.isolated_groups));
+            p.n_share_users = ov.n_share_users;
+            memcpy(p.share_users, ov.share_users, sizeof(p.share_users));
+            p.n_isolated_users = ov.n_isolated_users;
+            memcpy(p.isolated_users, ov.isolated_users, sizeof(p.isolated_users));
+        }
+        g_scan_policy = p;
+        g_scan_policy_mtime = m;
+        g_scan_policy_loaded = 1;
+        fprintf(stderr, "xuanlan serve: scanMode=%s\n", xl_scan_mode_name(g_scan_policy.mode));
+    }
+    pthread_mutex_unlock(&g_scan_policy_mu);
+    unit_jobs_refresh();
+}
+
+static void unit_cache_free_entry(unit_cache_t *u) {
+    for (int i = 0; i < u->nvols; i++) {
+        dir_index_free(&u->vols[i]);
+        snapshot_close(&u->vols[i].sn);
+    }
+    xl_unit_delta_free(&u->delta);
+    u->nvols = 0;
+    u->ok = 0;
+    u->refs = 0;
+    u->dead = 1;
+}
+
+static int unit_cache_newer(const char *key, uint64_t epoch) {
+    for (int i = 0; i < g_nunits; i++)
+        if (!g_units[i].dead && !strcmp(g_units[i].key, key) && g_units[i].epoch > epoch)
+            return 1;
+    return 0;
+}
+
+static void unit_cache_unref(unit_cache_t *u) {
+    if (!u) return;
+    pthread_mutex_lock(&g_units_mu);
+    if (u->refs > 0) u->refs--;
+    if (u->refs == 0 && !u->dead && unit_cache_newer(u->key, u->epoch))
+        unit_cache_free_entry(u);
+    pthread_mutex_unlock(&g_units_mu);
+}
+
+static unit_cache_t *unit_cache_get(const char *key) {
+    if (!key || !*key || !strcmp(key, "shared")) return NULL;
+    char dir[1024];
+    if (xl_scan_unit_dir(g_idx_dir, key, dir, sizeof dir) < 0) return NULL;
+    char meta[1300], dlog[1300];
+    snprintf(meta, sizeof meta, "%s/unit.json", dir);
+    snprintf(dlog, sizeof dlog, "%s/delta.log", dir);
+    struct stat st;
+    uint64_t epoch = 0;
+    if (stat(meta, &st) == 0)
+        epoch = (uint64_t)st.st_mtim.tv_sec * 1000000000ull + (uint64_t)st.st_mtim.tv_nsec;
+    else if (stat(dir, &st) == 0)
+        epoch = (uint64_t)st.st_mtim.tv_sec * 1000000000ull + (uint64_t)st.st_mtim.tv_nsec;
+    if (stat(dlog, &st) == 0) {
+        uint64_t de = (uint64_t)st.st_mtim.tv_sec * 1000000000ull + (uint64_t)st.st_mtim.tv_nsec;
+        if (de > epoch) epoch = de;
+    }
+
+    pthread_mutex_lock(&g_units_mu);
+    for (int i = 0; i < g_nunits; i++)
+        if (!g_units[i].dead && !strcmp(g_units[i].key, key) && g_units[i].epoch == epoch) {
+            g_units[i].refs++;
+            pthread_mutex_unlock(&g_units_mu);
+            return &g_units[i];
+        }
+    /* 旧 epoch 不再被新请求使用：无引用立即释放，有引用等 route_release */
+    for (int i = 0; i < g_nunits; i++)
+        if (!g_units[i].dead && !strcmp(g_units[i].key, key) && g_units[i].refs == 0)
+            unit_cache_free_entry(&g_units[i]);
+    int slot = -1;
+    for (int i = 0; i < g_nunits; i++)
+        if (g_units[i].dead) { slot = i; break; }
+    if (slot < 0) {
+        if (g_nunits >= XL_UNIT_CACHE_MAX) { pthread_mutex_unlock(&g_units_mu); return NULL; }
+        slot = g_nunits++;
+    }
+    unit_cache_t *u = &g_units[slot];
+    memset(u, 0, sizeof(*u));
+    size_t kl = strlen(key);
+    if (kl >= sizeof u->key) kl = sizeof u->key - 1;
+    memcpy(u->key, key, kl); u->key[kl] = 0;
+    u->loaded = 1;
+    u->epoch = epoch;
+    for (int i = 0; i < g_nvols_local && i < MAX_VOL; i++) {
+        vol_t *src = &g_vols[i];
+        if (!src->ok) continue;
+        const char *base = strrchr(src->file, '/');
+        base = base ? base + 1 : src->file;
+        char path[1200];
+        if (snprintf(path, sizeof path, "%s/%s", dir, base) >= (int)sizeof path) {
+            u->missing = 1; continue;
+        }
+        if (access(path, R_OK) != 0) {
+            u->missing = 1;
+            unit_repair_enqueue(key);
+            continue;
+        }
+        vol_t *v = &u->vols[u->nvols];
+        memset(v, 0, sizeof(*v));
+        size_t rl = strlen(src->root);
+        if (rl >= sizeof v->root) rl = sizeof v->root - 1;
+        memcpy(v->root, src->root, rl); v->root[rl] = 0;
+        size_t fl = strlen(path);
+        if (fl >= sizeof v->file) fl = sizeof v->file - 1;
+        memcpy(v->file, path, fl); v->file[fl] = 0;
+        if (snapshot_open(v->file, &v->sn) == 0) {
+            v->ok = 1;
+            v->records = v->sn.h.rec_count;
+            v->built_at = v->sn.h.built_at;
+            dir_index_build(v);
+            u->nvols++;
+        } else {
+            u->missing = 1;
+            unit_repair_enqueue(key);
+        }
+    }
+    u->ok = u->nvols > 0;
+    u->refs = 1;
+    if (u->ok) xl_unit_delta_load(dlog, &u->delta);
+    pthread_mutex_unlock(&g_units_mu);
+    return u;
+}
+
+static void route_release(query_route_t *r) {
+    for (int i = 0; i < r->nuc; i++) unit_cache_unref(r->ucs[i]);
+    r->nuc = 0;
+}
+
+/* 返回该请求应读取的卷集合：shared 或一个/多个隔离单元。 */
+static void route_for_uid(int uid, int admin, query_route_t *r) {
+    memset(r, 0, sizeof(*r));
+    scan_policy_refresh();
+    xl_scan_policy pol;
+    pthread_mutex_lock(&g_scan_policy_mu);
+    pol = g_scan_policy;
+    pthread_mutex_unlock(&g_scan_policy_mu);
+
+    gid_t gids[XL_SCAN_ARRAY_MAX];
+    int ngids = (uid >= 0) ? perm_user_groups((uid_t)uid, gids, XL_SCAN_ARRAY_MAX) : 0;
+    xl_scan_unit units[XL_SCAN_ARRAY_MAX];
+    int nu = xl_scan_resolve(&pol, (uid_t)(uid < 0 ? 0 : uid), gids, ngids,
+                             units, XL_SCAN_ARRAY_MAX);
+    for (int k = 0; k < nu; k++) {
+        if (units[k].kind == XL_UNIT_SHARED) {
+            r->shared = 1;
+            for (int i = 0; i < g_nvols && r->n < (int)(sizeof r->vols / sizeof r->vols[0]); i++)
+                if (g_vols[i].ok) r->vols[r->n++] = &g_vols[i];
+            continue;
+        }
+        unit_cache_t *u = unit_cache_get(units[k].key);
+        if (!u || !u->ok || u->missing) {
+            if (u) unit_cache_unref(u);
+            r->missing = 1;
+            continue;
+        }
+        if (r->nuc < XL_SCAN_ARRAY_MAX) r->ucs[r->nuc++] = u;
+        for (int i = 0; i < u->nvols && r->n < (int)(sizeof r->vols / sizeof r->vols[0]); i++)
+            if (u->vols[i].ok) r->vols[r->n++] = &u->vols[i];
+    }
+    (void)admin;
+}
+
+static int route_delta_deleted(const query_route_t *r, const char *path) {
+    for (int i = 0; i < r->nuc; i++)
+        if (r->ucs[i] && xl_unit_delta_deleted(&r->ucs[i]->delta, path)) return 1;
+    return 0;
+}
+
+static size_t route_delta_query(const query_route_t *r, const char *q, xl_live_hit **out) {
+    *out = NULL;
+    size_t n = 0;
+    for (int i = 0; i < r->nuc; i++) {
+        if (!r->ucs[i]) continue;
+        xl_live_hit *v = NULL;
+        size_t m = xl_unit_delta_query(&r->ucs[i]->delta, q, &v);
+        if (!m) continue;
+        xl_live_hit *nv = realloc(*out, (n + m) * sizeof(**out));
+        if (!nv) { free(v); break; }
+        *out = nv;
+        memcpy(nv + n, v, m * sizeof(*v));
+        free(v);
+        n += m;
+    }
+    return n;
+}
+
 /* ---------- 设备解析 ---------- */
 static int mount_dev_for(const char *root, char *dev, size_t cap) {
     FILE *f = fopen("/proc/self/mounts", "r");
@@ -318,6 +585,10 @@ static int build_one(int vi, int verbose) {
     int rc;
     char dev[256];
     int no_raw = getenv("XL_NO_RAW") != NULL;
+    if (!no_raw && scan_include_team()) {
+        if (verbose) fprintf(stderr, "xuanlan: 启用 @team，改用目录遍历\n");
+        no_raw = 1;
+    }
     if (!no_raw && has_submounts(v->root)) {
         if (verbose) fprintf(stderr, "xuanlan: %s 含子挂载，改用目录遍历\n", v->root);
         no_raw = 1;
@@ -386,6 +657,454 @@ static int build_one(int vi, int verbose) {
     return 0;
 }
 
+/* ---------- 隔离单元构建（P3） ---------- */
+typedef struct {
+    char  key[XL_SCAN_UNIT_MAX];
+    int   kind;                 /* 1=user 2=group */
+    uid_t uid;
+    gid_t gid;
+    uid_t members[64];
+    int   nmembers;
+} unit_job;
+
+static int job_add(unit_job *jobs, int *n, int max, const unit_job *j) {
+    for (int i = 0; i < *n; i++)
+        if (!strcmp(jobs[i].key, j->key)) return 0;
+    if (*n >= max) return 0;
+    jobs[(*n)++] = *j;
+    return 1;
+}
+
+static int collect_group_members(gid_t gid, uid_t *out, int max) {
+    struct group *gr = getgrgid(gid);
+    if (!gr) return 0;
+    int n = 0;
+    for (char **m = gr->gr_mem; m && *m && n < max; m++) {
+        struct passwd *pw = getpwnam(*m);
+        if (!pw) continue;
+        int dup = 0;
+        for (int i = 0; i < n; i++) if (out[i] == pw->pw_uid) dup = 1;
+        if (!dup) out[n++] = pw->pw_uid;
+    }
+    /* 主组是该 gid 的用户 */
+    setpwent();
+    for (struct passwd *pw = getpwent(); pw && n < max; pw = getpwent()) {
+        if (pw->pw_gid != gid) continue;
+        int dup = 0;
+        for (int i = 0; i < n; i++) if (out[i] == pw->pw_uid) dup = 1;
+        if (!dup) out[n++] = pw->pw_uid;
+    }
+    endpwent();
+    return n;
+}
+
+static int collect_unit_jobs(const xl_scan_policy *p, unit_job *jobs, int max) {
+    int n = 0;
+    if (p->mode == XL_SCAN_SHARED) return 0;
+    if (p->mode == XL_SCAN_ISOLATED) {
+        setpwent();
+        for (struct passwd *pw = getpwent(); pw && n < max; pw = getpwent()) {
+            if (pw->pw_uid < 1000) continue;
+            unit_job j;
+            memset(&j, 0, sizeof j);
+            snprintf(j.key, sizeof j.key, "u%u", (unsigned)pw->pw_uid);
+            j.kind = 1; j.uid = pw->pw_uid; j.nmembers = 1; j.members[0] = pw->pw_uid;
+            job_add(jobs, &n, max, &j);
+        }
+        endpwent();
+        return n;
+    }
+    /* hybrid：用户级覆盖 + 隔离组 */
+    for (int i = 0; i < p->n_isolated_users && n < max; i++) {
+        unit_job j;
+        memset(&j, 0, sizeof j);
+        snprintf(j.key, sizeof j.key, "u%u", (unsigned)p->isolated_users[i]);
+        j.kind = 1; j.uid = p->isolated_users[i];
+        j.nmembers = 1; j.members[0] = p->isolated_users[i];
+        job_add(jobs, &n, max, &j);
+    }
+    for (int i = 0; i < p->n_isolated_groups && n < max; i++) {
+        gid_t gid = p->isolated_groups[i];
+        unit_job j;
+        memset(&j, 0, sizeof j);
+        snprintf(j.key, sizeof j.key, "g%u", (unsigned)gid);
+        j.kind = 2; j.gid = gid;
+        j.nmembers = collect_group_members(gid, j.members, 64);
+        if (!j.nmembers) continue;        /* 空组不建 */
+        job_add(jobs, &n, max, &j);
+    }
+    return n;
+}
+
+static unit_job g_unit_jobs[XL_UNIT_CACHE_MAX];
+static int g_nunit_jobs;
+static pthread_mutex_t g_unit_jobs_mu = PTHREAD_MUTEX_INITIALIZER;
+
+static void unit_jobs_refresh(void) {
+    xl_scan_policy p;
+    pthread_mutex_lock(&g_scan_policy_mu);
+    p = g_scan_policy;
+    pthread_mutex_unlock(&g_scan_policy_mu);
+    unit_job jobs[XL_UNIT_CACHE_MAX];
+    pthread_mutex_lock(&g_unit_jobs_mu);
+    int n = collect_unit_jobs(&p, jobs, XL_UNIT_CACHE_MAX);
+    memcpy(g_unit_jobs, jobs, sizeof(jobs[0]) * (size_t)n);
+    g_nunit_jobs = n;
+    pthread_mutex_unlock(&g_unit_jobs_mu);
+}
+
+/* ---------- 单元事件队列（P8）：live 回调只入队，写盘由独立线程批量完成 ---------- */
+#define UE_QUEUE 4096
+typedef struct {
+    char    *path;
+    uint8_t  flags;
+    uint8_t  deleted;
+    uint32_t size;
+    uint32_t mtime;
+} unit_evt;
+
+static unit_evt g_ue[UE_QUEUE];
+static int g_ue_head, g_ue_tail, g_ue_count;
+static pthread_mutex_t g_ue_mu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_ue_cv = PTHREAD_COND_INITIALIZER;
+static int g_ue_stop, g_ue_started;
+static pthread_t g_ue_thread;
+static uint64_t g_ue_dropped;
+
+static void unit_event_cb(const char *path, int deleted, uint8_t flags,
+                          uint32_t size, uint32_t mtime, void *ud) {
+    (void)ud;
+    if (!path || !g_idx_dir[0]) return;
+    char *p = strdup(path);
+    if (!p) { __atomic_add_fetch(&g_ue_dropped, 1, __ATOMIC_RELAXED); return; }
+    pthread_mutex_lock(&g_ue_mu);
+    if (g_ue_count >= UE_QUEUE) {
+        pthread_mutex_unlock(&g_ue_mu);
+        free(p);
+        __atomic_add_fetch(&g_ue_dropped, 1, __ATOMIC_RELAXED);
+        return;
+    }
+    unit_evt *e = &g_ue[g_ue_tail];
+    e->path = p;
+    e->deleted = deleted ? 1 : 0;
+    e->flags = flags;
+    e->size = size;
+    e->mtime = mtime;
+    g_ue_tail = (g_ue_tail + 1) % UE_QUEUE;
+    g_ue_count++;
+    pthread_cond_signal(&g_ue_cv);
+    pthread_mutex_unlock(&g_ue_mu);
+}
+
+static void unit_events_apply(unit_evt *ev, int n) {
+    if (n <= 0) return;
+    char (*parent)[8192] = malloc((size_t)n * 8192);
+    struct stat *sts = calloc((size_t)n, sizeof(*sts));
+    int *have = calloc((size_t)n, sizeof(int));
+    if (!parent || !sts || !have) {
+        free(parent); free(sts); free(have);
+        return;
+    }
+    for (int i = 0; i < n; i++) {
+        snprintf(parent[i], 8192, "%s", ev[i].path);
+        char *sl = strrchr(parent[i], '/');
+        if (sl && sl != parent[i]) *sl = 0;
+        else parent[i][0] = 0;
+        have[i] = (stat(ev[i].path, &sts[i]) == 0);
+    }
+
+    pthread_mutex_lock(&g_unit_jobs_mu);
+    for (int j = 0; j < g_nunit_jobs; j++) {
+        const unit_job *u = &g_unit_jobs[j];
+        xl_unit_delta *items = calloc((size_t)n, sizeof(*items));
+        if (!items) continue;
+        int k = 0;
+        for (int i = 0; i < n; i++) {
+            if (!parent[i][0]) continue;
+            int ok = 1;
+            if (u->kind == 1) {
+                ok = perm_check(u->uid, parent[i], 0x1, 1);
+                if (ok && !ev[i].deleted && have[i])
+                    ok = perm_mode_readable(u->uid, ev[i].path, &sts[i]);
+            } else {
+                if (u->nmembers <= 0) ok = 0;
+                for (int m = 0; m < u->nmembers && ok; m++) {
+                    ok = perm_check(u->members[m], parent[i], 0x1, 1);
+                    if (ok && !ev[i].deleted && have[i])
+                        ok = perm_mode_readable(u->members[m], ev[i].path, &sts[i]);
+                }
+            }
+            if (!ok) continue;
+            items[k].path = ev[i].path;
+            items[k].deleted = ev[i].deleted;
+            items[k].flags = ev[i].flags;
+            items[k].size = ev[i].size;
+            items[k].mtime = ev[i].mtime;
+            k++;
+        }
+        if (k) {
+            char dir[1200], dlog[1300];
+            if (xl_scan_unit_dir(g_idx_dir, u->key, dir, sizeof dir) == 0) {
+                snprintf(dlog, sizeof dlog, "%s/delta.log", dir);
+                xl_unit_delta_append_batch(dlog, items, (size_t)k);
+            }
+        }
+        free(items);
+    }
+    pthread_mutex_unlock(&g_unit_jobs_mu);
+    free(parent); free(sts); free(have);
+}
+
+static void *unit_writer(void *arg) {
+    (void)arg;
+    unit_evt batch[128];
+    for (;;) {
+        pthread_mutex_lock(&g_ue_mu);
+        while (!g_ue_count && !g_ue_stop)
+            pthread_cond_wait(&g_ue_cv, &g_ue_mu);
+        if (g_ue_stop && !g_ue_count) {
+            pthread_mutex_unlock(&g_ue_mu);
+            break;
+        }
+        int n = g_ue_count > 128 ? 128 : g_ue_count;
+        for (int i = 0; i < n; i++) {
+            batch[i] = g_ue[g_ue_head];
+            g_ue[g_ue_head].path = NULL;
+            g_ue_head = (g_ue_head + 1) % UE_QUEUE;
+        }
+        g_ue_count -= n;
+        pthread_mutex_unlock(&g_ue_mu);
+        unit_events_apply(batch, n);
+        for (int i = 0; i < n; i++) free(batch[i].path);
+    }
+    return NULL;
+}
+
+static int unit_writer_start(void) {
+    if (g_ue_started) return 0;
+    g_ue_stop = 0;
+    if (pthread_create(&g_ue_thread, NULL, unit_writer, NULL) != 0) return -1;
+    g_ue_started = 1;
+    return 0;
+}
+
+static void unit_writer_stop(void) {
+    if (!g_ue_started) return;
+    pthread_mutex_lock(&g_ue_mu);
+    g_ue_stop = 1;
+    pthread_cond_broadcast(&g_ue_cv);
+    pthread_mutex_unlock(&g_ue_mu);
+    pthread_join(g_ue_thread, NULL);
+    g_ue_started = 0;
+}
+
+/* ---------- 单元索引损坏检测与自动重建（P9） ---------- */
+#define UREP_Q 64
+static char g_repair_q[UREP_Q][XL_SCAN_UNIT_MAX];
+static int g_repair_head, g_repair_tail, g_repair_count;
+static pthread_mutex_t g_repair_mu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_repair_cv = PTHREAD_COND_INITIALIZER;
+static int g_repair_stop, g_repair_started;
+static pthread_t g_repair_thread;
+static uint64_t g_repair_dropped;
+static uint64_t g_repair_failed;
+
+static void unit_repair_enqueue(const char *key) {
+    if (!key || !*key) return;
+    pthread_mutex_lock(&g_repair_mu);
+    for (int i = 0; i < g_repair_count; i++) {
+        int idx = (g_repair_head + i) % UREP_Q;
+        if (!strcmp(g_repair_q[idx], key)) {
+            pthread_mutex_unlock(&g_repair_mu);
+            return;
+        }
+    }
+    if (g_repair_count >= UREP_Q) {
+        __atomic_add_fetch(&g_repair_dropped, 1, __ATOMIC_RELAXED);
+        pthread_mutex_unlock(&g_repair_mu);
+        return;
+    }
+    snprintf(g_repair_q[g_repair_tail], XL_SCAN_UNIT_MAX, "%s", key);
+    g_repair_tail = (g_repair_tail + 1) % UREP_Q;
+    g_repair_count++;
+    pthread_cond_signal(&g_repair_cv);
+    pthread_mutex_unlock(&g_repair_mu);
+}
+
+static int unit_repair_find_job(const char *key, unit_job *out) {
+    int found = 0;
+    pthread_mutex_lock(&g_unit_jobs_mu);
+    for (int i = 0; i < g_nunit_jobs; i++)
+        if (!strcmp(g_unit_jobs[i].key, key)) { *out = g_unit_jobs[i]; found = 1; break; }
+    pthread_mutex_unlock(&g_unit_jobs_mu);
+    return found;
+}
+
+static int unit_build_one(const unit_job *j);
+
+static void *unit_repair_worker(void *arg) {
+    (void)arg;
+    for (;;) {
+        pthread_mutex_lock(&g_repair_mu);
+        while (!g_repair_count && !g_repair_stop)
+            pthread_cond_wait(&g_repair_cv, &g_repair_mu);
+        if (g_repair_stop && !g_repair_count) {
+            pthread_mutex_unlock(&g_repair_mu);
+            break;
+        }
+        char key[XL_SCAN_UNIT_MAX];
+        snprintf(key, sizeof key, "%s", g_repair_q[g_repair_head]);
+        g_repair_head = (g_repair_head + 1) % UREP_Q;
+        g_repair_count--;
+        pthread_mutex_unlock(&g_repair_mu);
+
+        if (g_building) {
+            usleep(500 * 1000);
+            unit_repair_enqueue(key);
+            continue;
+        }
+        unit_job job;
+        if (!unit_repair_find_job(key, &job)) {
+            fprintf(stderr, "xuanlan: unit repair 跳过未激活单元 %s\n", key);
+            continue;
+        }
+        pthread_rwlock_rdlock(&g_rw);
+        int rc = unit_build_one(&job);
+        pthread_rwlock_unlock(&g_rw);
+        if (rc == 0) {
+            fprintf(stderr, "xuanlan: unit repair 完成 %s\n", key);
+        } else {
+            __atomic_add_fetch(&g_repair_failed, 1, __ATOMIC_RELAXED);
+            fprintf(stderr, "xuanlan: unit repair 失败 %s，稍后重试\n", key);
+            sleep(2);          /* 简单退避，避免损坏单元被请求风暴反复重建 */
+        }
+    }
+    return NULL;
+}
+
+static int unit_repair_start(void) {
+    if (g_repair_started) return 0;
+    g_repair_stop = 0;
+    if (pthread_create(&g_repair_thread, NULL, unit_repair_worker, NULL) != 0) return -1;
+    g_repair_started = 1;
+    return 0;
+}
+
+static void unit_repair_stop(void) {
+    if (!g_repair_started) return;
+    pthread_mutex_lock(&g_repair_mu);
+    g_repair_stop = 1;
+    pthread_cond_broadcast(&g_repair_cv);
+    pthread_mutex_unlock(&g_repair_mu);
+    pthread_join(g_repair_thread, NULL);
+    g_repair_started = 0;
+}
+
+static int unit_json_write(const unit_job *j, const char *dir, char vols[][256],
+                           int nvols) {
+    char path[1300], tmp[1400];
+    int w = snprintf(path, sizeof path, "%s/unit.json", dir);
+    if (w <= 0 || (size_t)w >= sizeof path) return -1;
+    snprintf(tmp, sizeof tmp, "%s.tmp", path);
+    FILE *f = fopen(tmp, "w");
+    if (!f) return -1;
+    fchmod(fileno(f), 0600);
+    fprintf(f, "{\"version\":1,\"unit\":\"%s\",\"kind\":\"%s\",\"gid\":%u,"
+               "\"members\":[", j->key, j->kind == 2 ? "group" : "user", (unsigned)j->gid);
+    for (int i = 0; i < j->nmembers; i++) fprintf(f, "%s%u", i ? "," : "", (unsigned)j->members[i]);
+    fprintf(f, "],\"aclEpoch\":%llu,\"builtAt\":%llu,\"volumes\":[",
+            (unsigned long long)time(NULL), (unsigned long long)time(NULL));
+    for (int i = 0; i < nvols; i++) fprintf(f, "%s\"%s\"", i ? "," : "", vols[i]);
+    fprintf(f, "],\"format\":\"XLANIDX/3\"}");
+    fflush(f); fsync(fileno(f));
+    if (fclose(f) != 0 || rename(tmp, path) != 0) { unlink(tmp); return -1; }
+    return 0;
+}
+
+static int unit_build_one(const unit_job *j) {
+    char dir[1200];
+    if (xl_scan_unit_dir(g_idx_dir, j->key, dir, sizeof dir) < 0) return -1;
+    if (mkdir(dir, 0700) != 0 && errno != EEXIST) return -1;
+    chmod(dir, 0700);
+    /* 新快照会包含当前文件系统状态，旧 delta 在构建成功后不再需要。
+       先清空，构建期间的新事件仍会追加，下一轮查询可合并。 */
+    char dlog[1300];
+    snprintf(dlog, sizeof dlog, "%s/delta.log", dir);
+    unlink(dlog);
+
+    xl_unit_subject subj;
+    memset(&subj, 0, sizeof subj);
+    subj.kind = j->kind;
+    subj.uid = j->uid;
+    subj.gid = j->gid;
+    subj.members = j->members;
+    subj.nmembers = j->nmembers;
+
+    char vols[MAX_VOL][256];
+    char news[MAX_VOL][1400];
+    int nnew = 0, failed = 0;
+    for (int i = 0; i < g_nvols_local; i++) {
+        vol_t *v = &g_vols[i];
+        if (!v->ok) continue;
+        const char *base = strrchr(v->file, '/');
+        base = base ? base + 1 : v->file;
+        char out[1300], newp[1400];
+        if (snprintf(out, sizeof out, "%s/%s", dir, base) >= (int)sizeof out) { failed++; continue; }
+        snprintf(newp, sizeof newp, "%s.new", out);
+        if (xl_unit_scan_to_file(v->root, &subj, newp) == 0) {
+            size_t nl = strlen(newp);
+            if (nl >= sizeof news[nnew]) nl = sizeof news[nnew] - 1;
+            memcpy(news[nnew], newp, nl); news[nnew][nl] = 0;
+            size_t vl = strlen(v->root);
+            if (vl >= sizeof vols[nnew]) vl = sizeof vols[nnew] - 1;
+            memcpy(vols[nnew], v->root, vl); vols[nnew][vl] = 0;
+            nnew++;
+        } else {
+            failed++;
+        }
+    }
+    if (!nnew || failed) {
+        /* 任一共享卷失败：全部丢弃 .new，保留旧单元，避免半套索引 */
+        for (int i = 0; i < nnew; i++) unlink(news[i]);
+        if (failed) fprintf(stderr, "xuanlan: unit %s 有 %d 个卷构建失败，保留旧单元\n",
+                            j->key, failed);
+        return -1;
+    }
+    for (int i = 0; i < nnew; i++) {
+        char final[1400];
+        size_t fl = strlen(news[i]);
+        if (fl >= sizeof final) fl = sizeof final - 1;
+        memcpy(final, news[i], fl); final[fl] = 0;
+        size_t l = strlen(final);
+        if (l > 4 && !strcmp(final + l - 4, ".new")) final[l - 4] = 0;
+        if (rename(news[i], final) != 0) {
+            for (int k = i + 1; k < nnew; k++) unlink(news[k]);
+            fprintf(stderr, "xuanlan: unit %s 替换失败: %s\n", j->key, strerror(errno));
+            return -1;
+        }
+        chmod(final, 0600);
+    }
+    if (unit_json_write(j, dir, vols, nnew) < 0) return -1;
+    fprintf(stderr, "xuanlan: unit %s 完成（%d 卷）\n", j->key, nnew);
+    return 0;
+}
+
+static void units_build_all(void) {
+    xl_scan_policy p;
+    pthread_mutex_lock(&g_scan_policy_mu);
+    p = g_scan_policy;
+    pthread_mutex_unlock(&g_scan_policy_mu);
+    if (p.mode == XL_SCAN_SHARED) return;
+
+    unit_job jobs[XL_UNIT_CACHE_MAX];
+    int n = collect_unit_jobs(&p, jobs, XL_UNIT_CACHE_MAX);
+    if (!n) return;
+    fprintf(stderr, "xuanlan: 开始构建 %d 个隔离单元\n", n);
+    pthread_rwlock_rdlock(&g_rw);
+    for (int i = 0; i < n && !g_stop; i++) unit_build_one(&jobs[i]);
+    pthread_rwlock_unlock(&g_rw);
+}
+
 static void *build_worker(void *arg) {
     (void)arg;
     scan_set_progress(&xl_scan_records);
@@ -393,6 +1112,7 @@ static void *build_worker(void *arg) {
     g_failed = 0;
     g_err[0] = 0;
     g_build_start = now_ms();
+    scan_set_include_team(g_scan_policy.mode != XL_SCAN_SHARED);
     live_clear();                      /* 基线即将重建，旧 delta 作废 */
     for (int i = 0; i < g_nvols_local && !g_stop; i++) {
         g_cur_vol = i;
@@ -402,6 +1122,13 @@ static void *build_worker(void *arg) {
         g_floor_after = 0;
     }
     g_cur_vol = -1;
+    if (!g_stop) {
+        xl_scan_mode m;
+        pthread_mutex_lock(&g_scan_policy_mu);
+        m = g_scan_policy.mode;
+        pthread_mutex_unlock(&g_scan_policy_mu);
+        if (m != XL_SCAN_SHARED) units_build_all();
+    }
     g_build_ms = now_ms() - g_build_start;
     g_last_rebuild = now_ms();
     g_building = 0;
@@ -782,6 +1509,61 @@ static void usb_sync(void) {
     pthread_rwlock_unlock(&g_rw);
 }
 
+static uint64_t g_units_tick_at, g_units_alert_at;
+
+static void units_tick(void) {
+    uint64_t now = now_ms();
+    const char *cs = getenv("XL_UNITS_CHECK_SEC");
+    int sec = cs ? atoi(cs) : 60;
+    if (sec < 10) sec = 10;
+    if (now - g_units_tick_at < (uint64_t)sec * 1000) return;
+    g_units_tick_at = now;
+    scan_policy_refresh();          /* 先让分类/模式与文件一致，避免 GC 误删 */
+
+    const char *cm = getenv("XL_DELTA_COMPACT_MB");
+    int cmb = cm ? atoi(cm) : 4;
+    if (cmb < 1) cmb = 1;
+    xl_units_compact_deltas(g_idx_dir, (uint64_t)cmb * 1024 * 1024);
+
+    char bad[XL_UNIT_CACHE_MAX][XL_SCAN_UNIT_MAX];
+    int checked = 0;
+    int nbad = xl_units_check(g_idx_dir, bad, XL_UNIT_CACHE_MAX, &checked);
+    for (int i = 0; i < nbad; i++) unit_repair_enqueue(bad[i]);
+    if (nbad && now - g_units_alert_at > 3600000) {
+        fprintf(stderr, "xuanlan: 检测到 %d 个损坏单元索引，已排队重建\n", nbad);
+        g_units_alert_at = now;
+    }
+
+    const char *gd = getenv("XL_UNITS_GC_DAYS");
+    int days = gd ? atoi(gd) : 7;
+    if (days < 1) days = 1;
+
+    pthread_mutex_lock(&g_unit_jobs_mu);
+    const char *active[XL_UNIT_CACHE_MAX];
+    int na = 0;
+    for (int i = 0; i < g_nunit_jobs && na < XL_UNIT_CACHE_MAX; i++)
+        active[na++] = g_unit_jobs[i].key;
+    int removed = 0;
+    if (!g_building) xl_units_gc(g_idx_dir, active, na, days, 0, &removed);
+    pthread_mutex_unlock(&g_unit_jobs_mu);
+    if (removed && now - g_units_alert_at > 3600000) {
+        fprintf(stderr, "xuanlan: units GC 移入回收站 %d 个旧单元\n", removed);
+        g_units_alert_at = now;
+    }
+
+    int uc = 0;
+    uint64_t ub = 0, ud = 0;
+    xl_units_capacity(g_idx_dir, &uc, &ub, &ud);
+    const char *am = getenv("XL_UNITS_ALERT_MB");
+    uint64_t limit = (uint64_t)(am ? atoi(am) : 2048) * 1024 * 1024;
+    if (limit && ub > limit && now - g_units_alert_at > 3600000) {
+        fprintf(stderr, "xuanlan: units 容量告警 %.1f MB（阈值 %.0f MB，%d 个单元，delta %.1f MB）\n",
+                (double)ub / 1048576.0, (double)limit / 1048576.0, uc,
+                (double)ud / 1048576.0);
+        g_units_alert_at = now;
+    }
+}
+
 static void usb_tick(void) {
     uint64_t now = now_ms();
     if (now - g_usb_last_tick < 2000) return;
@@ -838,13 +1620,13 @@ static int  scope_load(int uid, char paths[][512], int cap);
 static int  scope_default(int uid, char paths[][512], int cap);
 static int  scope_allows(char paths[][512], int n, const char *p);
 
-typedef struct { uint16_t vol; uint32_t id; } ref_t;
+typedef struct { vol_t *v; uint32_t id; } ref_t;
 
 static int cmp_ref(const void *A, const void *B, void *arg) {
     (void)arg;
     const ref_t *a = A, *b = B;
-    const xl_rec *ra = &g_vols[a->vol].sn.recs[a->id];
-    const xl_rec *rb = &g_vols[b->vol].sn.recs[b->id];
+    const xl_rec *ra = &a->v->sn.recs[a->id];
+    const xl_rec *rb = &b->v->sn.recs[b->id];
     if (ra->mtime != rb->mtime) return ra->mtime < rb->mtime ? 1 : -1;
     return (int)ra->name_len - (int)rb->name_len;
 }
@@ -1731,6 +2513,16 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
     int nsc = -1;
     if (uid >= 0) nsc = scope_load(uid, sc, SCOPE_MAX);
 
+    query_route_t route;
+    route_for_uid(uid, admin, &route);
+    if (route.missing) {
+        sb_puts(out, "{\"error\":\"isolated index not ready\",\"total\":0,"
+                     "\"truncated\":false,\"items\":[]}");
+        route_release(&route);
+        free(sc);
+        return;
+    }
+
     uint64_t t0 = now_ms();
     ref_t *refs = NULL;
     size_t nref = 0, cref = 0;
@@ -1738,13 +2530,14 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
     int trunc = 0;
 
     pthread_rwlock_rdlock(&g_rw);
-    for (int i = 0; i < g_nvols; i++) {
-        if (!g_vols[i].ok) continue;
-        if (g_vols[i].usb && !admin) continue;   /* 外挂盘默认只对管理员可见 */
+    for (int i = 0; i < route.n; i++) {
+        vol_t *v = route.vols[i];
+        if (!v->ok) continue;
+        if (v->usb && !admin) continue;          /* 外挂盘默认只对管理员可见 */
         uint32_t n = 0;
         int t = 0;
         uint64_t vtotal = 0;
-        uint32_t *hits = query_hits(&g_vols[i].sn, q, &o, &n, &t, NULL, &vtotal);
+        uint32_t *hits = query_hits(&v->sn, q, &o, &n, &t, NULL, &vtotal);
         total_hits += vtotal;
         if (t) trunc = 1;
         if (n) {
@@ -1753,7 +2546,7 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
                 refs = xrealloc(refs, cref * sizeof(ref_t));
             }
             for (uint32_t k = 0; k < n; k++) {
-                refs[nref].vol = (uint16_t)i;
+                refs[nref].v = v;
                 refs[nref].id = hits[k];
                 nref++;
             }
@@ -1764,7 +2557,7 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
     if (catmask) {
         size_t w = 0;
         for (size_t k = 0; k < nref; k++) {
-            vol_t *v = &g_vols[refs[k].vol];
+            vol_t *v = refs[k].v;
             const xl_rec *r = &v->sn.recs[refs[k].id];
             if (r->flags & XL_F_DIR) continue;
             if (!(cat_of_name(v->sn.names + r->name_off, r->name_len) & catmask)) continue;
@@ -1774,7 +2567,22 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
     }
 
     xl_live_hit *lh = NULL;
+    /* 单元索引是基线；实时增量统一从全局 live 查询，输出仍按请求 uid 的 ACL 复核。
+       这样新建/改名文件立刻可见，删除项由墓碑过滤，单元索引在下一次对账追上。 */
     size_t nlh = live_query(q, &lh);
+    {
+        xl_live_hit *dh = NULL;
+        size_t nd = route_delta_query(&route, q, &dh);
+        if (nd) {
+            xl_live_hit *nv = realloc(lh, (nlh + nd) * sizeof(*lh));
+            if (nv) {
+                lh = nv;
+                memcpy(lh + nlh, dh, nd * sizeof(*dh));
+                nlh += nd;
+            }
+            free(dh);
+        }
+    }
     if (nlh > 1) qsort(lh, nlh, sizeof(*lh), cmp_live);
     if (catmask && nlh) {
         size_t w = 0;
@@ -1802,16 +2610,25 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
         pthread_rwlock_unlock(&g_rw);
         for (size_t k = 0; k < nlh; k++) free(lh[k].path);
         free(lh); free(refs); free(sc);
+        route_release(&route);
         sb_puts(out, "],\"ms\":0}");
         return;
     }
     uint32_t shown = 0;
     size_t i = 0, j = 0, skipped = 0;
+    /* 多单元/全局 live/单元 delta 可能重复同一路径，输出前去重 */
+    uint32_t seen_n = 0, seen_cap = 0;
+    char **seen = NULL;
+    {
+        seen_cap = limit + off;
+        if (seen_cap > 5000) seen_cap = 5000;
+        seen = calloc(seen_cap, sizeof(char *));
+    }
     while ((i < nref || j < nlh) && shown < limit) {
         int take_live;
         if (i >= nref) take_live = 1;
         else if (j >= nlh) take_live = 0;
-        else take_live = lh[j].mtime > g_vols[refs[i].vol].sn.recs[refs[i].id].mtime;
+        else take_live = lh[j].mtime > refs[i].v->sn.recs[refs[i].id].mtime;
 
         int is_dir; uint32_t size, mtime; const char *name; size_t nlen;
         int is_usb = 0;
@@ -1827,11 +2644,11 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
             size = lh[j].size; mtime = lh[j].mtime;
             j++;
         } else {
-            vol_t *v = &g_vols[refs[i].vol];
+            vol_t *v = refs[i].v;
             const xl_rec *r = &v->sn.recs[refs[i].id];
             snap_path(&v->sn, refs[i].id, path, sizeof(path));
             i++;
-            if (live_is_deleted(path)) continue;
+            if (live_is_deleted(path) || route_delta_deleted(&route, path)) continue;
             name = v->sn.names + r->name_off;
             nlen = r->name_len;
             is_dir = (r->flags & XL_F_DIR) != 0;
@@ -1859,6 +2676,13 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
             if (!is_dir && uid >= 0 && !perm_mode_readable((uid_t)uid, path, &lst)) continue;
             if (!is_dir) { size = (uint32_t)lst.st_size; mtime = (uint32_t)lst.st_mtime; }
         }
+        if (seen) {
+            int dup = 0;
+            for (uint32_t k = 0; k < seen_n; k++)
+                if (seen[k] && !strcmp(seen[k], path)) { dup = 1; break; }
+            if (dup) continue;
+            if (seen_n < seen_cap) seen[seen_n++] = strdup(path);
+        }
         if (skipped < off) { skipped++; continue; }
         if (shown) sb_puts(out, ",");
         sb_puts(out, "{\"path\":\"");
@@ -1876,8 +2700,13 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
     perm_cache_free(pcache); free(pcache);
     for (size_t k = 0; k < nlh; k++) free(lh[k].path);
     free(lh);
+    if (seen) {
+        for (uint32_t k = 0; k < seen_n; k++) free(seen[k]);
+        free(seen);
+    }
     free(refs);
     free(sc);
+    route_release(&route);
 }
 
 
@@ -2012,6 +2841,13 @@ static void handle_dir(sbuf *out, const char *qs, int uid, int admin) {
         }
     }
     const int MAX_ENT = 4000;
+    query_route_t route;
+    route_for_uid(uid, admin, &route);
+    if (route.missing) {
+        sb_puts(out, "{\"error\":\"isolated index not ready\",\"entries\":[]}");
+        route_release(&route);
+        return;
+    }
     pthread_rwlock_rdlock(&g_rw);
     sb_puts(out, "{\"path\":\"");
     sb_json(out, dir, dl);
@@ -2019,8 +2855,8 @@ static void handle_dir(sbuf *out, const char *qs, int uid, int admin) {
     int shown = 0, total = 0;
     char p[8192];
     for (int pass = 0; pass < 2; pass++) {
-        for (int vi = 0; vi < g_nvols && shown < MAX_ENT; vi++) {
-            vol_t *v = &g_vols[vi];
+        for (int vi = 0; vi < route.n && shown < MAX_ENT; vi++) {
+            vol_t *v = route.vols[vi];
             if (!v->ok) continue;
             if (v->usb && !admin) continue;
             uint32_t did;
@@ -2042,7 +2878,7 @@ static void handle_dir(sbuf *out, const char *qs, int uid, int admin) {
                 if (pass == 0 && !is_dir) continue;
                 if (pass == 1 && is_dir) continue;
                 snap_path(&v->sn, i, p, sizeof p);
-                if (live_is_deleted(p)) continue;
+                if (live_is_deleted(p) || route_delta_deleted(&route, p)) continue;
                 if (uid >= 0 && is_dir) {
                     if (!all && sysnoise_name(v->sn.names + r->name_off, r->name_len)) continue;
                     if (!all && (system_path(p) || !perm_dir_listable((uid_t)uid, p))) continue;
@@ -2068,7 +2904,8 @@ static void handle_dir(sbuf *out, const char *qs, int uid, int admin) {
             }
         }
     }
-    /* 基线快照最多 6 小时，目录里刚创建的文件也必须可见 */
+    /* 基线快照最多 6 小时，目录里刚创建的文件也必须可见；单元路由同样合并 live，
+       输出逐项做请求 uid 的 ACL 复核。 */
     {
         xl_live_hit *lh = NULL;
         size_t nlh = live_dir(dir, &lh);
@@ -2109,6 +2946,7 @@ static void handle_dir(sbuf *out, const char *qs, int uid, int admin) {
     }
     sb_printf(out, "],\"count\":%d,\"truncated\":%s}", total, shown >= MAX_ENT ? "true" : "false");
     pthread_rwlock_unlock(&g_rw);
+    route_release(&route);
 }
 
 
@@ -2324,6 +3162,21 @@ static void json_str(const char *s, const char *key, char *out, size_t cap, cons
     if (n >= cap) n = cap - 1;
     memcpy(out, p, n);
     out[n] = 0;
+}
+
+/* 读取上一版 settings.json 里的字符串默认值：老客户端 POST 不带新字段时，
+ * 用旧值而不是硬编码默认，避免升级后把用户选择重置。 */
+static void settings_prev_str(const char *key, const char *def, char *out, size_t cap) {
+    snprintf(out, cap, "%s", def);
+    char sp[1200];
+    settings_path(sp, sizeof sp);
+    FILE *f = fopen(sp, "r");
+    if (!f) return;
+    char buf[16384];
+    size_t n = fread(buf, 1, sizeof buf - 1, f);
+    fclose(f);
+    buf[n] = 0;
+    json_str(buf, key, out, cap, def);
 }
 
 static void rebuild_cfg_load(void) {
@@ -2684,6 +3537,15 @@ static void handle_settings_get(sbuf *out, int uid, int admin, int all) {
         json_str(buf ? buf : "", "\"openIn\"", oi, sizeof oi, "embed");
         sb_printf(out, ",\"openIn\":\"%s\"", oi);
     }
+    {
+        /* 鼠标打开方式：默认文件夹单击、文件双击；触屏前端固定单击 */
+        char cf[8], cfile[8];
+        json_str(buf ? buf : "", "\"clickFolder\"", cf, sizeof cf, "single");
+        json_str(buf ? buf : "", "\"clickFile\"", cfile, sizeof cfile, "double");
+        if (strcmp(cf, "single") != 0 && strcmp(cf, "double") != 0) snprintf(cf, sizeof cf, "single");
+        if (strcmp(cfile, "single") != 0 && strcmp(cfile, "double") != 0) snprintf(cfile, sizeof cfile, "double");
+        sb_printf(out, ",\"clickFolder\":\"%s\",\"clickFile\":\"%s\"", cf, cfile);
+    }
     sb_printf(out, ",\"strictHome\":%s",
               json_bool_def(buf, "\"strictHome\"", 1) ? "true" : "false");
     sb_printf(out, ",\"skipHidden\":%s", scan_skip_hidden() ? "true" : "false");
@@ -2837,6 +3699,18 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
     json_str(body, "\"openIn\"", open_in, sizeof open_in, "embed");
     if (strcmp(open_in, "embed")) snprintf(open_in, sizeof open_in, "window");
 
+    /* 鼠标打开方式：缺省沿用旧设置；非法值回落默认（文件夹单击、文件双击） */
+    char cf_def[8], cfile_def[8];
+    char click_folder[8], click_file[8];
+    settings_prev_str("\"clickFolder\"", "single", cf_def, sizeof cf_def);
+    settings_prev_str("\"clickFile\"", "double", cfile_def, sizeof cfile_def);
+    json_str(body, "\"clickFolder\"", click_folder, sizeof click_folder, cf_def);
+    json_str(body, "\"clickFile\"", click_file, sizeof click_file, cfile_def);
+    if (strcmp(click_folder, "single") != 0 && strcmp(click_folder, "double") != 0)
+        snprintf(click_folder, sizeof click_folder, "single");
+    if (strcmp(click_file, "single") != 0 && strcmp(click_file, "double") != 0)
+        snprintf(click_file, sizeof click_file, "double");
+
     /* 自动扫描计划 */
     rebuild_cfg rc;
     pthread_mutex_lock(&g_rcfg_mu);
@@ -2882,10 +3756,12 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
     if (!f) { sb_puts(out, "{\"ok\":false,\"error\":\"cannot write\"}"); return; }
     fchmod(fileno(f), 0600);
     const char *m = rc.mode == 1 ? "daily" : (rc.mode == 2 ? "interval" : "off");
-    fprintf(f, "{\"settingsVersion\":2,\"openWith\":%.*s,\"openIn\":\"%s\",\"strictHome\":%s,"
-               "\"skipHidden\":%s,"
+    fprintf(f, "{\"settingsVersion\":3,\"openWith\":%.*s,\"openIn\":\"%s\","
+               "\"clickFolder\":\"%s\",\"clickFile\":\"%s\","
+               "\"strictHome\":%s,\"skipHidden\":%s,"
                "\"rebuild\":{\"mode\":\"%s\",\"hour\":%d,\"minute\":%d,\"hours\":%d}}",
-            (int)len, b, open_in, strict_home ? "true" : "false",
+            (int)len, b, open_in, click_folder, click_file,
+            strict_home ? "true" : "false",
             skip_hidden ? "true" : "false",
             m, rc.hour, rc.minute, rc.hours);
     fflush(f);
@@ -2909,6 +3785,100 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
         usb_enable(usb_on);
     }
     sb_puts(out, "{\"ok\":true}");
+}
+
+static int parse_num_list_body(const char *body, const char *key, unsigned int *out, int max) {
+    char arr[XL_SCAN_ARRAY_MAX][16];
+    if (!body || !strstr(body, key)) return -1;   /* 字段缺省 */
+    int n = json_str_array(body, key, (char *)arr, sizeof arr[0], XL_SCAN_ARRAY_MAX);
+    int m = 0;
+    for (int i = 0; i < n && m < max; i++) {
+        int v = atoi(arr[i]);
+        if (v > 0) out[m++] = (unsigned int)v;
+    }
+    return m;
+}
+
+static int scanmode_write(const xl_scan_policy *p) {
+    char path[1300], tmp[1400];
+    scanmode_path(path, sizeof path);
+    snprintf(tmp, sizeof tmp, "%s.tmp", path);
+    FILE *f = fopen(tmp, "w");
+    if (!f) return -1;
+    fchmod(fileno(f), 0600);
+    fprintf(f, "{\"version\":2,\"scanMode\":\"%s\",\"shareGroups\":[",
+            xl_scan_mode_name(p->mode));
+    for (int i = 0; i < p->n_share_groups; i++) fprintf(f, "%s%u", i ? "," : "", (unsigned)p->share_groups[i]);
+    fprintf(f, "],\"isolatedGroups\":[");
+    for (int i = 0; i < p->n_isolated_groups; i++) fprintf(f, "%s%u", i ? "," : "", (unsigned)p->isolated_groups[i]);
+    fprintf(f, "],\"shareUsers\":[");
+    for (int i = 0; i < p->n_share_users; i++) fprintf(f, "%s%u", i ? "," : "", (unsigned)p->share_users[i]);
+    fprintf(f, "],\"isolatedUsers\":[");
+    for (int i = 0; i < p->n_isolated_users; i++) fprintf(f, "%s%u", i ? "," : "", (unsigned)p->isolated_users[i]);
+    fprintf(f, "]}");
+    fflush(f); fsync(fileno(f));
+    if (fclose(f) != 0 || rename(tmp, path) != 0) { unlink(tmp); return -1; }
+    return 0;
+}
+
+static void handle_scanmode(sbuf *out, const char *body, int uid, int admin, int post) {
+    if (post && !admin) {
+        sb_puts(out, "{\"ok\":false,\"error\":\"需要管理员权限\"}");
+        return;
+    }
+    scan_policy_refresh();
+    xl_scan_policy p;
+    pthread_mutex_lock(&g_scan_policy_mu);
+    p = g_scan_policy;
+    pthread_mutex_unlock(&g_scan_policy_mu);
+
+    if (!post) {
+        sb_puts(out, "{\"mode\":\"");
+        sb_puts(out, xl_scan_mode_name(p.mode));
+        sb_puts(out, "\",\"shareGroups\":[");
+        for (int i = 0; i < p.n_share_groups; i++) sb_printf(out, "%s%u", i ? "," : "", (unsigned)p.share_groups[i]);
+        sb_puts(out, "],\"isolatedGroups\":[");
+        for (int i = 0; i < p.n_isolated_groups; i++) sb_printf(out, "%s%u", i ? "," : "", (unsigned)p.isolated_groups[i]);
+        sb_puts(out, "],\"shareUsers\":[");
+        for (int i = 0; i < p.n_share_users; i++) sb_printf(out, "%s%u", i ? "," : "", (unsigned)p.share_users[i]);
+        sb_puts(out, "],\"isolatedUsers\":[");
+        for (int i = 0; i < p.n_isolated_users; i++) sb_printf(out, "%s%u", i ? "," : "", (unsigned)p.isolated_users[i]);
+        sb_puts(out, "]}");
+        return;
+    }
+
+    char mode[16];
+    json_str(body ? body : "", "\"scanMode\"", mode, sizeof mode, xl_scan_mode_name(p.mode));
+    if (!strcmp(mode, "shared")) p.mode = XL_SCAN_SHARED;
+    else if (!strcmp(mode, "isolated")) p.mode = XL_SCAN_ISOLATED;
+    else if (!strcmp(mode, "hybrid")) p.mode = XL_SCAN_HYBRID;
+    else { sb_puts(out, "{\"ok\":false,\"error\":\"invalid scanMode\"}"); return; }
+
+    unsigned int nums[XL_SCAN_ARRAY_MAX];
+    int n;
+    n = parse_num_list_body(body, "\"shareGroups\"", nums, XL_SCAN_ARRAY_MAX);
+    if (n >= 0) { p.n_share_groups = n; for (int i = 0; i < n; i++) p.share_groups[i] = (gid_t)nums[i]; }
+    n = parse_num_list_body(body, "\"isolatedGroups\"", nums, XL_SCAN_ARRAY_MAX);
+    if (n >= 0) { p.n_isolated_groups = n; for (int i = 0; i < n; i++) p.isolated_groups[i] = (gid_t)nums[i]; }
+    n = parse_num_list_body(body, "\"shareUsers\"", nums, XL_SCAN_ARRAY_MAX);
+    if (n >= 0) { p.n_share_users = n; for (int i = 0; i < n; i++) p.share_users[i] = (uid_t)nums[i]; }
+    n = parse_num_list_body(body, "\"isolatedUsers\"", nums, XL_SCAN_ARRAY_MAX);
+    if (n >= 0) { p.n_isolated_users = n; for (int i = 0; i < n; i++) p.isolated_users[i] = (uid_t)nums[i]; }
+
+    if (scanmode_write(&p) < 0) {
+        sb_puts(out, "{\"ok\":false,\"error\":\"cannot write scanmode.json\"}");
+        return;
+    }
+    pthread_mutex_lock(&g_scan_policy_mu);
+    g_scan_policy = p;
+    g_scan_policy_mtime = 0;      /* 下一次请求按文件 mtime 重新校验 */
+    g_scan_policy_loaded = 1;
+    pthread_mutex_unlock(&g_scan_policy_mu);
+    scan_set_include_team(p.mode != XL_SCAN_SHARED);
+    unit_jobs_refresh();
+    /* 模式/分类变化立即进入重建：共享索引与单元索引都会按新策略生成 */
+    start_build();
+    sb_puts(out, "{\"ok\":true,\"rebuild\":true}");
 }
 
 static void handle_acl_list(sbuf *out, int uid, int admin, int all) {
@@ -3066,6 +4036,19 @@ static void handle_status(sbuf *out) {
     size_t adds = live_delta_count(&dels);
     sb_printf(out, "\",\"live\":{\"adds\":%zu,\"dels\":%zu,\"overflow\":%s}",
               adds, dels, live_overflowed() ? "true" : "false");
+    {
+        pthread_mutex_lock(&g_ue_mu);
+        int qn = g_ue_count;
+        pthread_mutex_unlock(&g_ue_mu);
+        sb_printf(out, ",\"events\":{\"queued\":%d,\"dropped\":%llu}", qn,
+                  (unsigned long long)__atomic_load_n(&g_ue_dropped, __ATOMIC_RELAXED));
+        pthread_mutex_lock(&g_repair_mu);
+        int rq = g_repair_count;
+        pthread_mutex_unlock(&g_repair_mu);
+        sb_printf(out, ",\"repair\":{\"queued\":%d,\"dropped\":%llu,\"failed\":%llu}", rq,
+                  (unsigned long long)__atomic_load_n(&g_repair_dropped, __ATOMIC_RELAXED),
+                  (unsigned long long)__atomic_load_n(&g_repair_failed, __ATOMIC_RELAXED));
+    }
     sb_printf(out, ",\"transcode\":{\"ok\":%s,\"nvenc\":%s}",
               g_have_ffmpeg ? "true" : "false", g_have_nvenc ? "true" : "false");
     {
@@ -3081,6 +4064,21 @@ static void handle_status(sbuf *out) {
                   g_usb_enabled ? "true" : "false", g_usb_watch ? "true" : "false", nusb, nusb_building);
         char umsg[1024]; usb_msg_get(umsg, sizeof umsg); sb_json(out, umsg, strlen(umsg));
         sb_puts(out, "\"}");
+    }
+    {
+        int uc = 0;
+        uint64_t ub = 0, ud = 0;
+        xl_units_capacity(g_idx_dir, &uc, &ub, &ud);
+        const char *am = getenv("XL_UNITS_ALERT_MB");
+        uint64_t limit = (uint64_t)(am ? atoi(am) : 2048) * 1024 * 1024;
+        sb_printf(out, ",\"units\":{\"count\":%d,\"bytes\":%llu,\"deltaBytes\":%llu,\"alert\":%s}",
+                  uc, (unsigned long long)ub, (unsigned long long)ud,
+                  (limit && ub > limit) ? "true" : "false");
+        xl_scan_mode m;
+        pthread_mutex_lock(&g_scan_policy_mu);
+        m = g_scan_policy.mode;
+        pthread_mutex_unlock(&g_scan_policy_mu);
+        sb_printf(out, ",\"scanMode\":\"%s\"", xl_scan_mode_name(m));
     }
     sb_puts(out, ",\"version\":\"");
     sb_puts(out, XL_APP_VERSION);
@@ -3571,6 +4569,13 @@ static void handle_client(int fd) {
         if (param(qs, "msg", msg, sizeof msg))
             fprintf(stderr, "xuanlan client: %.900s\n", msg);
         sb_puts(&body, "{\"ok\":true}");
+    } else if (!strcmp(pathonly, "/api/scanmode")) {
+        if (strcmp(method, "POST") == 0) {
+            if (!json_ct) { code = 415; sb_puts(&body, "{\"error\":\"use application/json\"}"); }
+            else handle_scanmode(&body, req_body, uid, admin, 1);
+        } else {
+            handle_scanmode(&body, NULL, uid, admin, 0);
+        }
     } else if (!strcmp(pathonly, "/api/settings")) {
         if (strcmp(method, "POST") == 0) {
             if (!json_ct) { code = 415; sb_puts(&body, "{\"error\":\"use application/json\"}"); }
@@ -4088,6 +5093,14 @@ int httpd_serve(const xl_svc_opts *o) {
     snprintf(g_trash, sizeof(g_trash), "%s/trash", g_idx_dir);
     mkdir(g_trash, 0755);
     mkdir(o->idx_dir, 0755);
+    {
+        char uerr[256];
+        if (xl_units_init(o->idx_dir, uerr, sizeof uerr) < 0)
+            fprintf(stderr, "xuanlan serve: units 布局: %s\n", uerr);
+    }
+    scan_policy_refresh();
+    unit_jobs_refresh();
+    scan_set_include_team(g_scan_policy.mode != XL_SCAN_SHARED);
     if (o->sock_path[0] && probe_existing(o->sock_path)) {
         if (o->no_tcp || tcp_alive(o->port)) {
             fprintf(stderr, "xuanlan serve: 已有实例在 %s 上响应，本次退出\n", o->sock_path);
@@ -4167,6 +5180,8 @@ int httpd_serve(const xl_svc_opts *o) {
         else nls++;
     }
     if (!nls) return 1;
+    if (unit_writer_start() == 0) live_set_event_cb(unit_event_cb, NULL);
+    if (unit_repair_start() != 0) fprintf(stderr, "xuanlan: unit repair 线程启动失败\n");
     fprintf(stderr, "xuanlan serve: %d 个监听, %d 个卷, 索引目录 %s\n", nls, g_nvols, o->idx_dir);
 
     g_last_rebuild = now_ms();
@@ -4185,6 +5200,15 @@ int httpd_serve(const xl_svc_opts *o) {
         /* 旧快照（或切换 skipHidden 后）与当前扫描设置不一致时重建一次 */
         int built_skip = (g_vols[i].sn.h.flags & XL_HDR_SKIP_HIDDEN) != 0;
         if (built_skip != scan_skip_hidden()) need_build = 1;
+        {
+            xl_scan_mode m;
+            pthread_mutex_lock(&g_scan_policy_mu);
+            m = g_scan_policy.mode;
+            pthread_mutex_unlock(&g_scan_policy_mu);
+            int want_team = (m != XL_SCAN_SHARED);
+            int built_team = (g_vols[i].sn.h.flags & XL_HDR_TEAM) != 0;
+            if (built_team != want_team) need_build = 1;
+        }
         /* 旧版本快照没有杂项过滤，需要按新规则重建一次 */
         if (!(g_vols[i].sn.h.flags & XL_HDR_SCAN_RULES)) need_build = 1;
     }
@@ -4218,11 +5242,15 @@ int httpd_serve(const xl_svc_opts *o) {
             }
         }
         usb_tick();
+        units_tick();
     }
     for (int i = 0; i < nls; i++) close(ls[i]);
     if (o->sock_path[0]) unlink(o->sock_path);
     pthread_mutex_lock(&g_qlock);
     pthread_cond_broadcast(&g_qcond);
     pthread_mutex_unlock(&g_qlock);
+    live_set_event_cb(NULL, NULL);
+    unit_writer_stop();
+    unit_repair_stop();
     return 0;
 }
