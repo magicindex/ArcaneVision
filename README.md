@@ -195,7 +195,7 @@ fanotify ACL 变更自愈、事件队列压力防护、修复退避，并在 FnO
 
 - [ ] 快照 checksum / 更完整损坏检测；
 - [ ] 子树级 ACL 增量重建（当前 ACL 变化触发整卷重建）；
-- [ ] 容量/修复趋势图；
+- [x] 容量/修复趋势图（/api/status.trend + 管理端趋势条）；
 - [ ] 远程挂载 provider（CIFS/NFS/WebDAV）。
 
 ### 正在做 / 下一步

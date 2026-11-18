@@ -1581,6 +1581,10 @@ static void usb_sync(void) {
 }
 
 static uint64_t g_units_tick_at, g_units_alert_at;
+#define XL_TREND_N 60
+static uint64_t g_trend_bytes[XL_TREND_N], g_trend_repair[XL_TREND_N];
+static int g_trend_n, g_trend_pos;
+static pthread_mutex_t g_trend_mu = PTHREAD_MUTEX_INITIALIZER;
 
 static void units_tick(void) {
     uint64_t now = now_ms();
@@ -1633,6 +1637,13 @@ static void units_tick(void) {
                 (double)ud / 1048576.0);
         g_units_alert_at = now;
     }
+    pthread_mutex_lock(&g_trend_mu);
+    g_trend_bytes[g_trend_pos] = ub;
+    g_trend_repair[g_trend_pos] =
+        __atomic_load_n(&g_repair_failed, __ATOMIC_RELAXED);
+    g_trend_pos = (g_trend_pos + 1) % XL_TREND_N;
+    if (g_trend_n < XL_TREND_N) g_trend_n++;
+    pthread_mutex_unlock(&g_trend_mu);
 }
 
 static void usb_tick(void) {
@@ -4417,6 +4428,20 @@ static void handle_status(sbuf *out) {
         }
         pthread_mutex_unlock(&g_ub_mu);
     }
+    pthread_mutex_lock(&g_trend_mu);
+    int tn = g_trend_n, tp = g_trend_pos;
+    uint64_t tb[XL_TREND_N], trf[XL_TREND_N];
+    for (int i = 0; i < tn; i++) {
+        int idx = (tp - tn + i + XL_TREND_N) % XL_TREND_N;
+        tb[i] = g_trend_bytes[idx];
+        trf[i] = g_trend_repair[idx];
+    }
+    pthread_mutex_unlock(&g_trend_mu);
+    sb_puts(out, ",\"trend\":{\"capacity\":[");
+    for (int i = 0; i < tn; i++) sb_printf(out, "%s%llu", i ? "," : "", (unsigned long long)tb[i]);
+    sb_puts(out, "],\"repairFailed\":[");
+    for (int i = 0; i < tn; i++) sb_printf(out, "%s%llu", i ? "," : "", (unsigned long long)trf[i]);
+    sb_puts(out, "]}");
     sb_puts(out, ",\"version\":\"");
     sb_puts(out, XL_APP_VERSION);
     sb_puts(out, "\"}");

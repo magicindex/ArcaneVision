@@ -280,3 +280,13 @@ delta.log      = 857,127 字节
 - 安装后版本 0.10.0、服务 running、候选 API 正常；
 - `/vol1/@appdata/xuanlan/settings.json`、`scanmode.json` 保留；
 - Gitea / GitHub 发布 `v0.10.0`（prerelease），附 FPK。
+
+## 12. 容量/修复趋势（0.10.x）
+
+- 服务每 60 秒记录一次单元容量、修复失败累计值；
+- 保留最近 60 个采样；
+- `/api/status.trend.capacity` / `.repairFailed` 输出数组；
+- 管理端状态行在采样 ≥2 次时显示容量趋势条，并标注最近修复失败数；
+- 采样与读取通过 mutex 保护。
+
+说明：趋势仅保留当前进程生命周期，重启后重新累计。

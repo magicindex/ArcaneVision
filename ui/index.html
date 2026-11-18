@@ -350,6 +350,9 @@
   .setbox .scanmain .hint2{display:block;white-space:normal}
   .setbox .scanrow label{font-size:11.5px;color:#a9bad6;white-space:nowrap;display:flex;align-items:center;gap:4px}
   .setbox .scangroup{font-size:11px;color:#7f93b4;letter-spacing:1px;margin:8px 6px 2px}
+  .setbox .spark{display:flex;align-items:flex-end;gap:2px;height:18px;margin-top:6px}
+  .setbox .spark i{display:block;flex:1;min-width:1px;background:rgba(90,170,220,.55);border-radius:1px}
+  .setbox .spark i.rf{background:rgba(235,150,90,.65)}
   html[data-theme="light"] .setbox select,html[data-theme="light"] .setbox input[type=text]{
     background:#f7f9fc;color:#33415a;border-color:rgba(15,23,42,.16)}
   .setbox .hint{font-size:12px;color:#6e7f9f;line-height:1.7;margin-top:6px}
@@ -2747,6 +2750,25 @@
           (scanStatus.unitBuild.vol || '') + ' ' +
           (scanStatus.unitBuild.records || 0) + ' 条'
         : '');
+    const tr = scanStatus && scanStatus.trend;
+    if (tr && tr.capacity && tr.capacity.length > 1) {
+      const max = Math.max.apply(null, tr.capacity) || 1;
+      const bar = document.createElement('div');
+      bar.className = 'spark';
+      bar.title = '容量趋势（最近 ' + tr.capacity.length + ' 次采样，峰值 ' + mb(max) + '）';
+      for (const v of tr.capacity) {
+        const b = document.createElement('i');
+        b.style.height = Math.max(2, Math.round(v / max * 18)) + 'px';
+        bar.appendChild(b);
+      }
+      const rf = (tr.repairFailed || []).slice(-1)[0] || 0;
+      const tip = document.createElement('i');
+      tip.className = 'rf';
+      tip.style.height = Math.max(2, Math.min(18, 2 + rf)) + 'px';
+      tip.title = '最近修复失败 ' + rf;
+      bar.appendChild(tip);
+      el.appendChild(bar);
+    }
   }
   function refreshScanStatus(){
     fetch(API + 'status').then(r => r.json()).then(d => {
