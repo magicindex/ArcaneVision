@@ -2664,6 +2664,17 @@ static uint32_t perm_hash(const char *s) {
     while (*s) { h ^= (unsigned char)*s++; h *= 16777619u; }
     return h;
 }
+static vol_t *remote_vol_for_path(const char *path) {
+    for (int i = 0; i < g_nvols; i++) {
+        vol_t *v = &g_vols[i];
+        if (!v->remote) continue;
+        size_t rl = strlen(v->root);
+        if (!strncmp(path, v->root, rl) && (path[rl] == 0 || path[rl] == '/'))
+            return v;
+    }
+    return NULL;
+}
+
 static int perm_cache_check(perm_cache_ent *c, const char *dir, uid_t uid) {
     perm_cache_ent *e = &c[perm_hash(dir) & (PCACHE_N - 1)];
     if (e->dir && !strcmp(e->dir, dir)) return e->ok;
@@ -2891,6 +2902,7 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
             is_usb = v->usb;
             size = r->size; mtime = r->mtime;
         }
+        int remote_ok = 0;
         if (uid >= 0) {
             char pd[8192];
             size_t pl = strlen(path);
@@ -2899,9 +2911,13 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
             char *sl = strrchr(pd, '/');
             if (!sl) continue;
             if (sl == pd) sl[1] = 0; else *sl = 0;
-            if (!admin && system_path(path)) continue;
-            if (!perm_cache_check(pcache, pd, (uid_t)uid)) continue;
-            if (nsc >= 0 && strncmp(path, "/vol00/", 7) != 0 && !scope_allows(sc, nsc, path)) continue;
+            vol_t *rv = remote_vol_for_path(path);
+            remote_ok = rv && remote_allows(uid, admin, rv);
+            if (!remote_ok) {
+                if (!admin && system_path(path)) continue;
+                if (!perm_cache_check(pcache, pd, (uid_t)uid)) continue;
+                if (nsc >= 0 && strncmp(path, "/vol00/", 7) != 0 && !scope_allows(sc, nsc, path)) continue;
+            }
         }
         {
             struct stat lst;
@@ -2909,7 +2925,7 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
             /* 索引可能短时间保留已删除/已卸载路径；不要把它们当搜索结果返回 */
             if (!have) continue;
             if (is_dir && !S_ISDIR(lst.st_mode)) continue;
-            if (!is_dir && uid >= 0 && !perm_mode_readable((uid_t)uid, path, &lst)) continue;
+            if (!is_dir && uid >= 0 && !remote_ok && !perm_mode_readable((uid_t)uid, path, &lst)) continue;
             if (!is_dir) { size = (uint32_t)lst.st_size; mtime = (uint32_t)lst.st_mtime; }
         }
         if (seen) {
