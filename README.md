@@ -204,7 +204,9 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
 - [x] docs/09 §8 标注为未来设计，与当前实现对齐
 - [x] 版本号 0.9.0、README / CHANGELOG / RELEASE_NOTES
 - [ ] 真机 fanotify 与实体 FPK 安装回归（当前环境无 fanotify 权限）
-- [ ] GitHub / Gitea 推送与 tag
+- [x] FPK 构建：`dist/xuanlan_0.9.0_amd64.fpk`
+- [x] Gitea 推送 + tag `v0.9.0`
+- [ ] GitHub 推送（当前环境到 github.com 超时）
 
 ### 0.8.9–0.8.17 更新内容（历史）
 
