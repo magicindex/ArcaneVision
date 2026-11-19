@@ -4878,6 +4878,9 @@ static void handle_scan_candidates(sbuf *out, int uid, int admin) {
     struct passwd *pw;
     while ((pw = getpwent()) != NULL && nu < CAND_MAX) {
         if (pw->pw_uid < 1000) continue;
+        int dup = 0;
+        for (int j = 0; j < nu; j++) if (users[j].uid == pw->pw_uid) { dup = 1; break; }
+        if (dup) continue;
         cand_user *u = &users[nu++];
         memset(u, 0, sizeof(*u));
         u->uid = pw->pw_uid;

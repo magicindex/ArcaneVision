@@ -55,7 +55,7 @@
   .scanchips{display:flex;flex-wrap:wrap;gap:5px;margin:4px 0}
   .scanchip{font-size:10.5px;padding:3px 7px;border-radius:999px;border:1px solid rgba(90,200,190,.28);color:#9fd8d1}
   .scanchip.isolate{border-color:rgba(240,179,91,.35);color:#f0b35b}
-  .scanpickmask{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:80;display:flex;align-items:center;justify-content:center;padding:20px}
+  .scanpickmask{position:fixed;inset:0;background:rgba(0,0,0,.62);z-index:400;display:flex;align-items:center;justify-content:center;padding:20px}
   .scanpickbox{width:min(680px,96vw);max-height:82vh;display:flex;flex-direction:column;background:var(--bg2,#121d24);border:1px solid var(--line,#2c4048);border-radius:12px;overflow:hidden}
   .scanpickhead{display:flex;gap:8px;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line,#2c4048)}
   .scanpickhead b{flex:1;font-size:13px}
@@ -2857,13 +2857,23 @@
     const render = () => {
       const q = (search.value || '').trim().toLowerCase();
       let h = '<div class="scangroup">用户组</div>';
-      const groups = (d.groups || []).filter(g => !q || String(g.name || '').toLowerCase().includes(q) || String(g.gid) === q);
+      const seenG = new Set();
+      const groups = (d.groups || []).filter(g => {
+        if (seenG.has(String(g.gid))) return false;
+        seenG.add(String(g.gid));
+        return !q || String(g.name || '').toLowerCase().includes(q) || String(g.gid) === q;
+      });
       if (!groups.length) h += '<div class="hint">无匹配用户组</div>';
       for (const g of groups) h += rowHtml('group', g.gid, g.name || ('gid ' + g.gid),
         'gid ' + g.gid + (g.members ? ' · ' + g.members : ''));
       h += '<div class="scangroup">用户</div>';
-      const users = (d.users || []).filter(u => u.name !== 'nobody' && u.uid < 60000 &&
-        (!q || String(u.name || '').toLowerCase().includes(q) || String(u.uid) === q));
+      const seenU = new Set();
+      const users = (d.users || []).filter(u => {
+        if (seenU.has(String(u.uid))) return false;
+        seenU.add(String(u.uid));
+        return u.name !== 'nobody' && u.uid < 60000 &&
+          (!q || String(u.name || '').toLowerCase().includes(q) || String(u.uid) === q);
+      });
       if (!users.length) h += '<div class="hint">无匹配用户</div>';
       for (const u of users) h += rowHtml('user', u.uid, u.name || ('uid ' + u.uid),
         'uid ' + u.uid + (u.home ? ' · ' + u.home : ''));
