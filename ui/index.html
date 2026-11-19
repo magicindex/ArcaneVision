@@ -977,6 +977,7 @@
   const vcanvas = openwin.querySelector('#vcanvas');
   const vctx = vcanvas ? vcanvas.getContext('2d') : null;
   let vdrawRaf = 0;
+  let vTranscode = null, vSeekDragging = false;
   function videoDrawFrame(){
     if (!videoView.classList.contains('on')) { vdrawRaf = 0; return; }
     if (vctx && vvideo.videoWidth && vvideo.videoHeight) {
@@ -1047,11 +1048,13 @@
     return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s).padStart(2, '0');
   }
   function videoSyncTime(){
-    const cur = vvideo.currentTime || 0, dur = vvideo.duration;
+    const tc = vTranscode;
+    const cur = (tc ? tc.start : 0) + (vvideo.currentTime || 0);
+    const dur = tc && tc.duration > 0 ? tc.duration : vvideo.duration;
     vtime.textContent = fmtVideoTime(cur) + ' / ' + fmtVideoTime(dur);
     if (isFinite(dur) && dur > 0) {
       vseek.disabled = false;
-      vseek.value = String(Math.min(1000, Math.round(cur / dur * 1000)));
+      if (!vSeekDragging) vseek.value = String(Math.min(1000, Math.round(cur / dur * 1000)));
     } else {
       vseek.disabled = true;
     }
@@ -1087,13 +1090,35 @@
   }
   function videoSeekBy(delta){
     if (!isFinite(delta)) return;
+    const tc = vTranscode;
+    if (tc) {
+      const cur = (tc.start || 0) + (vvideo.currentTime || 0);
+      const max = tc.duration > 0 ? tc.duration : cur + delta;
+      videoTranscodeSeek(Math.max(0, Math.min(max, cur + delta)));
+      return;
+    }
     const cur = vvideo.currentTime || 0;
     const max = isFinite(vvideo.duration) ? vvideo.duration : Infinity;
     vvideo.currentTime = Math.max(0, Math.min(max, cur + delta));
     videoSyncTime();
     videoShowControls();
   }
+  function videoTranscodeSeek(target){
+    if (!vTranscode) return;
+    const tc = vTranscode;
+    let at = Math.max(0, Number(target) || 0);
+    if (tc.duration > 0) at = Math.min(tc.duration, at);
+    tc.start = at;
+    owUrl = API + 'transcode?path=' + encodeURIComponent(tc.path) + '&q=' + encodeURIComponent(tc.q || '1080') +
+      (at > 0 ? '&t=' + at.toFixed(3) : '');
+    vvideo.src = owUrl;
+    vvideo.load();
+    try { const p = vvideo.play(); if (p && p.catch) p.catch(() => {}); } catch (e) {}
+    videoSyncTime();
+    videoShowControls();
+  }
   function videoStop(){
+    vTranscode = null; vSeekDragging = false;
     try { vvideo.pause(); } catch (e) {}
     vvideo.removeAttribute('src');
     try { vvideo.load(); } catch (e) {}
@@ -1104,7 +1129,7 @@
   }
   function openVideo(url, title){
     if (openIn !== 'embed') { videoStop(); window.open(url, '_blank'); return; }
-    if (url.indexOf('/api/transcode') < 0) setOwTag('');
+    if (url.indexOf('/api/transcode') < 0) { setOwTag(''); vTranscode = null; }
     owUrl = url;
     setOwBrowser();
     pdfHide();
@@ -1136,9 +1161,24 @@
   vvideo.addEventListener('timeupdate', videoSyncTime);
   vvideo.addEventListener('loadedmetadata', () => { videoSyncTime(); videoShowControls(); });
   vseek.addEventListener('input', () => {
-    if (!isFinite(vvideo.duration) || vvideo.duration <= 0) return;
-    vvideo.currentTime = vvideo.duration * (Number(vseek.value) / 1000);
+    const tc = vTranscode;
+    const dur = tc && tc.duration > 0 ? tc.duration : vvideo.duration;
+    if (!isFinite(dur) || dur <= 0) return;
+    if (tc) {
+      vSeekDragging = true;
+      const t = dur * (Number(vseek.value) / 1000);
+      vtime.textContent = fmtVideoTime(t) + ' / ' + fmtVideoTime(dur);
+      return;
+    }
+    vvideo.currentTime = dur * (Number(vseek.value) / 1000);
     videoSyncTime();
+  });
+  vseek.addEventListener('change', () => {
+    const tc = vTranscode;
+    if (!tc) return;
+    const dur = tc.duration > 0 ? tc.duration : 0;
+    vSeekDragging = false;
+    if (dur > 0) videoTranscodeSeek(dur * (Number(vseek.value) / 1000));
   });
   const videoSyncVolume = () => {
     vmute.textContent = vvideo.muted || vvideo.volume === 0 ? '静音中' : '音量';
@@ -1398,8 +1438,15 @@
     return parts.join(' · ');
   }
 
-  function openTranscode(p, why){
-    const url = API + 'transcode?path=' + encodeURIComponent(p) + '&q=1080';
+  async function openTranscode(p, why, start){
+    let dur = 0;
+    try {
+      const info = await fetch(API + 'probe?path=' + encodeURIComponent(p), {cache: 'no-store'}).then(r => r.json());
+      dur = Number(info && info.duration) || 0;
+    } catch (e) {}
+    const at = Math.max(0, Number(start) || 0);
+    vTranscode = { path: p, why: why || '', q: '1080', duration: dur, start: at };
+    const url = API + 'transcode?path=' + encodeURIComponent(p) + '&q=1080' + (at > 0 ? '&t=' + at.toFixed(3) : '');
     setOwTag('转码 1080p');
     say('正在转码播放（1080p，' + (why || '兼容模式') + '）');
     openVideo(url, baseName(p));

@@ -2698,6 +2698,21 @@ static int media_probe(const char *real, char *vcodec, size_t vcap, char *acodec
     return 0;
 }
 
+static double media_duration(const char *real) {
+    static const char *paths[] = { "/usr/bin/ffprobe", "/bin/ffprobe", "/usr/local/bin/ffprobe" };
+    char buf[256];
+    for (size_t i = 0; i < sizeof paths / sizeof paths[0]; i++) {
+        if (access(paths[i], X_OK) != 0) continue;
+        char *argv[] = { (char *)paths[i], "-v", "error", "-show_entries", "format=duration",
+                         "-of", "default=noprint_wrappers=1:nokey=1", (char *)real, NULL };
+        if (run_capture(argv, buf, sizeof buf) != 0) return 0;
+        char *end = NULL;
+        double d = strtod(buf, &end);
+        if (end != buf && d > 0 && d < 1e7) return d;
+    }
+    return 0;
+}
+
 static void handle_probe(sbuf *out, const char *qs, int uid) {
     char raw[4096];
     if (!param(qs, "path", raw, sizeof raw)) { sb_puts(out, "{\"ok\":false,\"error\":\"missing path\"}"); return; }
@@ -2720,8 +2735,9 @@ static void handle_probe(sbuf *out, const char *qs, int uid) {
     int vw = 0, vh = 0;
     int ok = media_probe(real, vc, sizeof vc, ac, sizeof ac, &vw, &vh, pix, sizeof pix, tr, sizeof tr);
     int is_hdr = !strcmp(tr, "smpte2084") || !strcmp(tr, "arib-std-b67");
-    sb_printf(out, "{\"ok\":%s,\"video\":\"%s\",\"audio\":\"%s\",\"width\":%d,\"height\":%d,\"pix\":\"%s\",\"hdr\":%s}",
-              ok ? "true" : "false", vc, ac, vw, vh, pix, is_hdr ? "true" : "false");
+    sb_printf(out, "{\"ok\":%s,\"video\":\"%s\",\"audio\":\"%s\",\"width\":%d,\"height\":%d,\"pix\":\"%s\",\"hdr\":%s,\"duration\":%.3f}",
+              ok ? "true" : "false", vc, ac, vw, vh, pix, is_hdr ? "true" : "false",
+              media_duration(real));
 }
 
 
