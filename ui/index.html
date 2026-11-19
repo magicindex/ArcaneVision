@@ -243,7 +243,8 @@
   /* 视频预览：自定义控制条，鼠标离开播放窗口即隐藏，避免遮挡画面 */
   .openwin #videoview{display:none;flex:1;flex-direction:column;min-height:0;background:#000;position:relative;overflow:hidden}
   .openwin #videoview.on{display:flex}
-  .openwin #vvideo{flex:1;width:100%;min-height:0;object-fit:contain;background:#000;cursor:pointer;outline:none}
+  .openwin #vvideo{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;cursor:pointer;outline:none;opacity:0;z-index:1}
+  .openwin #vcanvas{position:absolute;inset:0;width:100%;height:100%;background:#000;object-fit:contain;pointer-events:none;z-index:0}
   .openwin #vvideo::-webkit-media-controls,
   .openwin #vvideo::-webkit-media-controls-enclosure,
   .openwin #vvideo::-webkit-media-controls-panel,
@@ -884,7 +885,7 @@
     '<span id="pgcount">– / –</span><button id="pgnext">›</button><span class="sp"></span>' +
     '<button id="pgfit">适应宽度</button><button id="pgout">−</button>' +
     '<button id="pgin">+</button></div><div class="ppages" id="ppages"></div></div>' +
-    '<div id="videoview"><video id="vvideo" playsinline webkit-playsinline preload="metadata" tabindex="0" disablepictureinpicture></video>' +
+    '<div id="videoview"><video id="vvideo" playsinline webkit-playsinline preload="metadata" tabindex="0" disablepictureinpicture></video><canvas id="vcanvas"></canvas>' +
     '<div class="vbar"><button id="vplay" type="button" aria-label="播放或暂停">▶</button>' +
     '<span id="vtime">0:00 / 0:00</span>' +
     '<input id="vseek" type="range" min="0" max="1000" value="0" step="1" aria-label="播放进度">' +
@@ -958,6 +959,27 @@
   // ---- 内置视频播放器 ----
   const videoView = openwin.querySelector('#videoview');
   const vvideoEl = openwin.querySelector('#vvideo');
+  const vcanvas = openwin.querySelector('#vcanvas');
+  const vctx = vcanvas ? vcanvas.getContext('2d') : null;
+  let vdrawRaf = 0;
+  function videoDrawFrame(){
+    if (!videoView.classList.contains('on')) { vdrawRaf = 0; return; }
+    if (vctx && vvideo.videoWidth && vvideo.videoHeight) {
+      if (vcanvas.width !== vvideo.videoWidth || vcanvas.height !== vvideo.videoHeight) {
+        vcanvas.width = vvideo.videoWidth;
+        vcanvas.height = vvideo.videoHeight;
+      }
+      try { vctx.drawImage(vvideo, 0, 0, vcanvas.width, vcanvas.height); } catch (e) {}
+    }
+    vdrawRaf = requestAnimationFrame(videoDrawFrame);
+  }
+  function videoStartDraw(){
+    if (!vdrawRaf) vdrawRaf = requestAnimationFrame(videoDrawFrame);
+  }
+  function videoStopDraw(){
+    if (vdrawRaf) cancelAnimationFrame(vdrawRaf);
+    vdrawRaf = 0;
+  }
   if (vvideoEl) {
     vvideoEl.controls = false;
     vvideoEl.removeAttribute('controls');
@@ -1030,6 +1052,7 @@
     vvideo.removeAttribute('src');
     try { vvideo.load(); } catch (e) {}
     videoView.classList.remove('on', 'ctrlon');
+    videoStopDraw();
     clearTimeout(vHideTimer);
     vHover = false;
   }
@@ -1045,6 +1068,7 @@
     openwin.querySelector('#owtitle').textContent = title || '视频';
     videoView.classList.add('on');
     openwin.classList.add('on');
+    videoStartDraw();
     applyOw();
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     vvideo.controls = false;

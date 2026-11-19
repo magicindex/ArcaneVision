@@ -591,3 +591,10 @@ chmod 600 → 子树增量更新 → 查询再次为空
 - video 显式 controls=false，移除 controls 属性；
 - controlsList 由 JS 设置，禁止下载/原生全屏/远程播放；
 - CSS 隐藏 ::-webkit-media-controls 系列，避免原生进度条遮挡字幕。
+
+
+## 47. 画布播放绕开系统原生控件（0.10.5）
+
+- video 保持播放但 opacity=0，画面绘制到 canvas；
+- 原生 1x/扬声器进度条随 video 层透明，不再遮挡字幕；
+- 自定义控制条继续使用，播放中 1.8s 自动隐藏。
