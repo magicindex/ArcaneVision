@@ -2653,7 +2653,7 @@
     '<div id="teamList" class="scanlist"><div class="hint">正在检测团队文件夹…</div></div></section>' +
     '<section class="scard"><h3>本地检索</h3>' +
     '<label class="admrow" id="localRow"><input type="checkbox" id="localEnabled" checked>启用本地卷检索' +
-    '<span class="hint2">默认开启；关闭后本地 /vol1–/vol4 不参与搜索，但索引保留</span></label>' +
+    '<span class="hint2" id="localVolHint">默认开启；关闭后本地卷不参与搜索，但索引保留</span></label>' +
     '<div class="hint" id="localHint"></div></section>' +
     '<section class="scard"><h3>挂载检索（外接存储）</h3>' +
     '<label class="admrow" id="usbRow"><input type="checkbox" id="usbEnabled">启用挂载检索' +
@@ -2663,7 +2663,7 @@
     '<div class="hint" id="usbHint"></div>' +
     '<div class="hint" id="usbRebuildRow"><a href="#" id="usbRebuild" style="color:#59d3c8">立即重建 USB 索引</a></div></section>' +
     '<section class="scard"><h3>本地检索范围</h3><div class="hint" id="aclWho"></div>' +
-    '<div class="hint">本地 ACL/范围只管理 /vol1–/vol4；远程挂载与远程凭据在下方「远程挂载」卡片独立管理。</div>' +
+    '<div class="hint" id="localRangeHint">本地 ACL/范围只管理本地卷；远程挂载与远程凭据在下方「远程挂载」卡片独立管理。</div>' +
     '<label class="admrow" id="strictRow"><input type="checkbox" id="strictHome" checked>严格模式' +
     '<span class="hint2">默认开启；家目录内忽略「所有人」授权，只认属主与指定用户/组</span></label>' +
     '<div class="hint" id="strictHint" style="display:none">严格模式：位于 /volN/&lt;用户&gt;/ 下的目录，即使带「所有人」读写权限，也只有属主和显式授权的用户/组可见；关闭后按文件权限原样判定（who 777 就谁都能看到）。</div>' +
@@ -2998,8 +2998,15 @@
       hint.innerHTML = '<span class="bad">未检测到文档服务</span>。' +
         '如需文档预览，请到「应用中心 → 文档」安装，安装后刷新本页即可自动识别。';
     }
+    const localVols = () => {
+      const ps = (settings.scopeAvailable && settings.scopeAvailable.paths) || [];
+      const vs = ps.map(p => String(p.path || p)).filter(p => /^\/vol[1-9][0-9]*$/.test(p));
+      return vs.length ? vs.join('、') : '本地卷';
+    };
     const list = setmask.querySelector('#aclList');
     const who = setmask.querySelector('#aclWho');
+    const rh = setmask.querySelector('#localRangeHint');
+    if (rh) rh.textContent = '本地 ACL/范围只管理 ' + localVols() + '；远程挂载与远程凭据在下方「远程挂载」卡片独立管理。';
     list.innerHTML = '<div>读取中…</div>';
     const allAvail = (settings.scopeAvailable && settings.scopeAvailable.paths) || [];
     const avail = allAvail.filter(p => !/^\/vol02(\/|$)/.test(p));  /* 本地范围不混入远程 */
@@ -3009,7 +3016,7 @@
       ? '管理员：只列出当前账号可访问的目录；勾选目录即包含其下全部内容'
       : '勾选的目录才会被搜索；点 ▸ 可展开子目录';
     if (!avail.length) { list.innerHTML = '<div>没有可访问目录</div>'; return; }
-    list.innerHTML = '<div class="scangroup">本地卷（/vol1–/vol4）</div>';
+    list.innerHTML = '<div class="scangroup">本地卷（' + localVols() + '）</div>';
 
     // 显示时去掉用户编号层：/vol3/1000/媒体库 → /vol3/媒体库
     // 去掉用户编号层：/vol3/1000/媒体库 → /vol3/媒体库
@@ -3219,6 +3226,10 @@
       if (lcb) lcb.checked = settings.localEnabled !== false;
       const lh = setmask.querySelector('#localHint');
       if (lh) lh.textContent = (settings.localEnabled !== false) ? '本地检索已启用' : '本地检索已关闭';
+      const lvh = setmask.querySelector('#localVolHint');
+      if (lvh) lvh.textContent = (settings.localEnabled !== false)
+        ? '默认开启；关闭后本地卷不参与搜索，但索引保留'
+        : '已关闭；本地卷不参与搜索，索引保留';
       const urow = setmask.querySelector('#usbRow');
       const ucb = setmask.querySelector('#usbEnabled');
       const wcb = setmask.querySelector('#usbWatch');

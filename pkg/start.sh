@@ -35,7 +35,7 @@ for i in 1 2 3 4 5 6 7 8; do
         ROOTS="${ROOTS:+${ROOTS},}/vol${i}"
     fi
 done
-[ -n "${ROOTS}" ] || ROOTS="/vol1,/vol2,/vol3,/vol4"
+[ -n "${ROOTS}" ] || ROOTS="/vol1,/vol2,/vol3,/vol4,/vol5,/vol6,/vol7,/vol8"
 
 if [ -r "${ETC_DIR}/xuanlan.conf" ]; then
     # shellcheck disable=SC1090
