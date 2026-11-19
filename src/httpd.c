@@ -1228,28 +1228,6 @@ static int job_add(unit_job *jobs, int *n, int max, const unit_job *j) {
     return 1;
 }
 
-static int collect_group_members(gid_t gid, uid_t *out, int max) {
-    struct group *gr = getgrgid(gid);
-    if (!gr) return 0;
-    int n = 0;
-    for (char **m = gr->gr_mem; m && *m && n < max; m++) {
-        struct passwd *pw = getpwnam(*m);
-        if (!pw) continue;
-        int dup = 0;
-        for (int i = 0; i < n; i++) if (out[i] == pw->pw_uid) dup = 1;
-        if (!dup) out[n++] = pw->pw_uid;
-    }
-    /* 主组是该 gid 的用户 */
-    setpwent();
-    for (struct passwd *pw = getpwent(); pw && n < max; pw = getpwent()) {
-        if (pw->pw_gid != gid) continue;
-        int dup = 0;
-        for (int i = 0; i < n; i++) if (out[i] == pw->pw_uid) dup = 1;
-        if (!dup) out[n++] = pw->pw_uid;
-    }
-    endpwent();
-    return n;
-}
 
 static int collect_unit_jobs(const xl_scan_policy *p, unit_job *jobs, int max) {
     int n = 0;
@@ -1557,9 +1535,7 @@ static void *unit_repair_worker(void *arg) {
             fprintf(stderr, "xuanlan: unit repair 跳过未激活单元 %s\n", key);
             continue;
         }
-        pthread_rwlock_rdlock(&g_rw);
         int rc = unit_build_one(&job);
-        pthread_rwlock_unlock(&g_rw);
         if (rc == 0) {
             repair_track_ok(key);
             fprintf(stderr, "xuanlan: unit repair 完成 %s\n", key);
@@ -1590,6 +1566,12 @@ static void unit_repair_stop(void) {
     g_repair_started = 0;
 }
 
+typedef struct {
+    char root[256];
+    char file[1024];
+    int  ok;
+} unit_vol;
+
 static int unit_json_write(const unit_job *j, const char *dir, char vols[][256],
                            int nvols) {
     char path[1300], tmp[1400];
@@ -1616,7 +1598,7 @@ static char g_ub_key[XL_SCAN_UNIT_MAX];
 static char g_ub_vol[256];
 static uint64_t g_ub_start;
 
-static int unit_build_one_impl(const unit_job *j) {
+static int unit_build_one_impl(const unit_job *j, const unit_vol *uv, int nuv) {
     char dir[1200];
     if (xl_scan_unit_dir(g_idx_dir, j->key, dir, sizeof dir) < 0) return -1;
     if (mkdir(dir, 0700) != 0 && errno != EEXIST) return -1;
@@ -1638,8 +1620,8 @@ static int unit_build_one_impl(const unit_job *j) {
     char vols[MAX_VOL][256];
     char news[MAX_VOL][1400];
     int nnew = 0, failed = 0;
-    for (int i = 0; i < g_nvols_local; i++) {
-        vol_t *v = &g_vols[i];
+    for (int i = 0; i < nuv; i++) {
+        const unit_vol *v = &uv[i];
         if (!v->ok) continue;
         const char *base = strrchr(v->file, '/');
         base = base ? base + 1 : v->file;
@@ -1692,13 +1674,24 @@ static int unit_build_one_impl(const unit_job *j) {
 }
 
 static int unit_build_one(const unit_job *j) {
+    unit_vol uvs[MAX_VOL];
+    int nuv = 0;
+    pthread_rwlock_rdlock(&g_rw);
+    for (int i = 0; i < g_nvols_local && i < MAX_VOL; i++) {
+        if (!g_vols[i].ok) continue;
+        uvs[nuv].ok = 1;
+        snprintf(uvs[nuv].root, sizeof uvs[nuv].root, "%.255s", g_vols[i].root);
+        snprintf(uvs[nuv].file, sizeof uvs[nuv].file, "%.1023s", g_vols[i].file);
+        nuv++;
+    }
+    pthread_rwlock_unlock(&g_rw);
     pthread_mutex_lock(&g_ub_mu);
     snprintf(g_ub_key, sizeof g_ub_key, "%s", j->key);
     g_ub_vol[0] = 0;
     g_ub_start = now_ms();
     xl_scan_records = 0;
     pthread_mutex_unlock(&g_ub_mu);
-    int rc = unit_build_one_impl(j);
+    int rc = unit_build_one_impl(j, uvs, nuv);
     pthread_mutex_lock(&g_ub_mu);
     g_ub_key[0] = 0;
     g_ub_vol[0] = 0;
@@ -1764,9 +1757,7 @@ static void unit_patch_acl_paths(char paths[][4096], int n) {
                 /* 子树合并失败时退回该单元全量重建，保证正确性。 */
                 fprintf(stderr, "xuanlan: ACL 子树合并失败 %s/%s，回退全单元重建\n",
                         paths[p], jobs[j].key);
-                pthread_rwlock_rdlock(&g_rw);
                 unit_build_one(&jobs[j]);
-                pthread_rwlock_unlock(&g_rw);
             }
         }
     }
@@ -1783,9 +1774,7 @@ static void units_build_all(void) {
     int n = collect_unit_jobs(&p, jobs, XL_UNIT_CACHE_MAX);
     if (!n) return;
     fprintf(stderr, "xuanlan: 开始构建 %d 个隔离单元\n", n);
-    pthread_rwlock_rdlock(&g_rw);
     for (int i = 0; i < n && !g_stop; i++) unit_build_one(&jobs[i]);
-    pthread_rwlock_unlock(&g_rw);
 }
 
 static void *build_worker(void *arg) {
