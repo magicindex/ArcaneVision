@@ -605,3 +605,10 @@ chmod 600 → 子树增量更新 → 查询再次为空
 - /api/remote 增加 protocol= SMB/NFS/WebDAV；
 - 远程卡片路径前显示彩色协议徽标；
 - CIFS/SMB3→SMB，NFS/NFS4→NFS，davfs→WebDAV。
+
+
+## 49. 远程路径协议标志扩展到搜索结果/目录（0.10.5）
+
+- 搜索结果的远程路径前显示 SMB/NFS/WebDAV 徽标；
+- 文件查找器面包屑、复制/移动目录选择器同步显示；
+- 协议映射来自 /api/remote。

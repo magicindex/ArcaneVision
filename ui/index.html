@@ -2216,7 +2216,7 @@
       (d.entries || []).filter(e => e.dir).forEach(e => {
         const row = document.createElement('div');
         row.className = 'mi';
-        row.innerHTML = catIcon('dir', 16) + '<span class="p">' + esc(e.path) + '</span>';
+        row.innerHTML = catIcon('dir', 16) + '<span class="p">' + protoBadge(e.path) + esc(e.path) + '</span>';
         row.onclick = () => dpLoad(e.path);
         box.appendChild(row);
       });
@@ -2515,6 +2515,21 @@
     return out + esc(name.slice(i));
   }
   function parentPath(p){ const i = p.lastIndexOf('/'); return i > 0 ? p.slice(0, i) : '/'; }
+  function remoteProtoOf(p){
+    const m = (remoteProtocols || []).find(x => x.root && (p === x.root || p.startsWith(x.root + '/')));
+    return m ? { name: (m.protocol || m.kind || 'REMOTE').toUpperCase(), kind: m.kind || '' } : null;
+  }
+  function protoBadge(p){
+    const x = remoteProtoOf(p);
+    if (!x) return '';
+    const cls = x.name === 'SMB' ? ' smb' : (x.name === 'NFS' ? ' nfs' : (x.name === 'WEBDAV' ? ' webdav' : ''));
+    return '<span class="proto' + cls + '">' + esc(x.name) + '</span>';
+  }
+  function loadRemoteProtocols(){
+    fetch(API + 'remote', {cache: 'no-store'}).then(r => r.json()).then(d => {
+      remoteProtocols = (d && d.mounts) || [];
+    }).catch(() => {});
+  }
   function say(msg){ toast.textContent = msg; toast.classList.add('on'); clearTimeout(say.t); say.t = setTimeout(()=>toast.classList.remove('on'), 1600); }
 
 
@@ -2566,7 +2581,7 @@
         '<div class="ico' + (it.dir ? ' dir' : '') + '">' + catIcon(it.dir ? 'dir' : (it.cat || 'other')) + '</div>' +
         '<div class="body">' +
           '<div class="name">' + (it.usb ? '<span class="usb-tag">USB</span>' : '') + hi(it.name, q.value.trim()) + '</div>' +
-          '<div class="path"><span>' + esc(parentPath(it.path)) + '</span></div>' +
+          '<div class="path"><span>' + protoBadge(it.path) + esc(parentPath(it.path)) + '</span></div>' +
         '</div>' +
         '<div class="meta-i" style="font-size:11.5px;color:#6e7891;flex:none">' + [fmtSize(it.size), fmtTime(it.mtime)].filter(Boolean).join(' · ') + '</div>' +
         '<div class="act"><button>复制路径</button></div>' +
@@ -2653,7 +2668,7 @@
         if (d.error) { list.innerHTML = '<div class="row"><div class="nm">无法列出：' + esc(d.error) + '</div></div>'; return; }
         const items = d.entries || [];
         finderItems = items;
-        crumb.innerHTML = '<b>' + esc(path) + '</b> · ' + (d.count || items.length) + ' 项' +
+        crumb.innerHTML = (protoBadge(path) ? protoBadge(path) + ' ' : '') + '<b>' + esc(path) + '</b> · ' + (d.count || items.length) + ' 项' +
           (d.truncated ? '（已截断，仅显示前 4000 项）' : '');
         if (!items.length) { list.innerHTML = '<div class="row"><div class="nm">该文件夹没有可见内容</div></div>'; return; }
         list.innerHTML = '';
@@ -2706,6 +2721,7 @@
     ['video', '视频', ['mp4','mkv','mov','avi','webm','wmv','flv','m4v','mpg','mpeg','ts','m2ts','rmvb','3gp'], OPTS_MEDIA, 'fnpreview'],
     ['archive', '压缩包', ['zip','rar','7z','tar','gz','tgz','bz2','xz','zst','lz4','iso'], OPTS_DL, 'download']
   ];
+  let remoteProtocols = [];
   let settings = { openWith: {}, clickFolder: 'single', clickFile: 'double',
                    scanMode: 'shared', shareGroups: [], isolatedGroups: [],
                    shareUsers: [], isolatedUsers: [], hybridGroups: [],
@@ -3679,6 +3695,7 @@
     }).catch(() => {});
   }
   loadSettings();
+  loadRemoteProtocols();
   refreshTrashCount();
 
   function copy(p){
