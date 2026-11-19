@@ -140,8 +140,10 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
 
 ## 现在是什么状态
 
-当前版本 **0.10.5（公测）**，更新记录见 [CHANGELOG.md](CHANGELOG.md)，发布说明见
-[RELEASE_NOTES.md](RELEASE_NOTES.md)。0.9.0 完成团队空间按权限索引；0.10.5 增加团队文件独立开关与列表；0.10.4 完成无 wizard 的 App Center 干净卸载/重装；0.10.2 完成 App Center 干净重装回归；0.10.1 完成快照 checksum 与趋势采样；0.10.0 完成 fanotify ACL 变更自愈、事件队列压力防护、修复退避，并在 FnOSF10 完成 FPK 应用中心安装回归。
+当前版本 **0.10.6（正式版）**，更新记录见 [CHANGELOG.md](CHANGELOG.md)，发布说明见
+[RELEASE_NOTES.md](RELEASE_NOTES.md)。0.10.6 将 0.10.x 的团队独立索引、远程协议标识、
+HLS 转码、分区域扫描统计和板块级重建收敛为正式版；0.9.0 完成团队空间按权限索引；
+0.10.0 完成 fanotify ACL 自愈与修复退避。
 
 ### 方向
 
@@ -155,7 +157,61 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
    `.trash` 回收与一键回滚。
 5. **不牺牲检索性能**：共享索引仍是 mmap + trigram；单元索引只读 mmap，增量走 live + delta。
 
-### 0.10.5 已完成
+### 0.10.6 正式版已完成
+
+#### 软件迭代
+
+- 团队文件从本地共享索引中独立为 `team-volN.idx`，团队搜索和团队重建互不影响本地卷；
+- 本地 / 团队 / 外接存储 / 远程挂载四个板块各自提供重建按钮；
+- 定时重建对四个板块全部生效，按本地/团队 → 外接 → 远程顺序执行；
+- 自动扫描卡显示本地、团队、外接、远程各自的条目数和耗时；
+- 远程路径在挂载卡片、搜索结果、文件查找器、目录选择器前显示 SMB / NFS / WebDAV；
+- PDF 工具栏新增「显示全部」，按可用宽高自适应整页；
+- 视频默认内置播放器，控制条支持胶囊样式、拖动位置和播放中自动隐藏；
+- 视频改用 HLS 分段转码，hls.js 按应用根路径动态加载，支持无感拖动；
+- 视频画面改用 canvas 渲染，隐藏系统原生 1x/扬声器控制条，避免遮挡字幕；
+- 修复启动时卷未挂载导致只列出 `/vol1`、`/vol3`；启动等待 `/vol1–/vol4`；
+- 修复团队路径不进入共享检索、`hls.js` 在 `/app/xuanlan` 路径下 404 等问题。
+
+#### 进程与运行方式
+
+```text
+systemd xuanlan.service
+  -> /vol1/@appcenter/xuanlan/start.sh
+  -> bin/xuanlan serve
+```
+
+- 单机单进程，无数据库、无独立检索服务；
+- 默认端口 8971，可由 `service_port` 覆盖；
+- HTTP/unix socket、构建、单元、fanotify、远程对账、USB 由同一进程内的线程协作；
+- 构建线程 `nice=19` + idle IO 优先级，单元之间让出 150ms；
+- 单元构建使用短锁快照，构建期间 `/api/status` 保持亚毫秒级响应；
+- 服务重启保留 `/vol1/@appdata/xuanlan` 下的索引和设置。
+
+#### 资源与查询速度对比
+
+| 模式 | 查询速度 | 磁盘 / 内存 | 构建成本 | 适用场景 |
+|---|---|---|---|---|
+| 共享 | 最快：单索引 + 查询期 ACL 裁剪 | 约 1× | 约 1× | 家庭、多用户日常 |
+| 隔离 | 快：直接读本人索引 | 约用户数× | 约用户数× | 少数敏感用户 |
+| 混合 | 共享用户同共享；隔离用户/组读各自索引 | 约 1× + 每个隔离单元 1× | 约 1× + 每个隔离单元 1× | 团队/部门分组隔离 |
+
+- 共享模式仍是默认推荐，查询路径最短；
+- 隔离模式查询无需 ACL 裁剪，但用户越多磁盘/内存/构建成本越高；
+- 混合模式只给被隔离的用户/组增加单元，未分组用户仍走共享。
+
+#### 本轮修复
+
+- 修复启动早于卷挂载时本地列表不全；
+- 修复团队文件独立索引后搜索为空；
+- 修复各板块重建互相影响；
+- 修复扫描模式选中区域对比度不足，改为粉红边框/左条；
+- 修复视频原生控件无法隐藏、控制条不自动隐藏；
+- 修复 HLS 首次播放失败、HLS fatal 无回退；
+- 修复远程协议标识只在挂载卡片显示；
+- 修复 hybrid 旧配置回退标志、组单元和组路由兼容。
+
+#### 0.10.5 已完成
 
 - 设置页新增「团队文件」卡片；
 - 团队文件夹独立启用/关闭；
@@ -263,17 +319,16 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
 - 远程挂载、SMB/CIFS、全文检索、索引加密仍不在本期范围。
 - UI 截图仍是 0.8.x 设置页，未包含扫描模式卡片。
 
-### 公测前紧急项
+### 0.10.6 正式版发布检查项
 
 - [x] 编译 + `smoke` / `api` / `scanmode` / `route` / `unitbuild` / `epoch` /
       `unitdelta` / `group-intersection` / `units-admin` / `repair` / `ui` 回归
 - [x] docs/09 §8 标注为未来设计，与当前实现对齐
-- [x] 版本号 0.10.1、README / CHANGELOG / RELEASE_NOTES
+- [x] 版本号 0.10.6、README / CHANGELOG / RELEASE_NOTES
 - [x] 真机 fanotify → 队列 → 批量 delta → 重启恢复（docs/10）
-- [x] 实体 FPK 应用中心安装回归（FnOSF10 本机 profile 安装 0.10.0 通过）
-- [x] FPK 构建：`dist/xuanlan_0.10.5_amd64.fpk`
-- [x] Gitea 推送 + tag `v0.10.1` + Release
-- [x] GitHub 推送 + tag `v0.10.1` + Release
+- [x] FPK 构建：`dist/xuanlan_0.10.6_amd64.fpk`
+- [x] Gitea 推送 + tag `v0.10.6` + Release
+- [x] GitHub 推送 + tag `v0.10.6` + Release
 
 ### 0.8.9–0.8.17 更新内容（历史）
 
@@ -624,23 +679,22 @@ scripts/build-fpk.sh      打包装包
 
 ## 版本与安装包
 
-- 最新版本：**0.10.5（公测）**（2026-11-19）
-- 源码 tag：`v0.10.5`
-- FPK：`dist/xuanlan_0.10.5_amd64.fpk`（1,216,901 字节）
-- MD5：`81229b5b005c23f815ce09e693e4de04`
-- SHA-256：`cb4fed8f6dbaf17b71a13bae1228e6b08df37de4f6d152e5d5d517f3dc08555f`
-- 发布页：[GitHub Release](https://github.com/magicindex/ArcaneVision/releases/tag/v0.10.5) ·
-  [Gitea Release](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.10.5)
+- 最新版本：**0.10.6（正式版）**（2026-11-20）
+- 源码 tag：`v0.10.6`
+- FPK：`dist/xuanlan_0.10.6_amd64.fpk`（1,216,888 字节）
+- SHA-256：`276274e21359253017d66243f8714e1acc61d1d6a576b86adceb18434432ec93`
+- 发布页：[GitHub Release](https://github.com/magicindex/ArcaneVision/releases/tag/v0.10.6) ·
+  [Gitea Release](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.10.6)
 - 安装包直链：
-  [GitHub](https://github.com/magicindex/ArcaneVision/releases/download/v0.10.5/xuanlan_0.10.5_amd64.fpk) ·
-  [Gitea](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/download/v0.10.5/xuanlan_0.10.5_amd64.fpk)
+  [GitHub](https://github.com/magicindex/ArcaneVision/releases/download/v0.10.6/xuanlan_0.10.6_amd64.fpk) ·
+  [Gitea](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/download/v0.10.6/xuanlan_0.10.6_amd64.fpk)
 
-> 0.10.1 增加快照 checksum、容量/趋势采样和修复退避；已在 FnOSF10 本机完成安装回归。
-> 子树级 ACL 重建、远程挂载 provider 仍在后续计划。
+> 0.10.6 为正式版；包含团队独立索引、HLS 视频、PDF 显示全部、分区域扫描统计、
+> 板块级重建隔离和本轮完整回归修复。
 
 ## 路线图
 
-- **0.9.0（已完成，公测）**
+- **0.9.0（已完成）**
   - 团队空间 `@team` 扫描；shared / isolated / hybrid 三模式
   - 按用户/组独立扫描，`idx/units/<unit>/volN.idx` + `unit.json`
   - QueryRouter 路由、单元缺失 fail-closed
@@ -648,7 +702,7 @@ scripts/build-fpk.sh      打包装包
   - 事件队列批量写、delta 压缩、容量告警、GC/回滚
   - 单元损坏检测与自动重建
   - 管理端三模式/分类组/状态/回滚
-- **0.10.0（已完成，公测）**
+- **0.10.0（已完成）**
   - fanotify ACL 变更自愈、批量 ACL 合并、压力防护
   - 单元事件队列 16384、溢出重建、5000 文件压力验证
   - 修复按单元退避、单元构建进度
