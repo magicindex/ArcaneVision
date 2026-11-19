@@ -169,6 +169,7 @@ static int   g_nvols_local;       /* 前 g_nvols_local 个是 /volN 本地卷 */
 /* USB 外挂设备检索（默认关闭，单独索引，/vol00 挂载） */
 static int  g_usb_enabled;
 static int  g_local_enabled = 1;
+static int  g_team_enabled = 1;
 static int  g_usb_watch = 1;
 static int  g_usb_had;
 static char g_usb_msg[1024] = "USB 检索未开启";
@@ -3214,6 +3215,15 @@ static uint32_t perm_hash(const char *s) {
     while (*s) { h ^= (unsigned char)*s++; h *= 16777619u; }
     return h;
 }
+static int team_path(const char *path) {
+    const char *p = strstr(path, "/@team");
+    while (p) {
+        if (p[6] == 0 || p[6] == '/') return 1;
+        p = strstr(p + 1, "/@team");
+    }
+    return 0;
+}
+
 static vol_t *remote_vol_for_path(const char *path) {
     for (int i = 0; i < g_nvols; i++) {
         vol_t *v = &g_vols[i];
@@ -3452,6 +3462,7 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
             is_usb = v->usb;
             size = r->size; mtime = r->mtime;
         }
+        if (!g_team_enabled && team_path(path)) continue;
         int remote_ok = 0;
         if (uid >= 0) {
             char pd[8192];
@@ -4355,7 +4366,8 @@ static void handle_settings_get(sbuf *out, int uid, int admin, int all) {
     sb_printf(out, ",\"strictHome\":%s",
               json_bool_def(buf, "\"strictHome\"", 1) ? "true" : "false");
     sb_printf(out, ",\"skipHidden\":%s", scan_skip_hidden() ? "true" : "false");
-    sb_printf(out, ",\"localEnabled\":%s,\"usbEnabled\":%s,\"usbWatch\":%s,\"usbMessage\":\"",
+    sb_printf(out, ",\"teamEnabled\":%s,\"localEnabled\":%s,\"usbEnabled\":%s,\"usbWatch\":%s,\"usbMessage\":\"",
+              g_team_enabled ? "true" : "false",
               g_local_enabled ? "true" : "false",
               g_usb_enabled ? "true" : "false", g_usb_watch ? "true" : "false");
     char umsg[1024]; usb_msg_get(umsg, sizeof umsg); sb_json(out, umsg, strlen(umsg));
@@ -4563,14 +4575,16 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
     if (!f) { sb_puts(out, "{\"ok\":false,\"error\":\"cannot write\"}"); return; }
     fchmod(fileno(f), 0600);
     const char *m = rc.mode == 1 ? "daily" : (rc.mode == 2 ? "interval" : "off");
+    int team_on = json_bool_def(body, "\"teamEnabled\"", g_team_enabled);
     int local_on = json_bool_def(body, "\"localEnabled\"", g_local_enabled);
     fprintf(f, "{\"settingsVersion\":3,\"openWith\":%.*s,\"openIn\":\"%s\","
                "\"clickFolder\":\"%s\",\"clickFile\":\"%s\","
-               "\"strictHome\":%s,\"skipHidden\":%s,\"localEnabled\":%s,"
+               "\"strictHome\":%s,\"skipHidden\":%s,\"teamEnabled\":%s,\"localEnabled\":%s,"
                "\"rebuild\":{\"mode\":\"%s\",\"hour\":%d,\"minute\":%d,\"hours\":%d}}",
             (int)len, b, open_in, click_folder, click_file,
             strict_home ? "true" : "false",
             skip_hidden ? "true" : "false",
+            team_on ? "true" : "false",
             local_on ? "true" : "false",
             m, rc.hour, rc.minute, rc.hours);
     fflush(f);
@@ -4590,6 +4604,7 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
     {
         int usb_watch = usb_json_bool(body, "\"usbWatch\"", g_usb_watch);
         int usb_on = usb_json_bool(body, "\"usbEnabled\"", g_usb_enabled);
+        g_team_enabled = team_on ? 1 : 0;
         g_local_enabled = local_on ? 1 : 0;
         if (usb_watch != g_usb_watch) { g_usb_watch = usb_watch; usb_cfg_save(); }
         usb_enable(usb_on);
@@ -6347,6 +6362,7 @@ int httpd_serve(const xl_svc_opts *o) {
             fclose(f);
             perm_set_strict_home(json_bool_def(b, "\"strictHome\"", 1));
             g_local_enabled = json_bool_def(b, "\"localEnabled\"", 1);
+            g_team_enabled = json_bool_def(b, "\"teamEnabled\"", 1);
         }
     }
     const char *acl_env = getenv("XL_ACL_UID");
