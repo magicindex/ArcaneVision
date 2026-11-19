@@ -987,8 +987,12 @@
     videoView.classList.add('ctrlon');
     clearTimeout(vHideTimer);
     vHideTimer = setTimeout(() => {
-      if (!vHover) videoView.classList.remove('ctrlon');
-    }, 2200);
+      /* 播放中即使鼠标停在画面上也要隐藏控件，避免遮挡字幕；暂停时保留悬停控件。 */
+      if (!vvideo.paused || !vHover) {
+        vHover = false;
+        videoHideControls();
+      }
+    }, 1800);
   }
   function videoHideControls(){
     clearTimeout(vHideTimer);
@@ -1068,7 +1072,7 @@
     if (fn) fn.call(el);
   });
   videoView.addEventListener('mouseenter', () => { vHover = true; videoShowControls(); });
-  videoView.addEventListener('mousemove', videoShowControls);
+  videoView.addEventListener('mousemove', () => { vHover = true; videoShowControls(); });
   videoView.addEventListener('mouseleave', () => { vHover = false; videoHideControls(); });
   videoView.addEventListener('pointerleave', () => { vHover = false; videoHideControls(); });
   videoView.addEventListener('mouseout', e => {
