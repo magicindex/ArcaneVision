@@ -93,6 +93,54 @@ static int uid_in(const uid_t *a, int n, uid_t u) {
     return 0;
 }
 
+/* 自定义隔离组：[{"id":"h1","name":"...","users":[1001,1002]}] */
+int xl_scan_groups_parse(const char *buf, xl_scan_group *groups, int max) {
+    const char *key = strstr(buf, "\"hybridGroups\"");
+    if (!key) return 0;
+    const char *lb = strchr(key, '[');
+    if (!lb) return 0;
+    const char *q = lb + 1;
+    int idx = 0, ng = 0;
+    while (*q && *q != ']' && ng < max) {
+        while (*q == ' ' || *q == '\t' || *q == '\n' || *q == '\r' || *q == ',') q++;
+        if (*q != '{') { if (*q) q++; continue; }
+        const char *ob = q;
+        int depth = 0;
+        const char *e = q;
+        for (; *e; e++) {
+            if (*e == '{') depth++;
+            else if (*e == '}') { depth--; if (depth == 0) { e++; break; } }
+        }
+        size_t olen = (size_t)(e - ob);
+        char obj[4096];
+        if (olen >= sizeof obj) olen = sizeof obj - 1;
+        memcpy(obj, ob, olen); obj[olen] = 0;
+        xl_scan_group *g = &groups[ng];
+        memset(g, 0, sizeof(*g));
+        json_str_field(obj, "name", g->name, sizeof g->name, "");
+        char id[32];
+        json_str_field(obj, "id", id, sizeof id, "");
+        int safe = 1;
+        for (const char *z = id; *z; z++)
+            if (!((*z >= 'a' && *z <= 'z') || (*z >= 'A' && *z <= 'Z') ||
+                  (*z >= '0' && *z <= '9') || *z == '_')) { safe = 0; break; }
+        if (safe && id[0]) snprintf(g->key, sizeof g->key, "%.*s", (int)sizeof g->key - 1, id);
+        else snprintf(g->key, sizeof g->key, "h%d", ++idx);
+        if (!g->name[0]) snprintf(g->name, sizeof g->name, "隔离组%d", ng + 1);
+        unsigned int us[XL_SCAN_GROUP_MEMBERS];
+        int nu = json_array_u32(obj, "users", us, XL_SCAN_GROUP_MEMBERS);
+        for (int i = 0; i < nu; i++) {
+            int dup = 0;
+            for (int j = 0; j < g->nmembers; j++) if (g->members[j] == (uid_t)us[i]) dup = 1;
+            if (!dup && us[i]) g->members[g->nmembers++] = (uid_t)us[i];
+        }
+        if (!g->nmembers) { q = e; continue; }
+        ng++;
+        q = e;
+    }
+    return ng;
+}
+
 int xl_scan_policy_load(const char *path, xl_scan_policy *p) {
     memset(p, 0, sizeof(*p));
     p->version = 1;
@@ -123,6 +171,7 @@ int xl_scan_policy_load(const char *path, xl_scan_policy *p) {
     for (int i = 0; i < k; i++) if (tmp[i]) p->share_users[p->n_share_users++] = (uid_t)tmp[i];
     k = json_array_u32(buf, "isolatedUsers", tmp, XL_SCAN_ARRAY_MAX);
     for (int i = 0; i < k; i++) if (tmp[i]) p->isolated_users[p->n_isolated_users++] = (uid_t)tmp[i];
+    p->n_groups = xl_scan_groups_parse(buf, p->groups, XL_SCAN_GROUP_MAX);
     return 0;
 }
 
@@ -151,6 +200,15 @@ static void unit_group(xl_scan_unit *u, gid_t gid) {
     u->gid = gid;
 }
 
+static void unit_custom_group(xl_scan_unit *u, const xl_scan_group *g) {
+    memset(u, 0, sizeof(*u));
+    snprintf(u->key, sizeof u->key, "%s", g->key);
+    u->kind = XL_UNIT_GROUP;
+    u->nmembers = g->nmembers;
+    for (int i = 0; i < g->nmembers && i < XL_SCAN_GROUP_MEMBERS; i++)
+        u->members[i] = g->members[i];
+}
+
 int xl_scan_resolve(const xl_scan_policy *p, uid_t uid, const gid_t *gids,
                     int ngids, xl_scan_unit *out, int cap) {
     if (cap <= 0) return 0;
@@ -162,35 +220,15 @@ int xl_scan_resolve(const xl_scan_policy *p, uid_t uid, const gid_t *gids,
         unit_user(&out[0], uid);
         return 1;
     }
-    /* hybrid */
-    if (uid_in(p->isolated_users, p->n_isolated_users, uid)) {
-        unit_user(&out[0], uid);
-        return 1;
-    }
-    if (uid_in(p->share_users, p->n_share_users, uid)) {
-        unit_shared(&out[0], 0);
-        return 1;
-    }
-    gid_t iso[XL_SCAN_ARRAY_MAX];
-    int niso = 0;
-    for (int i = 0; i < ngids; i++) {
-        if (!gid_in(p->isolated_groups, p->n_isolated_groups, gids[i])) continue;
-        if (!gid_in(iso, niso, gids[i])) iso[niso++] = gids[i];
-    }
-    for (int i = 1; i < niso; i++) {          /* gid 升序，输出稳定 */
-        gid_t v = iso[i];
-        int j = i - 1;
-        while (j >= 0 && iso[j] > v) { iso[j + 1] = iso[j]; j--; }
-        iso[j + 1] = v;
-    }
+    /* hybrid：只按管理员创建的自定义隔离组；未分组用户常驻 shared */
     int n = 0;
-    for (int i = 0; i < niso && n < cap; i++) unit_group(&out[n++], iso[i]);
-    if (n) return n;
-    for (int i = 0; i < ngids; i++)
-        if (gid_in(p->share_groups, p->n_share_groups, gids[i])) {
-            unit_shared(&out[0], 0);
-            return 1;
+    for (int i = 0; i < p->n_groups && n < cap; i++) {
+        const xl_scan_group *g = &p->groups[i];
+        for (int j = 0; j < g->nmembers; j++) {
+            if (g->members[j] == uid) { unit_custom_group(&out[n++], g); break; }
         }
-    unit_shared(&out[0], 1);
+    }
+    if (n) return n;
+    unit_shared(&out[0], 0);
     return 1;
 }

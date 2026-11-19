@@ -334,6 +334,8 @@ static void scan_policy_refresh(void) {
             memcpy(p.share_users, ov.share_users, sizeof(p.share_users));
             p.n_isolated_users = ov.n_isolated_users;
             memcpy(p.isolated_users, ov.isolated_users, sizeof(p.isolated_users));
+            p.n_groups = ov.n_groups;
+            memcpy(p.groups, ov.groups, sizeof(p.groups));
         }
         g_scan_policy = p;
         g_scan_policy_mtime = m;
@@ -1265,23 +1267,17 @@ static int collect_unit_jobs(const xl_scan_policy *p, unit_job *jobs, int max) {
         endpwent();
         return n;
     }
-    /* hybrid：用户级覆盖 + 隔离组 */
-    for (int i = 0; i < p->n_isolated_users && n < max; i++) {
+    /* hybrid：管理员自定义隔离组；未分组用户走 shared */
+    for (int i = 0; i < p->n_groups && n < max; i++) {
+        const xl_scan_group *g = &p->groups[i];
+        if (!g->nmembers) continue;
         unit_job j;
         memset(&j, 0, sizeof j);
-        snprintf(j.key, sizeof j.key, "u%u", (unsigned)p->isolated_users[i]);
-        j.kind = 1; j.uid = p->isolated_users[i];
-        j.nmembers = 1; j.members[0] = p->isolated_users[i];
-        job_add(jobs, &n, max, &j);
-    }
-    for (int i = 0; i < p->n_isolated_groups && n < max; i++) {
-        gid_t gid = p->isolated_groups[i];
-        unit_job j;
-        memset(&j, 0, sizeof j);
-        snprintf(j.key, sizeof j.key, "g%u", (unsigned)gid);
-        j.kind = 2; j.gid = gid;
-        j.nmembers = collect_group_members(gid, j.members, 64);
-        if (!j.nmembers) continue;        /* 空组不建 */
+        snprintf(j.key, sizeof j.key, "%s", g->key);
+        j.kind = 2;
+        j.gid = 0;
+        j.nmembers = g->nmembers;
+        for (int k = 0; k < g->nmembers && k < 64; k++) j.members[k] = g->members[k];
         job_add(jobs, &n, max, &j);
     }
     return n;
@@ -4653,6 +4649,18 @@ static int scanmode_write(const xl_scan_policy *p) {
     for (int i = 0; i < p->n_share_users; i++) fprintf(f, "%s%u", i ? "," : "", (unsigned)p->share_users[i]);
     fprintf(f, "],\"isolatedUsers\":[");
     for (int i = 0; i < p->n_isolated_users; i++) fprintf(f, "%s%u", i ? "," : "", (unsigned)p->isolated_users[i]);
+    fprintf(f, "],\"hybridGroups\":[");
+    for (int i = 0; i < p->n_groups; i++) {
+        const xl_scan_group *g = &p->groups[i];
+        fprintf(f, "%s{\"id\":\"%s\",\"name\":\"", i ? "," : "", g->key);
+        for (const char *q = g->name; *q; q++) {
+            if (*q == '"' || *q == '\\') fputc('\\', f);
+            fputc(*q, f);
+        }
+        fprintf(f, "\",\"users\":[");
+        for (int j = 0; j < g->nmembers; j++) fprintf(f, "%s%u", j ? "," : "", (unsigned)g->members[j]);
+        fprintf(f, "]}");
+    }
     fprintf(f, "]}");
     fflush(f); fsync(fileno(f));
     if (fclose(f) != 0 || rename(tmp, path) != 0) { unlink(tmp); return -1; }
@@ -4681,6 +4689,16 @@ static void handle_scanmode(sbuf *out, const char *body, int uid, int admin, int
         for (int i = 0; i < p.n_share_users; i++) sb_printf(out, "%s%u", i ? "," : "", (unsigned)p.share_users[i]);
         sb_puts(out, "],\"isolatedUsers\":[");
         for (int i = 0; i < p.n_isolated_users; i++) sb_printf(out, "%s%u", i ? "," : "", (unsigned)p.isolated_users[i]);
+        sb_puts(out, "],\"hybridGroups\":[");
+        for (int i = 0; i < p.n_groups; i++) {
+            const xl_scan_group *g = &p.groups[i];
+            sb_puts(out, "{\"id\":\""); sb_json(out, g->key, strlen(g->key));
+            sb_puts(out, "\",\"name\":\""); sb_json(out, g->name, strlen(g->name));
+            sb_puts(out, "\",\"users\":[");
+            for (int j = 0; j < g->nmembers; j++) sb_printf(out, "%s%u", j ? "," : "", (unsigned)g->members[j]);
+            sb_puts(out, "]}");
+            if (i + 1 < p.n_groups) sb_puts(out, ",");
+        }
         sb_puts(out, "]}");
         return;
     }
@@ -4702,6 +4720,8 @@ static void handle_scanmode(sbuf *out, const char *body, int uid, int admin, int
     if (n >= 0) { p.n_share_users = n; for (int i = 0; i < n; i++) p.share_users[i] = (uid_t)nums[i]; }
     n = parse_num_list_body(body, "\"isolatedUsers\"", nums, XL_SCAN_ARRAY_MAX);
     if (n >= 0) { p.n_isolated_users = n; for (int i = 0; i < n; i++) p.isolated_users[i] = (uid_t)nums[i]; }
+    if (body && strstr(body, "\"hybridGroups\""))
+        p.n_groups = xl_scan_groups_parse(body, p.groups, XL_SCAN_GROUP_MAX);
 
     if (scanmode_write(&p) < 0) {
         sb_puts(out, "{\"ok\":false,\"error\":\"cannot write scanmode.json\"}");

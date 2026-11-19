@@ -12,10 +12,14 @@
 static int valid_unit_key(const char *unit) {
     if (!unit || !*unit) return 0;
     if (!strcmp(unit, "shared")) return 0;   /* shared 不走 units/ */
-    if (!(unit[0] == 'u' || unit[0] == 'g')) return 0;
+    if (!(unit[0] == 'u' || unit[0] == 'g' || unit[0] == 'h')) return 0;
     if (!unit[1]) return 0;
-    for (const char *p = unit + 1; *p; p++)
-        if (*p < '0' || *p > '9') return 0;
+    for (const char *p = unit + 1; *p; p++) {
+        if (unit[0] == 'h') {
+            if (!((*p >= '0' && *p <= '9') || (*p >= 'a' && *p <= 'z') ||
+                  (*p >= 'A' && *p <= 'Z') || *p == '_')) return 0;
+        } else if (*p < '0' || *p > '9') return 0;
+    }
     return 1;
 }
 

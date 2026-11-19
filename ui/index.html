@@ -2642,7 +2642,7 @@
   ];
   let settings = { openWith: {}, clickFolder: 'single', clickFile: 'double',
                    scanMode: 'shared', shareGroups: [], isolatedGroups: [],
-                   shareUsers: [], isolatedUsers: [],
+                   shareUsers: [], isolatedUsers: [], hybridGroups: [],
                    onlyoffice: { installed: false, running: false }, preview: { installed: false, running: false } };
   let checked = new Set();
   let excluded = new Set();
@@ -2762,8 +2762,8 @@
   setmask.querySelector('#scanRollback').onclick = () => {
     if (!confirm('回滚到共享模式？所有用户将回到共享索引，单元索引保留待清理。')) return;
     fetch(API + 'scanmode', { method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ scanMode: 'shared', shareGroups: [], isolatedGroups: [],
-                             shareUsers: [], isolatedUsers: [] }) })
+      body: JSON.stringify({ scanMode: 'shared', hybridGroups: [],
+                             shareGroups: [], isolatedGroups: [], shareUsers: [], isolatedUsers: [] }) })
       .then(r => r.json()).then(d => {
         if (d && d.ok === false) throw new Error(d.error || '回滚失败');
         settings.scanMode = 'shared';
@@ -2797,12 +2797,16 @@
     const it = arr.find(x => String(kind === 'group' ? x.gid : x.uid) === String(id));
     return it ? (it.name || (kind === 'group' ? ('gid ' + id) : ('uid ' + id))) : String(id);
   }
+  function scanUserName(uid){
+    const us = (scanCandidates && scanCandidates.users) || [];
+    const u = us.find(x => String(x.uid) === String(uid));
+    return u ? (u.name || ('uid ' + uid)) : ('uid ' + uid);
+  }
   function renderScanCandidates(){
     const box = setmask.querySelector('#scanCandidates');
     if (!box) return;
     if (!scanCandidates) { box.innerHTML = '<div class="hint">正在检测飞牛目录与用户组…</div>'; return; }
     const d = scanCandidates;
-    const sel = ensureScanSel();
     let h = '<div class="scangroup">团队目录（检测依据）</div>';
     const dirs = d.directories || [];
     if (!dirs.length) h += '<div class="hint">未检测到 /volN/@team 团队目录</div>';
@@ -2811,32 +2815,57 @@
         '<span class="hint2">依据：' + esc(it.evidence || 'system.trim_acl') +
         (it.gids && it.gids.length ? ' · gid ' + it.gids.join(',') : '') + '</span></div></div>';
     }
-    h += '<div class="scangroup">用户与用户组</div>';
-    h += '<div class="scanpickbar"><button class="act primary" id="scanPickBtn" type="button">选择用户和用户组</button>' +
-      '<span class="hint2">已选 ' + (sel.sg.size + sel.ig.size + sel.su.size + sel.iu.size) + ' 项</span></div>';
-    const chip = (kind, id, bucket) => '<span class="scanchip ' + bucket + '">' + esc(scanSelName(kind, id)) +
-      ' · ' + (bucket === 'share' ? '共享' : '隔离') + '</span>';
-    let chips = '';
-    sel.sg.forEach(id => { chips += chip('group', id, 'share'); });
-    sel.ig.forEach(id => { chips += chip('group', id, 'isolate'); });
-    sel.su.forEach(id => { chips += chip('user', id, 'share'); });
-    sel.iu.forEach(id => { chips += chip('user', id, 'isolate'); });
-    if (chips) h += '<div class="scanchips">' + chips + '</div>';
-    else h += '<div class="hint">未选择用户/用户组；未勾选回退 shared。</div>';
+    const groups = settings.hybridGroups || [];
+    h += '<div class="scangroup">混合分组</div>';
+    h += '<div class="scanrow"><div class="scanmain"><b>共享组（常驻）</b>' +
+      '<span class="hint2">所有未加入隔离组的用户使用共享索引</span></div>' +
+      '<span class="tag g">默认</span></div>';
+    groups.forEach((g, i) => {
+      const names = (g.users || []).map(scanUserName).join('、') || '未选择用户';
+      h += '<div class="scanrow"><div class="scanmain"><b>' + esc(g.name || ('隔离组' + (i + 1))) + '</b>' +
+        '<span class="hint2">' + esc(names) + ' · 共用一个隔离索引</span></div>' +
+        '<button class="act" data-gact="users" data-i="' + i + '" type="button">选择用户</button> ' +
+        '<button class="act" data-gact="rename" data-i="' + i + '" type="button">重命名</button> ' +
+        '<button class="act" data-gact="del" data-i="' + i + '" type="button">删除</button></div>';
+    });
+    h += '<div class="scanpickbar"><button class="act primary" id="scanAddGroup" type="button">+ 新建隔离组</button>' +
+      '<span class="hint2">可创建多个隔离组；组内用户共用一份索引</span></div>';
     box.innerHTML = h;
-    const btn = box.querySelector('#scanPickBtn');
-    if (btn) btn.onclick = openScanPicker;
+    const add = box.querySelector('#scanAddGroup');
+    if (add) add.onclick = () => {
+      const gs = settings.hybridGroups = settings.hybridGroups || [];
+      const n = gs.length + 1;
+      gs.push({ id: 'h' + Date.now().toString(36), name: '隔离组' + n, users: [] });
+      renderScanCandidates();
+      openGroupUsers(gs.length - 1);
+    };
+    box.querySelectorAll('[data-gact]').forEach(b => {
+      b.onclick = () => {
+        const i = parseInt(b.dataset.i, 10);
+        const gs = settings.hybridGroups || [];
+        if (!gs[i]) return;
+        if (b.dataset.gact === 'users') openGroupUsers(i);
+        else if (b.dataset.gact === 'rename') {
+          const v = prompt('隔离组名称：', gs[i].name || ('隔离组' + (i + 1)));
+          if (v !== null && v.trim()) { gs[i].name = v.trim(); renderScanCandidates(); }
+        } else if (b.dataset.gact === 'del') {
+          if (!confirm('删除隔离组“' + (gs[i].name || ('隔离组' + (i + 1))) + '”？组内用户将回到共享组。')) return;
+          gs.splice(i, 1); renderScanCandidates();
+        }
+      };
+    });
   }
-  function openScanPicker(){
-    const d = scanCandidates;
-    if (!d) return;
-    const sel = ensureScanSel();
+  function openGroupUsers(idx){
+    const gs = settings.hybridGroups || [];
+    const g = gs[idx];
+    if (!g) return;
+    const cur = new Set((g.users || []).map(String));
     const old = document.querySelector('.scanpickmask');
     if (old) old.remove();
     const mask = document.createElement('div');
     mask.className = 'scanpickmask';
-    mask.innerHTML = '<div class="scanpickbox"><div class="scanpickhead"><b>选择用户和用户组</b>' +
-      '<input id="scanPickSearch" placeholder="搜索用户/用户组" autocomplete="off">' +
+    mask.innerHTML = '<div class="scanpickbox"><div class="scanpickhead"><b>选择「' + esc(g.name || ('隔离组' + (idx + 1))) + '」用户</b>' +
+      '<input id="scanPickSearch" placeholder="搜索用户" autocomplete="off">' +
       '<button class="act" id="scanPickClose" type="button">关闭</button></div>' +
       '<div class="scanpickbody"><div id="scanPickList"></div></div>' +
       '<div class="scanpickfoot"><span id="scanPickCount"></span>' +
@@ -2845,56 +2874,38 @@
     const list = mask.querySelector('#scanPickList');
     const search = mask.querySelector('#scanPickSearch');
     const count = mask.querySelector('#scanPickCount');
-    const updateCount = () => { count.textContent = '已选 ' + (sel.sg.size + sel.ig.size + sel.su.size + sel.iu.size) + ' 项'; };
-    const rowHtml = (kind, id, name, meta) => {
-      const share = kind === 'group' ? sel.sg.has(String(id)) : sel.su.has(String(id));
-      const iso = kind === 'group' ? sel.ig.has(String(id)) : sel.iu.has(String(id));
-      return '<div class="scanpickrow" data-kind="' + kind + '" data-id="' + esc(String(id)) + '">' +
-        '<div class="scanpickmain"><b>' + esc(name) + '</b><span>' + esc(meta) + '</span></div>' +
-        '<button class="scanpickbtn share' + (share ? ' on' : '') + '" data-bucket="share" type="button">共享</button>' +
-        '<button class="scanpickbtn isolate' + (iso ? ' on' : '') + '" data-bucket="isolate" type="button">隔离</button></div>';
-    };
     const render = () => {
       const q = (search.value || '').trim().toLowerCase();
-      let h = '<div class="scangroup">用户组</div>';
-      const seenG = new Set();
-      const groups = (d.groups || []).filter(g => {
-        if (seenG.has(String(g.gid))) return false;
-        seenG.add(String(g.gid));
-        return !q || String(g.name || '').toLowerCase().includes(q) || String(g.gid) === q;
-      });
-      if (!groups.length) h += '<div class="hint">无匹配用户组</div>';
-      for (const g of groups) h += rowHtml('group', g.gid, g.name || ('gid ' + g.gid),
-        'gid ' + g.gid + (g.members ? ' · ' + g.members : ''));
-      h += '<div class="scangroup">用户</div>';
-      const seenU = new Set();
-      const users = (d.users || []).filter(u => {
-        if (seenU.has(String(u.uid))) return false;
-        seenU.add(String(u.uid));
+      const seen = new Set();
+      const users = ((scanCandidates && scanCandidates.users) || []).filter(u => {
+        if (seen.has(String(u.uid))) return false;
+        seen.add(String(u.uid));
         return u.name !== 'nobody' && u.uid < 60000 &&
           (!q || String(u.name || '').toLowerCase().includes(q) || String(u.uid) === q);
       });
-      if (!users.length) h += '<div class="hint">无匹配用户</div>';
-      for (const u of users) h += rowHtml('user', u.uid, u.name || ('uid ' + u.uid),
-        'uid ' + u.uid + (u.home ? ' · ' + u.home : ''));
+      let h = '';
+      if (!users.length) h = '<div class="hint">无匹配用户</div>';
+      for (const u of users) {
+        h += '<div class="scanpickrow"><div class="scanpickmain"><b>' + esc(u.name || ('uid ' + u.uid)) + '</b>' +
+          '<span>uid ' + u.uid + (u.home ? ' · ' + esc(u.home) : '') + '</span></div>' +
+          '<label class="scanpickbtn' + (cur.has(String(u.uid)) ? ' on share' : '') + '">' +
+          '<input type="checkbox" value="' + u.uid + '"' + (cur.has(String(u.uid)) ? ' checked' : '') + '> 加入</label></div>';
+      }
       list.innerHTML = h;
-      list.querySelectorAll('.scanpickbtn').forEach(b => {
-        b.onclick = () => {
-          const row = b.closest('.scanpickrow');
-          const kind = row.dataset.kind, id = row.dataset.id, bucket = b.dataset.bucket;
-          const target = kind === 'group' ? (bucket === 'share' ? sel.sg : sel.ig) : (bucket === 'share' ? sel.su : sel.iu);
-          const other = kind === 'group' ? (bucket === 'share' ? sel.ig : sel.sg) : (bucket === 'share' ? sel.iu : sel.su);
-          if (target.has(id)) target.delete(id); else { target.add(id); other.delete(id); }
-          render(); updateCount();
+      list.querySelectorAll('input[type=checkbox]').forEach(cb => {
+        cb.onchange = () => {
+          if (cb.checked) cur.add(cb.value); else cur.delete(cb.value);
+          cb.closest('.scanpickbtn').classList.toggle('on', cb.checked);
+          cb.closest('.scanpickbtn').classList.toggle('share', cb.checked);
+          count.textContent = '已选 ' + cur.size + ' 人';
         };
       });
-      updateCount();
+      count.textContent = '已选 ' + cur.size + ' 人';
     };
     search.oninput = render;
     mask.querySelector('#scanPickClose').onclick = () => mask.remove();
     mask.querySelector('#scanPickDone').onclick = () => {
-      settings.shareGroups = [...sel.sg]; settings.isolatedGroups = [...sel.ig];
-      settings.shareUsers = [...sel.su]; settings.isolatedUsers = [...sel.iu];
+      g.users = [...cur].map(Number);
       mask.remove(); renderScanCandidates();
     };
     mask.addEventListener('click', e => { if (e.target === mask) mask.remove(); });
@@ -3475,10 +3486,7 @@
     const clickFolder = setmask.querySelector('#clickFolder').value === 'double' ? 'double' : 'single';
     const clickFile = setmask.querySelector('#clickFile').value === 'single' ? 'single' : 'double';
     const scanMode = setmask.querySelector('#scanMode') ? setmask.querySelector('#scanMode').value : 'shared';
-    const selNow = ensureScanSel();
-    const picked = (kind, bucket) => [...(kind === 'group'
-      ? (bucket === 'share' ? selNow.sg : selNow.ig)
-      : (bucket === 'share' ? selNow.su : selNow.iu))];
+    const hybridGroups = settings.hybridGroups || [];
     const strictHome = !!setmask.querySelector('#strictHome').checked;
     const skipHidden = !!setmask.querySelector('#skipHidden').checked;
     const teamEnabled = !!setmask.querySelector('#teamEnabled').checked;
@@ -3496,10 +3504,10 @@
         settings.openWith = ow; settings.scope = scope; settings.settingsVersion = 3; openIn = oi;
         settings.clickFolder = clickFolder; settings.clickFile = clickFile;
         settings.scanMode = scanMode;
-        settings.shareGroups = picked('group', 'share');
-        settings.isolatedGroups = picked('group', 'isolate');
-        settings.shareUsers = picked('user', 'share');
-        settings.isolatedUsers = picked('user', 'isolate');
+        settings.shareGroups = [];
+        settings.isolatedGroups = [];
+        settings.shareUsers = [];
+        settings.isolatedUsers = [];
         settings.strictHome = strictHome; settings.skipHidden = skipHidden;
         settings.teamEnabled = teamEnabled;
         settings.localEnabled = localEnabled;
@@ -3507,9 +3515,8 @@
         const adminScan = !!(settings.scopeAvailable && settings.scopeAvailable.admin);
         if (!adminScan) return;
         return fetch(API + 'scanmode', { method: 'POST', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ scanMode, shareGroups: settings.shareGroups,
-            isolatedGroups: settings.isolatedGroups, shareUsers: settings.shareUsers,
-            isolatedUsers: settings.isolatedUsers }) })
+          body: JSON.stringify({ scanMode, hybridGroups,
+            shareGroups: [], isolatedGroups: [], shareUsers: [], isolatedUsers: [] }) })
           .then(r => r.json()).then(sd => {
             if (sd && sd.ok === false) throw new Error(sd.error || '扫描模式保存失败');
           });
@@ -3554,6 +3561,7 @@
       settings.isolatedGroups = d.isolatedGroups || [];
       settings.shareUsers = d.shareUsers || [];
       settings.isolatedUsers = d.isolatedUsers || [];
+      settings.hybridGroups = d.hybridGroups || [];
     }).catch(() => {});
   }
   function loadSettings(){

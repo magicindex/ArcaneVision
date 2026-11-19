@@ -9,6 +9,15 @@
 
 #define XL_SCAN_ARRAY_MAX 64
 #define XL_SCAN_UNIT_MAX  32
+#define XL_SCAN_GROUP_MAX 16
+#define XL_SCAN_GROUP_MEMBERS 64
+
+typedef struct {
+    char  key[XL_SCAN_UNIT_MAX];       /* h1, h2... 稳定 key */
+    char  name[64];
+    uid_t members[XL_SCAN_GROUP_MEMBERS];
+    int   nmembers;
+} xl_scan_group;
 
 typedef enum {
     XL_SCAN_SHARED = 0,
@@ -27,6 +36,8 @@ typedef struct {
     int   n_share_users;
     uid_t isolated_users[XL_SCAN_ARRAY_MAX];
     int   n_isolated_users;
+    xl_scan_group groups[XL_SCAN_GROUP_MAX];
+    int   n_groups;
 } xl_scan_policy;
 
 typedef enum {
@@ -40,12 +51,15 @@ typedef struct {
     xl_unit_kind kind;
     uid_t       uid;
     gid_t       gid;
+    uid_t       members[XL_SCAN_GROUP_MEMBERS];
+    int         nmembers;
     int         fallback;                 /* 1 = 未分类回退 shared */
 } xl_scan_unit;
 
 /* 读 scope.json；文件缺失或字段非法时回落默认（shared、空分类）。 */
 int xl_scan_policy_load(const char *path, xl_scan_policy *p);
 const char *xl_scan_mode_name(xl_scan_mode m);
+int xl_scan_groups_parse(const char *buf, xl_scan_group *out, int max);
 
 /* 返回 0..n；输出单元可能多个（多隔离组）。 */
 int xl_scan_resolve(const xl_scan_policy *p, uid_t uid, const gid_t *gids,
