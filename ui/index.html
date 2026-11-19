@@ -104,6 +104,12 @@
   html[data-theme="light"] .modeDoc b{color:#1f6f66}
   html[data-theme="light"] .modeDoc p{color:#44536a}
   html[data-theme="light"] .modeDoc span{color:#2f7169}
+  .proto{display:inline-block;font-size:10px;line-height:1;padding:3px 6px;margin-right:6px;border-radius:5px;
+    color:#9fd8d1;border:1px solid rgba(90,200,190,.3);background:rgba(35,110,105,.12);vertical-align:1px}
+  .proto.smb{color:#8fc5ff;border-color:rgba(90,150,255,.35);background:rgba(50,100,180,.12)}
+  .proto.nfs{color:#f0c27a;border-color:rgba(240,179,91,.35);background:rgba(180,130,40,.1)}
+  .proto.webdav{color:#d3a6ff;border-color:rgba(180,120,255,.35);background:rgba(120,70,190,.1)}
+  html[data-theme="light"] .proto{background:#f2fbf9;border-color:#bfe4dd;color:#1f6f66}
   .remoteState{font-size:12px;line-height:1.6;padding:7px 9px;border-radius:8px;margin:6px 0;
     color:#9fd8d1;background:rgba(35,110,105,.12);border:1px solid rgba(90,200,190,.22)}
   .remoteState.warn{color:#f0b35b;background:rgba(240,179,91,.07);border-color:rgba(240,179,91,.3)}
@@ -3080,7 +3086,10 @@
       const ms = d.mounts || [];
       if (!ms.length) h += '<div class="hint">未检测到 /vol02 下的远程挂载</div>';
       for (const m of ms) {
-        h += '<div class="scanrow"><div class="scanmain"><b>' + esc(m.root) + '</b>' +
+        const proto = (m.protocol || m.kind || 'REMOTE').toString().toUpperCase();
+        const pcls = proto === 'SMB' ? ' smb' : (proto === 'NFS' ? ' nfs' : (proto === 'WEBDAV' ? ' webdav' : ''));
+        h += '<div class="scanrow"><div class="scanmain"><b><span class="proto' + pcls + '">' + esc(proto) +
+          '</span>' + esc(m.root) + '</b>' +
           '<span class="hint2">' + esc(m.kind) + ' · owner uid ' + esc(String(m.uid)) +
           (m.indexed ? ' · 已索引 ' + (m.records || 0) + ' 条' : ' · 未索引') +
           (m.stale ? ' · 离线' : '') +

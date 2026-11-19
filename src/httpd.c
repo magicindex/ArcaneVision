@@ -855,6 +855,14 @@ static int remote_path_allows(int uid, int admin, const char *path,
     return v->remote_uid != (uid_t)-1 && (uid_t)uid == v->remote_uid;
 }
 
+static const char *remote_protocol(const char *kind) {
+    if (!kind) return "REMOTE";
+    if (!strcmp(kind, "cifs") || !strcmp(kind, "smb3")) return "SMB";
+    if (!strcmp(kind, "nfs") || !strcmp(kind, "nfs4")) return "NFS";
+    if (!strcmp(kind, "davfs") || strstr(kind, "dav")) return "WebDAV";
+    return kind;
+}
+
 static int remote_type(const char *type) {
     return !strcmp(type, "cifs") || !strcmp(type, "smb3") ||
            !strcmp(type, "nfs") || !strcmp(type, "nfs4") ||
@@ -5187,9 +5195,9 @@ static void handle_remote(sbuf *out, int admin) {
         first = 0;
         sb_puts(out, "{\"root\":\""); sb_json(out, v->root, strlen(v->root));
         sb_puts(out, "\",\"kind\":\""); sb_json(out, v->remote_kind, strlen(v->remote_kind));
-        sb_printf(out, "\",\"uid\":%d,\"ok\":%s,\"records\":%llu,\"bytes\":%llu,\"indexed\":true,"
+        sb_printf(out, "\",\"protocol\":\"%s\",\"uid\":%d,\"ok\":%s,\"records\":%llu,\"bytes\":%llu,\"indexed\":true,"
                   "\"stale\":%s,\"lastOk\":%llu,\"acl\":\"%s\",\"aclReason\":\"%s\",\"users\":[",
-                  v->remote_uid == (uid_t)-1 ? -1 : (int)v->remote_uid,
+                  remote_protocol(v->remote_kind), v->remote_uid == (uid_t)-1 ? -1 : (int)v->remote_uid,
                   v->ok ? "true" : "false", (unsigned long long)v->records,
                   (unsigned long long)remote_index_bytes(v),
                   v->remote_fail_since ? "true" : "false",
@@ -5219,8 +5227,8 @@ static void handle_remote(sbuf *out, int admin) {
             int uid = (end && end != base && *end == '-') ? (int)owner : -1;
             sb_puts(out, "{\"root\":\""); sb_json(out, m->mnt_dir, strlen(m->mnt_dir));
             sb_puts(out, "\",\"kind\":\""); sb_json(out, m->mnt_type, strlen(m->mnt_type));
-            sb_printf(out, "\",\"uid\":%d,\"ok\":%s,\"records\":0,\"indexed\":false}",
-                      uid, "false");
+            sb_printf(out, "\",\"protocol\":\"%s\",\"uid\":%d,\"ok\":%s,\"records\":0,\"indexed\":false}",
+                      remote_protocol(m->mnt_type), uid, "false");
         }
         endmntent(f);
     }

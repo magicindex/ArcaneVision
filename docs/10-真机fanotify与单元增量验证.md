@@ -598,3 +598,10 @@ chmod 600 → 子树增量更新 → 查询再次为空
 - video 保持播放但 opacity=0，画面绘制到 canvas；
 - 原生 1x/扬声器进度条随 video 层透明，不再遮挡字幕；
 - 自定义控制条继续使用，播放中 1.8s 自动隐藏。
+
+
+## 48. 远程挂载协议标志（0.10.5）
+
+- /api/remote 增加 protocol= SMB/NFS/WebDAV；
+- 远程卡片路径前显示彩色协议徽标；
+- CIFS/SMB3→SMB，NFS/NFS4→NFS，davfs→WebDAV。
