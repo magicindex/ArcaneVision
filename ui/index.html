@@ -56,6 +56,10 @@
   .remoteState.warn{color:#f0b35b;background:rgba(240,179,91,.07);border-color:rgba(240,179,91,.3)}
   html[data-theme="light"] .remoteState{color:#1f5f5a;background:#f2fbf9;border-color:#bfe4dd}
   html[data-theme="light"] .remoteState.warn{color:#8a5a10;background:#fff8eb;border-color:#eed9b0}
+  .remoteAclPick{margin:4px 0 8px 12px;padding:8px 10px;border:1px solid rgba(90,200,190,.25);
+    border-radius:8px;background:rgba(30,80,78,.08);max-height:220px;overflow:auto}
+  .remoteAclPick label{display:flex;gap:6px;align-items:center;font-size:12px;padding:3px 0;cursor:pointer}
+  .remoteAclPick .acts{display:flex;gap:8px;justify-content:flex-end;margin-top:6px}
   html[data-theme="light"] .usb-ind{background:#fff;color:#4b5a72;border-color:var(--line)}
   html[data-theme="light"] .usb-ind.warn{color:#a2610f;border-color:rgba(190,140,40,.45);background:rgba(190,140,40,.06)}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
@@ -2843,17 +2847,39 @@
       };
       box.querySelectorAll('.remoteAcl').forEach(btn => {
         btn.onclick = () => {
-          const cur = btn.dataset.users || '';
-          const v = prompt('允许访问该远程挂载的本地 uid，逗号分隔（留空=仅 owner/管理员）：', cur);
-          if (v === null) return;
-          const users = v.split(',').map(x => parseInt(x.trim(), 10)).filter(x => x > 0);
-          fetch(API + 'remote/acl', { method: 'POST', headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ root: btn.dataset.root, users }) })
-            .then(r => r.json()).then(x => {
-              if (!x || x.ok === false) throw new Error(x && x.error || '保存失败');
-              say('远程 ACL 已更新');
-              renderRemoteList();
-            }).catch(e => alert('远程 ACL 设置失败：' + (e && e.message || e)));
+          const root = btn.dataset.root;
+          const oldPanel = box.querySelector('.remoteAclPick');
+          if (oldPanel && oldPanel.dataset.root === root) { oldPanel.remove(); return; }
+          if (oldPanel) oldPanel.remove();
+          const cur = new Set((btn.dataset.users || '').split(',').filter(Boolean));
+          const panel = document.createElement('div');
+          panel.className = 'remoteAclPick';
+          panel.dataset.root = root;
+          panel.innerHTML = '<div class="hint">选择允许访问该远程挂载的本地用户（空=仅 owner/管理员）</div>' +
+            '<div class="aclWhoList">读取用户中…</div>' +
+            '<div class="acts"><button class="act" type="button" data-a="cancel">取消</button>' +
+            '<button class="act primary" type="button" data-a="save">保存</button></div>';
+          btn.closest('.scanrow').insertAdjacentElement('afterend', panel);
+          const list = panel.querySelector('.aclWhoList');
+          panel.querySelector('[data-a=cancel]').onclick = () => panel.remove();
+          fetch(API + 'scanmode/candidates', {cache: 'no-store'}).then(r => r.json()).then(d => {
+            const users = ((d && d.users) || []).filter(u => u.uid < 60000 && u.name !== 'nobody');
+            if (!users.length) { list.innerHTML = '<div class="hint">未检测到可授权用户</div>'; return; }
+            list.innerHTML = users.map(u => '<label><input type="checkbox" value="' + u.uid + '"' +
+              (cur.has(String(u.uid)) ? ' checked' : '') + '> ' +
+              esc((u.name || ('uid ' + u.uid)) + '（uid ' + u.uid + '）') + '</label>').join('');
+          }).catch(() => { list.innerHTML = '<div class="hint">无法读取用户列表</div>'; });
+          panel.querySelector('[data-a=save]').onclick = () => {
+            const users = [...panel.querySelectorAll('input[type=checkbox]:checked')]
+              .map(x => parseInt(x.value, 10)).filter(x => x > 0);
+            fetch(API + 'remote/acl', { method: 'POST', headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ root, users }) })
+              .then(r => r.json()).then(x => {
+                if (!x || x.ok === false) throw new Error(x && x.error || '保存失败');
+                say('远程 ACL 已更新');
+                renderRemoteList();
+              }).catch(e => alert('远程 ACL 设置失败：' + (e && e.message || e)));
+          };
         };
       });
       const rb = box.querySelector('#remoteRebuild');
