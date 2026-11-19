@@ -653,3 +653,17 @@ chmod 600 → 子树增量更新 → 查询再次为空
 - UI 引入 hls.js，原生 HLS 不支持时走 MSE；
 - 进度条直接 seek HLS 时间轴，不再重启转码；
 - 回退：HLS 启动失败仍走旧 /api/transcode。
+
+
+## 55. HLS 首段等待与回退（0.10.5）
+
+- /api/hls 等首段 playlist 落盘再返回，避免 hls.js 首次 404；
+- 强制 2 秒关键帧，HLS 首段更快；
+- HLS fatal error 自动回退 /api/transcode。
+
+
+## 56. hls.js 按 ROOT 动态加载（0.10.5）
+
+- 页面可能挂在 /app/xuanlan（无尾斜杠），静态相对 vendor/ 会 404；
+- 改为 ROOT + vendor/hls.min.js 动态加载；
+- HLS 打开前 await 加载，再创建 Hls 实例。

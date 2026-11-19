@@ -840,7 +840,6 @@
 <div class="toast" id="toast"></div>
 <button class="totop" id="toTop" type="button" title="返回顶部" aria-label="返回顶部"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
 
-<script src="vendor/hls.min.js"></script>
 <script>
     // 页面可能由网关以 /app/xuanlan 或 /app/xuanlan/ 打开，统一取到目录前缀
     const API = (() => {
@@ -850,6 +849,21 @@
       return p + 'api/';
     })();
     const ROOT = API.slice(0, -4);
+    let hlsLoader = null;
+    function ensureHls(){
+      if (window.Hls) return Promise.resolve(window.Hls);
+      if (!hlsLoader) {
+        hlsLoader = new Promise((resolve, reject) => {
+          const s = document.createElement('script');
+          s.src = ROOT + 'vendor/hls.min.js';
+          s.async = true;
+          s.onload = () => window.Hls ? resolve(window.Hls) : reject(new Error('Hls missing'));
+          s.onerror = () => reject(new Error('Hls load failed'));
+          document.head.appendChild(s);
+        });
+      }
+      return hlsLoader;
+    }
 (function(){
   const $ = id => document.getElementById(id);
 
@@ -1160,6 +1174,19 @@
       vHls.on(Hls.Events.MANIFEST_PARSED, () => {
         const p = vvideo.play(); if (p && p.catch) p.catch(() => {});
       });
+      vHls.on(Hls.Events.ERROR, (evt, data) => {
+        if (!data || !data.fatal) return;
+        const at = vvideo.currentTime || 0;
+        try { vHls.destroy(); } catch (e) {}
+        vHls = null;
+        const tc = vTranscode;
+        if (!tc) return;
+        tc.hls = false; tc.start = Math.max(0, at || tc.start || 0);
+        setOwTag('转码 1080p（兼容）');
+        say('HLS 播放失败，已回退直出转码');
+        openVideo(API + 'transcode?path=' + encodeURIComponent(tc.path) + '&q=' + encodeURIComponent(tc.q || '1080') +
+          (tc.start > 0 ? '&t=' + tc.start.toFixed(3) : ''), baseName(tc.path));
+      });
     } else {
       vvideo.src = url;
       vvideo.load();
@@ -1467,6 +1494,7 @@
   }
 
   async function openTranscode(p, why, start){
+    try { await ensureHls(); } catch (e) {}
     let info = null;
     try {
       const r = await fetch(API + 'hls?path=' + encodeURIComponent(p) + '&q=1080', {cache: 'no-store'});
