@@ -449,6 +449,7 @@ static unit_cache_t *unit_cache_get(const char *key) {
             v->ok = 1;
             v->records = v->sn.h.rec_count;
             v->built_at = v->sn.h.built_at;
+            v->build_ms = v->sn.h.scan_ms;
             dir_index_build(v);
             u->nvols++;
         } else {
@@ -886,6 +887,7 @@ static void team_add_volumes(void) {
             v->ok = 1;
             v->records = v->sn.h.rec_count;
             v->built_at = v->sn.h.built_at;
+            v->build_ms = v->sn.h.scan_ms;
             dir_index_build(v);
         }
         g_nvols++;
@@ -1015,6 +1017,7 @@ static int remote_reconcile_mounts(void) {
             v->ok = 1;
             v->records = v->sn.h.rec_count;
             v->built_at = v->sn.h.built_at;
+            v->build_ms = v->sn.h.scan_ms;
             dir_index_build(v);
         }
         g_nvols++;
@@ -5320,11 +5323,18 @@ static void handle_status(sbuf *out) {
     sb_json(out, g_idx_dir, strlen(g_idx_dir));
     sb_puts(out, "\",\"volumes\":[");
     pthread_rwlock_rdlock(&g_rw);
+    struct { uint64_t records, ms, at; int vols, building; } ss[4] = {{0}};
     cur_vol = g_cur_vol;
     if (cur_vol >= 0 && cur_vol < g_nvols)
         snprintf(cur_root, sizeof cur_root, "%s", g_vols[cur_vol].root);
     for (int i = 0; i < g_nvols; i++) {
         vol_t *v = &g_vols[i];
+        int si = v->remote ? 3 : (v->team ? 1 : (v->usb ? 2 : 0));
+        ss[si].records += v->records;
+        ss[si].ms += v->build_ms;
+        if (v->built_at > ss[si].at) ss[si].at = v->built_at;
+        ss[si].vols++;
+        if (v->building || (g_building && cur_vol == i)) ss[si].building = 1;
         total += v->records;
         if (i) sb_puts(out, ",");
         sb_puts(out, "{\"root\":\"");
@@ -5339,7 +5349,19 @@ static void handle_status(sbuf *out) {
                   v->usb ? "true" : "false");
     }
     pthread_rwlock_unlock(&g_rw);
-    sb_printf(out, "],\"records\":%llu,\"building\":%s,\"progress\":{\"root\":\"",
+    sb_printf(out, "],\"scanStats\":{\"local\":{\"records\":%llu,\"ms\":%llu,\"at\":%llu,\"volumes\":%d,\"building\":%s},"
+              "\"team\":{\"records\":%llu,\"ms\":%llu,\"at\":%llu,\"volumes\":%d,\"building\":%s},"
+              "\"usb\":{\"records\":%llu,\"ms\":%llu,\"at\":%llu,\"volumes\":%d,\"building\":%s},"
+              "\"remote\":{\"records\":%llu,\"ms\":%llu,\"at\":%llu,\"volumes\":%d,\"building\":%s}},"
+              "\"records\":%llu,\"building\":%s,\"progress\":{\"root\":\"",
+              (unsigned long long)ss[0].records, (unsigned long long)ss[0].ms,
+              (unsigned long long)ss[0].at, ss[0].vols, ss[0].building ? "true" : "false",
+              (unsigned long long)ss[1].records, (unsigned long long)ss[1].ms,
+              (unsigned long long)ss[1].at, ss[1].vols, ss[1].building ? "true" : "false",
+              (unsigned long long)ss[2].records, (unsigned long long)ss[2].ms,
+              (unsigned long long)ss[2].at, ss[2].vols, ss[2].building ? "true" : "false",
+              (unsigned long long)ss[3].records, (unsigned long long)ss[3].ms,
+              (unsigned long long)ss[3].at, ss[3].vols, ss[3].building ? "true" : "false",
               (unsigned long long)total, g_building ? "true" : "false");
     if (g_building && cur_root[0]) sb_json(out, cur_root, strlen(cur_root));
     sb_printf(out, "\",\"records\":%llu,\"elapsed_ms\":%llu},\"error\":\"",
@@ -6543,6 +6565,7 @@ int httpd_serve(const xl_svc_opts *o) {
             v->ok = 1;
             v->records = v->sn.h.rec_count;
             v->built_at = v->sn.h.built_at;
+            v->build_ms = v->sn.h.scan_ms;
             dir_index_build(v);
         }
         g_nvols++;

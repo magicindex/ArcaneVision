@@ -52,6 +52,12 @@
   .usb-ind:hover{color:#cdf3ee;border-color:rgba(90,200,190,.45)}
   .usb-ind.warn{color:#f0b35b;border-color:rgba(240,179,91,.38);background:rgba(240,179,91,.07)}
   .scanpickbar{display:flex;align-items:center;gap:10px;margin:6px 0}
+  .scanAreaStats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 12px;margin:6px 0}
+  .scanAreaStats .sa{font-size:11px;color:var(--fg2,#9fb0bd);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .scanAreaStats .sa b{color:#9fd8d1;font-weight:550}
+  .scanAreaStats .sa.run b{color:#f0b35b}
+  html[data-theme="light"] .scanAreaStats .sa{color:#5f7183}
+  html[data-theme="light"] .scanAreaStats .sa b{color:#1f6f66}
   .scanchips{display:flex;flex-wrap:wrap;gap:5px;margin:4px 0}
   .scanchip{font-size:10.5px;padding:3px 7px;border-radius:999px;border:1px solid rgba(90,200,190,.28);color:#9fd8d1}
   .scanchip.isolate{border-color:rgba(240,179,91,.35);color:#f0b35b}
@@ -2718,6 +2724,7 @@
     '<span id="rbDaily"><input type="time" id="rbTime" value="03:00"></span>' +
     '<span id="rbEvery">每 <input type="number" id="rbHours" min="1" max="168" value="6"> 小时</span></div>' +
     '<div class="hint" id="rbHint"></div>' +
+    '<div class="scanAreaStats" id="scanAreaStats"></div>' +
     '<label class="admrow" id="hiddenRow"><input type="checkbox" id="skipHidden" checked>忽略隐藏目录与系统杂项' +
     '<span class="hint2">默认开启；跳过 . / @ 开头目录，以及 Thumbs.db、desktop.ini、__MACOSX 等杂项；保存后自动重建索引</span></label></section>' +
     '<section class="scard"><h3>团队文件</h3>' +
@@ -2973,10 +2980,26 @@
       el.appendChild(bar);
     }
   }
+  function renderScanStats(){
+    const el = setmask.querySelector('#scanAreaStats');
+    if (!el) return;
+    const st = (scanStatus && scanStatus.scanStats) || null;
+    if (!st) { el.innerHTML = ''; return; }
+    const fmt = n => (n || 0).toLocaleString();
+    const sec = ms => ((ms || 0) / 1000).toFixed(1) + 's';
+    const names = [['local', '本地'], ['team', '团队'], ['usb', '外接'], ['remote', '远程']];
+    el.innerHTML = names.map(([k, label]) => {
+      const x = st[k] || {};
+      const run = x.building ? ' run' : '';
+      const txt = x.volumes ? (fmt(x.records) + ' 条 · ' + sec(x.ms)) : '未启用';
+      return '<div class="sa' + run + '"><b>' + label + '</b> ' + txt + '</div>';
+    }).join('');
+  }
   function refreshScanStatus(){
     fetch(API + 'status').then(r => r.json()).then(d => {
       scanStatus = d;
       renderScanStatus();
+      renderScanStats();
     }).catch(() => {});
   }
   function renderTeamList(){

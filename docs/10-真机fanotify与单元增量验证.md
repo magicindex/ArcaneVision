@@ -570,3 +570,10 @@ chmod 600 → 子树增量更新 → 查询再次为空
 - 团队路径不套用本地 scope 过滤；
 - 管理员可展开团队目录；
 - 团队 ACL 仍按成员权限过滤。
+
+
+## 44. 分区域扫描结果统计（0.10.5）
+
+- `/api/status.scanStats` 输出 local/team/usb/remote 的 records/ms/volumes/building；
+- 自动全盘扫描卡显示四个区域本次扫描条目数与耗时；
+- 各区域独立统计，不混算。

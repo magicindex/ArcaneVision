@@ -17,8 +17,8 @@
 > 发布：2026-11-19 · 适用于飞牛 fnOS（amd64）
 
 0.10.1 增加快照 checksum、容量/趋势采样和修复退避，并完成 FnOSF10 本机应用中心安装回归。
-安装包：`xuanlan_0.10.5_amd64.fpk`（1,076,300 字节），
-SHA-256：`9d9ecf7d458c7dc194c0f34dc1f67b99ef3172ed153a5fc1db50da63d22518b9`。
+安装包：`xuanlan_0.10.5_amd64.fpk`（1,077,470 字节），
+SHA-256：`a3fffcf8778d34a90dad4436f8493516163806b0ae7a9f766c6ccf3eab723e3f`。
 
 ## 0.10.1
 
