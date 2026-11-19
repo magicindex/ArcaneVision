@@ -24,6 +24,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/resource.h>
+#include <sys/syscall.h>
 #include <mntent.h>
 #include <sys/xattr.h>
 #include <sys/time.h>
@@ -1129,6 +1131,14 @@ static int has_submounts(const char *root) {
 }
 
 /* ---------- 构建 ---------- */
+static void build_low_priority(void) {
+    /* 后台构建让出 CPU；I/O 使用 idle 类，优先保证搜索/状态接口。 */
+    setpriority(PRIO_PROCESS, 0, 19);
+#ifdef SYS_ioprio_set
+    syscall(SYS_ioprio_set, 1 /* IOPRIO_WHO_PROCESS */, 0, (3 << 13) /* IOPRIO_CLASS_IDLE */);
+#endif
+}
+
 static int build_one(int vi, int verbose) {
     vol_t *v = &g_vols[vi];
     xl_store st;
@@ -1511,6 +1521,7 @@ static int unit_build_one(const unit_job *j);
 
 static void *unit_repair_worker(void *arg) {
     (void)arg;
+    build_low_priority();
     for (;;) {
         pthread_mutex_lock(&g_repair_mu);
         while (!g_repair_count && !g_repair_stop)
@@ -1774,11 +1785,15 @@ static void units_build_all(void) {
     int n = collect_unit_jobs(&p, jobs, XL_UNIT_CACHE_MAX);
     if (!n) return;
     fprintf(stderr, "xuanlan: 开始构建 %d 个隔离单元\n", n);
-    for (int i = 0; i < n && !g_stop; i++) unit_build_one(&jobs[i]);
+    for (int i = 0; i < n && !g_stop; i++) {
+        unit_build_one(&jobs[i]);
+        usleep(150000);   /* 单元之间让出 CPU/IO，降低搜索延迟抖动 */
+    }
 }
 
 static void *build_worker(void *arg) {
     (void)arg;
+    build_low_priority();
     scan_set_progress(&xl_scan_records);
     g_building = 1;
     g_failed = 0;
@@ -2193,6 +2208,7 @@ static uint64_t g_remote_last_sync;
 
 static void *remote_sync_worker(void *arg) {
     (void)arg;
+    build_low_priority();
     remote_reconcile_mounts();
     for (int i = 0; i < g_nvols && !g_stop; i++) {
         if (!g_vols[i].remote) continue;

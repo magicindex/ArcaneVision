@@ -975,11 +975,9 @@
     if (!videoView.classList.contains('on')) return;
     videoView.classList.add('ctrlon');
     clearTimeout(vHideTimer);
-    if (!vvideo.paused) {
-      vHideTimer = setTimeout(() => {
-        if (!vHover && !vvideo.paused) videoView.classList.remove('ctrlon');
-      }, 2600);
-    }
+    vHideTimer = setTimeout(() => {
+      if (!vHover) videoView.classList.remove('ctrlon');
+    }, 2200);
   }
   function videoHideControls(){
     clearTimeout(vHideTimer);
@@ -1061,6 +1059,17 @@
   videoView.addEventListener('mouseenter', () => { vHover = true; videoShowControls(); });
   videoView.addEventListener('mousemove', videoShowControls);
   videoView.addEventListener('mouseleave', () => { vHover = false; videoHideControls(); });
+  videoView.addEventListener('pointerleave', () => { vHover = false; videoHideControls(); });
+  videoView.addEventListener('mouseout', e => {
+    if (!e.relatedTarget || !videoView.contains(e.relatedTarget)) { vHover = false; videoHideControls(); }
+  });
+  document.addEventListener('mousemove', e => {
+    if (!videoView.classList.contains('on')) return;
+    const r = videoView.getBoundingClientRect();
+    const inside = e.clientX >= r.left && e.clientX <= r.right &&
+                   e.clientY >= r.top && e.clientY <= r.bottom;
+    if (!inside && vHover) { vHover = false; videoHideControls(); }
+  }, { passive: true });
   videoSyncPlay();
   videoSyncVolume();
   function pdfHide(){
