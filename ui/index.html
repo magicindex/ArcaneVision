@@ -840,6 +840,7 @@
 <div class="toast" id="toast"></div>
 <button class="totop" id="toTop" type="button" title="返回顶部" aria-label="返回顶部"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
 
+<script src="vendor/hls.min.js"></script>
 <script>
     // 页面可能由网关以 /app/xuanlan 或 /app/xuanlan/ 打开，统一取到目录前缀
     const API = (() => {
@@ -977,7 +978,7 @@
   const vcanvas = openwin.querySelector('#vcanvas');
   const vctx = vcanvas ? vcanvas.getContext('2d') : null;
   let vdrawRaf = 0;
-  let vTranscode = null, vSeekDragging = false;
+  let vTranscode = null, vSeekDragging = false, vHls = null, vTranscodeSeekTarget = 0;
   function videoDrawFrame(){
     if (!videoView.classList.contains('on')) { vdrawRaf = 0; return; }
     if (vctx && vvideo.videoWidth && vvideo.videoHeight) {
@@ -1049,7 +1050,7 @@
   }
   function videoSyncTime(){
     const tc = vTranscode;
-    const cur = (tc ? tc.start : 0) + (vvideo.currentTime || 0);
+    const cur = tc && tc.hls ? (vvideo.currentTime || 0) : ((tc ? tc.start : 0) + (vvideo.currentTime || 0));
     const dur = tc && tc.duration > 0 ? tc.duration : vvideo.duration;
     vtime.textContent = fmtVideoTime(cur) + ' / ' + fmtVideoTime(dur);
     if (isFinite(dur) && dur > 0) {
@@ -1091,6 +1092,12 @@
   function videoSeekBy(delta){
     if (!isFinite(delta)) return;
     const tc = vTranscode;
+    if (tc && tc.hls) {
+      const max = tc.duration > 0 ? tc.duration : vvideo.duration;
+      if (isFinite(max)) vvideo.currentTime = Math.max(0, Math.min(max, (vvideo.currentTime || 0) + delta));
+      videoSyncTime(); videoShowControls();
+      return;
+    }
     if (tc) {
       const cur = (tc.start || 0) + (vvideo.currentTime || 0);
       const max = tc.duration > 0 ? tc.duration : cur + delta;
@@ -1119,6 +1126,7 @@
   }
   function videoStop(){
     vTranscode = null; vSeekDragging = false;
+    if (vHls) { try { vHls.destroy(); } catch (e) {} vHls = null; }
     try { vvideo.pause(); } catch (e) {}
     vvideo.removeAttribute('src');
     try { vvideo.load(); } catch (e) {}
@@ -1129,7 +1137,7 @@
   }
   function openVideo(url, title){
     if (openIn !== 'embed') { videoStop(); window.open(url, '_blank'); return; }
-    if (url.indexOf('/api/transcode') < 0) { setOwTag(''); vTranscode = null; }
+    if (url.indexOf('/api/transcode') < 0 && url.indexOf('/hls/') < 0) { setOwTag(''); vTranscode = null; }
     owUrl = url;
     setOwBrowser();
     pdfHide();
@@ -1144,8 +1152,18 @@
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     vvideo.controls = false;
     vvideo.removeAttribute('controls');
-    vvideo.src = url;
-    vvideo.load();
+    if (vHls) { try { vHls.destroy(); } catch (e) {} vHls = null; }
+    if (vTranscode && vTranscode.hls && /\.m3u8(?:$|\?)/.test(url) && window.Hls && window.Hls.isSupported()) {
+      vHls = new Hls({ enableWorker: true, lowLatencyMode: false });
+      vHls.loadSource(url);
+      vHls.attachMedia(vvideo);
+      vHls.on(Hls.Events.MANIFEST_PARSED, () => {
+        const p = vvideo.play(); if (p && p.catch) p.catch(() => {});
+      });
+    } else {
+      vvideo.src = url;
+      vvideo.load();
+    }
     try { vvideo.focus({ preventScroll: true }); } catch (e) { try { vvideo.focus(); } catch (e2) {} }
     const p = vvideo.play();
     if (p && p.catch) p.catch(() => {});
@@ -1164,6 +1182,11 @@
     const tc = vTranscode;
     const dur = tc && tc.duration > 0 ? tc.duration : vvideo.duration;
     if (!isFinite(dur) || dur <= 0) return;
+    if (tc && tc.hls) {
+      vTranscodeSeekTarget = dur * (Number(vseek.value) / 1000);
+      vtime.textContent = fmtVideoTime(vTranscodeSeekTarget) + ' / ' + fmtVideoTime(dur);
+      return;
+    }
     if (tc) {
       vSeekDragging = true;
       const t = dur * (Number(vseek.value) / 1000);
@@ -1178,6 +1201,11 @@
     if (!tc) return;
     const dur = tc.duration > 0 ? tc.duration : 0;
     vSeekDragging = false;
+    if (tc.hls && dur > 0) {
+      vvideo.currentTime = Math.max(0, Math.min(dur, dur * (Number(vseek.value) / 1000)));
+      videoSyncTime();
+      return;
+    }
     if (dur > 0) videoTranscodeSeek(dur * (Number(vseek.value) / 1000));
   });
   const videoSyncVolume = () => {
@@ -1439,17 +1467,24 @@
   }
 
   async function openTranscode(p, why, start){
-    let dur = 0;
+    let info = null;
     try {
-      const info = await fetch(API + 'probe?path=' + encodeURIComponent(p), {cache: 'no-store'}).then(r => r.json());
-      dur = Number(info && info.duration) || 0;
+      const r = await fetch(API + 'hls?path=' + encodeURIComponent(p) + '&q=1080', {cache: 'no-store'});
+      info = await r.json();
     } catch (e) {}
-    const at = Math.max(0, Number(start) || 0);
-    vTranscode = { path: p, why: why || '', q: '1080', duration: dur, start: at };
-    const url = API + 'transcode?path=' + encodeURIComponent(p) + '&q=1080' + (at > 0 ? '&t=' + at.toFixed(3) : '');
-    setOwTag('转码 1080p');
-    say('正在转码播放（1080p，' + (why || '兼容模式') + '）');
-    openVideo(url, baseName(p));
+    if (!info || info.ok === false || !info.url) {
+      /* HLS 启动失败时回退旧的分段直出转码 */
+      let dur = 0;
+      try { const pi = await fetch(API + 'probe?path=' + encodeURIComponent(p), {cache:'no-store'}).then(r=>r.json()); dur = Number(pi.duration)||0; } catch(e) {}
+      vTranscode = { path:p, why:why||'', q:'1080', duration:dur, start:Math.max(0, Number(start)||0) };
+      setOwTag('转码 1080p（直出）');
+      openVideo(API + 'transcode?path=' + encodeURIComponent(p) + '&q=1080' + (vTranscode.start > 0 ? '&t=' + vTranscode.start.toFixed(3) : ''), baseName(p));
+      return;
+    }
+    vTranscode = { path:p, why:why||'', q:'1080', duration:Number(info.duration)||0, start:0, hls:true };
+    setOwTag('转码 1080p · HLS');
+    say('正在转码播放（1080p HLS，可拖动）');
+    openVideo(API + info.url, baseName(p));
   }
 
   function setOwTag(text){

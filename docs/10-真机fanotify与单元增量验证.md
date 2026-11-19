@@ -644,3 +644,12 @@ chmod 600 → 子树增量更新 → 查询再次为空
 - 转码播放记录 start offset + 真实总时长；
 - 拖动进度条不修改不可 seek 的流，而是带 t 参数重新转码；
 - 显示时间 = start + 当前流时间，总时长稳定，不再来回跳。
+
+
+## 54. HLS 分段转码与无感拖动（0.10.5）
+
+- 新增 /api/hls 启动 HLS 会话，ffmpeg 输出 event playlist + TS 分段；
+- /api/hls/<sid>/index.m3u8 与分段同源提供；
+- UI 引入 hls.js，原生 HLS 不支持时走 MSE；
+- 进度条直接 seek HLS 时间轴，不再重启转码；
+- 回退：HLS 启动失败仍走旧 /api/transcode。

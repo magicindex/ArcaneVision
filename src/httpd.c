@@ -5186,6 +5186,8 @@ static int g_have_zscale;
 static int g_tc_active;
 static pthread_mutex_t g_tc_mu = PTHREAD_MUTEX_INITIALIZER;
 static void handle_transcode(int fd, const char *qs, int uid);
+static void handle_hls_start(int fd, const char *qs, int uid);
+static void handle_hls_file(int fd, const char *pathonly);
 static void handle_thumb(sbuf *out, const char *qs, int uid, int *code, const char **ctype);
 
 static void handle_remote(sbuf *out, int admin) {
@@ -6048,6 +6050,10 @@ static void handle_client(int fd) {
         handle_markdown(&body, qs, uid, &ctype);
     } else if (!strcmp(pathonly, "/api/probe")) {
         handle_probe(&body, qs, uid);
+    } else if (!strncmp(pathonly, "/api/hls/", 9)) {
+        handle_hls_file(fd, pathonly);
+    } else if (!strcmp(pathonly, "/api/hls")) {
+        handle_hls_start(fd, qs, uid);
     } else if (!strcmp(pathonly, "/api/transcode")) {
         handle_transcode(fd, qs, uid);
         free(body.p);
@@ -6257,6 +6263,157 @@ static void send_simple(int fd, int code, const char *json) {
         strlen(json));
     write_all(fd, hdr, (size_t)hl);
     write_all(fd, json, strlen(json));
+}
+
+/* ---------- HLS 分段转码（可 seek） ---------- */
+#define HLS_MAX 3
+typedef struct {
+    char sid[32];
+    char path[PATH_MAX];
+    char dir[300];
+    pid_t pid;
+    time_t at;
+} hls_sess;
+static hls_sess g_hls[HLS_MAX];
+static pthread_mutex_t g_hls_mu = PTHREAD_MUTEX_INITIALIZER;
+static int g_hls_seq;
+
+static void hls_kill(hls_sess *h) {
+    if (h->pid > 0) kill(h->pid, SIGKILL);
+    h->pid = 0;
+    if (h->dir[0]) {
+        char cmd[400];
+        /* 只删除本服务自己创建的固定前缀目录，避免路径注入。 */
+        if (strstr(h->dir, "/tmp/xl-hls-") == h->dir) {
+            snprintf(cmd, sizeof cmd, "rm -rf -- '%s'", h->dir);
+            system(cmd);
+        }
+    }
+    h->sid[0] = h->path[0] = h->dir[0] = 0;
+}
+
+static void handle_hls_start(int fd, const char *qs, int uid) {
+    char raw[4096], qbuf[16];
+    if (!param(qs, "path", raw, sizeof raw)) { send_simple(fd, 400, "{\"ok\":false,\"error\":\"missing path\"}"); return; }
+    if (strncmp(raw, "/vol", 4) || strstr(raw, "..")) { send_simple(fd, 403, "{\"ok\":false,\"error\":\"path not allowed\"}"); return; }
+    char real[PATH_MAX];
+    if (!realpath(raw, real) || strncmp(real, "/vol", 4)) { send_simple(fd, 404, "{\"ok\":false,\"error\":\"not found\"}"); return; }
+    if (usb_path_blocked(uid, real)) { send_simple(fd, 403, "{\"ok\":false,\"error\":\"path not allowed\"}"); return; }
+    struct stat tst;
+    if (stat(real, &tst) != 0 || !S_ISREG(tst.st_mode)) { send_simple(fd, 403, "{\"ok\":false,\"error\":\"not a regular file\"}"); return; }
+    if (uid >= 0) {
+        char dir[PATH_MAX];
+        snprintf(dir, sizeof dir, "%s", real);
+        char *slash = strrchr(dir, '/');
+        if (slash && slash != dir) {
+            *slash = 0;
+            if (!perm_dir_listable((uid_t)uid, dir)) { send_simple(fd, 403, "{\"ok\":false,\"error\":\"forbidden\"}"); return; }
+        }
+        if (!perm_file_readable((uid_t)uid, real)) { send_simple(fd, 403, "{\"ok\":false,\"error\":\"forbidden\"}"); return; }
+    }
+    if (!g_have_ffmpeg) { send_simple(fd, 503, "{\"ok\":false,\"error\":\"ffmpeg not available\"}"); return; }
+    if (!param(qs, "q", qbuf, sizeof qbuf)) snprintf(qbuf, sizeof qbuf, "1080");
+    int W = 1920, H = 1080, br = 4;
+    if (!strcmp(qbuf, "720")) { W = 1280; H = 720; br = 3; }
+    else if (!strcmp(qbuf, "480")) { W = 854; H = 480; br = 2; }
+
+    char sid[32], dir[300];
+    pthread_mutex_lock(&g_hls_mu);
+    int slot = -1;
+    for (int i = 0; i < HLS_MAX; i++) if (!g_hls[i].sid[0]) { slot = i; break; }
+    if (slot < 0) { hls_kill(&g_hls[0]); slot = 0; }
+    snprintf(sid, sizeof sid, "%d-%d", (int)getpid(), ++g_hls_seq);
+    snprintf(dir, sizeof dir, "/tmp/xl-hls-%s", sid);
+    pthread_mutex_unlock(&g_hls_mu);
+    mkdir(dir, 0700);
+
+    char seg[400], pl[400];
+    snprintf(seg, sizeof seg, "%s/seg%%05d.ts", dir);
+    snprintf(pl, sizeof pl, "%s/index.m3u8", dir);
+    char vf[256];
+    snprintf(vf, sizeof vf, "scale=%d:%d:force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuv420p", W, H);
+    char vb[16];
+    snprintf(vb, sizeof vb, "%dM", br);
+    char *argv[48];
+    int n = 0;
+    argv[n++] = (char *)ffmpeg_path();
+    argv[n++] = "-hide_banner"; argv[n++] = "-loglevel"; argv[n++] = "error"; argv[n++] = "-nostdin";
+    argv[n++] = "-i"; argv[n++] = real;
+    argv[n++] = "-t"; argv[n++] = "14400";
+    argv[n++] = "-map"; argv[n++] = "0:v:0"; argv[n++] = "-map"; argv[n++] = "0:a:0?";
+    argv[n++] = "-vf"; argv[n++] = vf;
+    if (g_have_nvenc) {
+        argv[n++] = "-c:v"; argv[n++] = "h264_nvenc"; argv[n++] = "-preset"; argv[n++] = "p4";
+        argv[n++] = "-rc"; argv[n++] = "vbr"; argv[n++] = "-b:v"; argv[n++] = vb;
+    } else {
+        argv[n++] = "-c:v"; argv[n++] = "libx264"; argv[n++] = "-preset"; argv[n++] = "veryfast";
+        argv[n++] = "-b:v"; argv[n++] = vb;
+    }
+    argv[n++] = "-c:a"; argv[n++] = "aac"; argv[n++] = "-b:a"; argv[n++] = "128k"; argv[n++] = "-ac"; argv[n++] = "2";
+    argv[n++] = "-f"; argv[n++] = "hls";
+    argv[n++] = "-hls_time"; argv[n++] = "4";
+    argv[n++] = "-hls_list_size"; argv[n++] = "0";
+    argv[n++] = "-hls_playlist_type"; argv[n++] = "event";
+    argv[n++] = "-hls_flags"; argv[n++] = "independent_segments";
+    argv[n++] = "-hls_segment_filename"; argv[n++] = seg;
+    argv[n++] = pl;
+    argv[n] = NULL;
+    pid_t pid = fork();
+    if (pid < 0) { send_simple(fd, 500, "{\"ok\":false,\"error\":\"fork failed\"}"); return; }
+    if (pid == 0) {
+        int devnull = open("/dev/null", O_WRONLY);
+        if (devnull >= 0) { dup2(devnull, 1); dup2(devnull, 2); close(devnull); }
+        execv(argv[0], argv);
+        _exit(127);
+    }
+    pthread_mutex_lock(&g_hls_mu);
+    hls_sess *h = &g_hls[slot];
+    memset(h, 0, sizeof *h);
+    snprintf(h->sid, sizeof h->sid, "%s", sid);
+    snprintf(h->path, sizeof h->path, "%s", real);
+    snprintf(h->dir, sizeof h->dir, "%s", dir);
+    h->pid = pid; h->at = time(NULL);
+    pthread_mutex_unlock(&g_hls_mu);
+    char out[512];
+    snprintf(out, sizeof out, "{\"ok\":true,\"sid\":\"%s\",\"duration\":%.3f,\"url\":\"hls/%s/index.m3u8\"}",
+             sid, media_duration(real), sid);
+    send_simple(fd, 200, out);
+}
+
+static void handle_hls_file(int fd, const char *pathonly) {
+    /* /api/hls/<sid>/<file> */
+    const char *p = pathonly + 9;
+    const char *slash = strchr(p, '/');
+    if (!slash) { send_simple(fd, 404, "{\"error\":\"not found\"}"); return; }
+    char sid[32], file[128];
+    size_t sl = (size_t)(slash - p);
+    if (sl >= sizeof sid) { send_simple(fd, 404, "{\"error\":\"not found\"}"); return; }
+    memcpy(sid, p, sl); sid[sl] = 0;
+    snprintf(file, sizeof file, "%s", slash + 1);
+    if (strstr(file, "..") || strchr(file, '/')) { send_simple(fd, 404, "{\"error\":\"not found\"}"); return; }
+    char fpath[400];
+    pthread_mutex_lock(&g_hls_mu);
+    int found = 0;
+    for (int i = 0; i < HLS_MAX; i++) if (g_hls[i].sid[0] && !strcmp(g_hls[i].sid, sid)) {
+        snprintf(fpath, sizeof fpath, "%s/%s", g_hls[i].dir, file);
+        found = 1; break;
+    }
+    pthread_mutex_unlock(&g_hls_mu);
+    if (!found) { send_simple(fd, 404, "{\"error\":\"session not found\"}"); return; }
+    int f = open(fpath, O_RDONLY | O_CLOEXEC);
+    if (f < 0) { send_simple(fd, 404, "{\"error\":\"not ready\"}"); return; }
+    struct stat st;
+    if (fstat(f, &st) != 0) { close(f); send_simple(fd, 404, "{\"error\":\"not ready\"}"); return; }
+    const char *mime = strstr(file, ".m3u8") ? "application/vnd.apple.mpegurl" : "video/mp2t";
+    char hdr[512];
+    int hl = snprintf(hdr, sizeof hdr,
+        "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %lld\r\n"
+        "Cache-Control: no-store\r\nConnection: close\r\n\r\n", mime, (long long)st.st_size);
+    write_all(fd, hdr, (size_t)hl);
+    char buf[65536];
+    ssize_t n;
+    while ((n = read(f, buf, sizeof buf)) > 0) if (write_all(fd, buf, (size_t)n) < 0) break;
+    close(f);
 }
 
 static void handle_transcode(int fd, const char *qs, int uid) {
