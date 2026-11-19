@@ -2937,14 +2937,15 @@
     const list = setmask.querySelector('#aclList');
     const who = setmask.querySelector('#aclWho');
     list.innerHTML = '<div>读取中…</div>';
-    const avail = (settings.scopeAvailable && settings.scopeAvailable.paths) || [];
+    const allAvail = (settings.scopeAvailable && settings.scopeAvailable.paths) || [];
+    const avail = allAvail.filter(p => !/^\/vol02(\/|$)/.test(p));  /* 本地范围不混入远程 */
     checked = new Set((settings.scope || []).filter(p => p[0] !== '!'));
     excluded = new Set((settings.scope || []).filter(p => p[0] === '!').map(p => p.slice(1)));
     who.textContent = settings.scopeAvailable && settings.scopeAvailable.admin
       ? '管理员：只列出当前账号可访问的目录；勾选目录即包含其下全部内容'
       : '勾选的目录才会被搜索；点 ▸ 可展开子目录';
     if (!avail.length) { list.innerHTML = '<div>没有可访问目录</div>'; return; }
-    list.innerHTML = '';
+    list.innerHTML = '<div class="scangroup">本地卷（/vol1–/vol4）</div>';
 
     // 显示时去掉用户编号层：/vol3/1000/媒体库 → /vol3/媒体库
     // 去掉用户编号层：/vol3/1000/媒体库 → /vol3/媒体库
@@ -2960,6 +2961,7 @@
       return '<span class="tag' + cls + '">' + txt + '</span>';
     }
     function addRow(container, path, kind, depth, parentPath){
+      if (/^\/vol02(\/|$)/.test(path)) return;  /* 防御旧缓存/旧 API */
       const row = document.createElement('div');
       row.className = 'scrow';
       row.style.paddingLeft = (8 + depth * 20) + 'px';
@@ -3341,13 +3343,13 @@
     }).catch(() => {});
   }
   function loadSettings(){
-    fetch(API + 'settings' + (showAll ? '?all=1' : '')).then(r => r.json()).then(d => {
+    fetch(API + 'settings' + (showAll ? '?all=1' : ''), {cache: 'no-store'}).then(r => r.json()).then(d => {
       d = migrateOpenWith(d); settings = d; openIn = d.openIn === 'window' ? 'window' : 'embed';
       return loadScanMode();
     }).catch(() => {});
   }
   function reloadSettings(){
-    fetch(API + 'settings' + (showAll ? '?all=1' : '')).then(r => r.json()).then(d => {
+    fetch(API + 'settings' + (showAll ? '?all=1' : ''), {cache: 'no-store'}).then(r => r.json()).then(d => {
       d = migrateOpenWith(d); settings = d; openIn = d.openIn === 'window' ? 'window' : 'embed';
       return loadScanMode().then(() => renderSettings());
     }).catch(() => {});

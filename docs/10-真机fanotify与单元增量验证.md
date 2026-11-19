@@ -434,3 +434,11 @@ chmod 600 → 子树增量更新 → 查询再次为空
 - 卸载后 `/vol1/@appdata/xuanlan` 保留；
 - `fnos-cli app install-fpk ... --volume-id 1 --yes` 无需 custom parameters 即可重装；
 - 重装后版本 0.10.4、状态 running、远程索引/凭据保留。
+
+
+## 26. 本地范围列表硬隔离（0.10.4）
+
+- 本地 ACL 渲染层再次过滤 `/vol02`，防止旧 settings 缓存混入远程；
+- 增加「本地卷（/vol1–/vol4）」分组标题；
+- settings 请求使用 `cache: no-store`；
+- 远程条目只允许出现在「远程挂载」卡片。
