@@ -889,7 +889,7 @@
     '<iframe id="owframe" title="打开"></iframe>' +
     '<div id="pdfview"><div class="pbar"><button id="pgprev">‹</button>' +
     '<span id="pgcount">– / –</span><button id="pgnext">›</button><span class="sp"></span>' +
-    '<button id="pgfit">适应宽度</button><button id="pgout">−</button>' +
+    '<button id="pgfit">适应宽度</button><button id="pgall">显示全部</button><button id="pgout">−</button>' +
     '<button id="pgin">+</button></div><div class="ppages" id="ppages"></div></div>' +
     '<div id="videoview"><video id="vvideo" playsinline webkit-playsinline preload="metadata" tabindex="0" disablepictureinpicture></video><canvas id="vcanvas"></canvas>' +
     '<div class="vbar"><button id="vplay" type="button" aria-label="播放或暂停">▶</button>' +
@@ -959,7 +959,7 @@
     h.addEventListener('pointerup', e => { if (dragging) { dragging = false; h.releasePointerCapture(e.pointerId); saveOw(); } });
   })();
   // ---- 内置 PDF 阅读器（pdf.js）----
-  let pdfLib = null, pdfDoc = null, pdfPage = 1, pdfFit = true, pdfZoom = 1;
+  let pdfLib = null, pdfDoc = null, pdfPage = 1, pdfFit = true, pdfFitAll = false, pdfZoom = 1;
   const pdfView = openwin.querySelector('#pdfview');
   const pdfPages = openwin.querySelector('#ppages');
   // ---- 内置视频播放器 ----
@@ -1146,7 +1146,7 @@
     pdfView.classList.add('on');
     openwin.classList.add('on');
     applyOw();
-    pdfPage = 1; pdfFit = true; pdfZoom = 1;
+    pdfPage = 1; pdfFit = true; pdfFitAll = false; pdfZoom = 1;
     await pdfShow();
   }
   async function pdfShow(){
@@ -1174,8 +1174,9 @@
       const base = page.getViewport({ scale: 1 });
       const availW = Math.max(120, pdfPages.clientWidth - 26);
       const availH = Math.max(120, pdfPages.clientHeight - 30);
-      let scale = pdfFit ? availW / base.width : pdfZoom;
-      if (!pdfFit && pdfZoom === 1) scale = availW / base.width;
+      let scale = pdfFitAll ? Math.min(availW / base.width, availH / base.height)
+                            : (pdfFit ? availW / base.width : pdfZoom);
+      if (!pdfFit && !pdfFitAll && pdfZoom === 1) scale = availW / base.width;
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const vp = page.getViewport({ scale });
       const cv = document.createElement('canvas');
@@ -1193,29 +1194,32 @@
   }
   openwin.querySelector('#pgprev').onclick = () => { if (pdfDoc && pdfPage > 1) { pdfPage--; pdfShow(); } };
   openwin.querySelector('#pgnext').onclick = () => { if (pdfDoc && pdfPage < pdfDoc.numPages) { pdfPage++; pdfShow(); } };
-  openwin.querySelector('#pgfit').onclick = () => { pdfFit = true; pdfZoom = 1; pdfShow(); };
+  openwin.querySelector('#pgfit').onclick = () => { pdfFit = true; pdfFitAll = false; pdfZoom = 1; pdfShow(); };
+  openwin.querySelector('#pgall').onclick = () => { pdfFit = false; pdfFitAll = true; pdfZoom = 1; pdfShow(); };
   openwin.querySelector('#pgout').onclick = () => {
     const page0 = pdfDoc && pdfDoc.getPage(pdfPage);
     if (!pdfDoc) return;
     pdfDoc.getPage(pdfPage).then(pg => {
       const base = pg.getViewport({ scale: 1 });
-      const cur = pdfFit ? (pdfPages.clientWidth - 26) / base.width : pdfZoom;
-      pdfFit = false; pdfZoom = Math.max(0.35, cur / 1.25); pdfShow();
+      const cur = pdfFitAll ? Math.min((pdfPages.clientWidth - 26) / base.width,
+        (pdfPages.clientHeight - 30) / base.height) : (pdfFit ? (pdfPages.clientWidth - 26) / base.width : pdfZoom);
+      pdfFit = false; pdfFitAll = false; pdfZoom = Math.max(0.35, cur / 1.25); pdfShow();
     });
   };
   openwin.querySelector('#pgin').onclick = () => {
     if (!pdfDoc) return;
     pdfDoc.getPage(pdfPage).then(pg => {
       const base = pg.getViewport({ scale: 1 });
-      const cur = pdfFit ? (pdfPages.clientWidth - 26) / base.width : pdfZoom;
-      pdfFit = false; pdfZoom = Math.min(6, cur * 1.25); pdfShow();
+      const cur = pdfFitAll ? Math.min((pdfPages.clientWidth - 26) / base.width,
+        (pdfPages.clientHeight - 30) / base.height) : (pdfFit ? (pdfPages.clientWidth - 26) / base.width : pdfZoom);
+      pdfFit = false; pdfFitAll = false; pdfZoom = Math.min(6, cur * 1.25); pdfShow();
     });
   };
   let pdfRefitTimer = 0;
   new ResizeObserver(() => {
-    if (!pdfDoc || !pdfFit) return;
+    if (!pdfDoc || (!pdfFit && !pdfFitAll)) return;
     clearTimeout(pdfRefitTimer);
-    pdfRefitTimer = setTimeout(() => { if (pdfDoc && pdfFit) pdfShow(); }, 160);
+    pdfRefitTimer = setTimeout(() => { if (pdfDoc && (pdfFit || pdfFitAll)) pdfShow(); }, 160);
   }).observe(pdfPages);
 
   function closeOpen(){
