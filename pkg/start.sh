@@ -29,9 +29,18 @@ fi
 
 # 自动探测 /vol1–/vol8，避免只认前四个卷；xuanlan.conf 里的 ROOTS 优先级更高
 ROOTS=""
+# 启动时卷可能比 local-fs.target 晚挂载；对已存在的卷短暂等待，避免只索引到 /vol1、/vol3。
 for i in 1 2 3 4 5 6 7 8; do
-    # 只认真实挂载点；/vol6、/vol7 这类残留空目录不算卷
-    if [ -d "/vol${i}" ] && grep -q " /vol${i} " /proc/self/mounts; then
+    [ -d "/vol${i}" ] || continue
+    tries=0
+    # 只对传统的 /vol1–/vol4 等待，避免 /vol6、/vol7 这类残留空目录拖慢启动。
+    if [ "$i" -le 4 ]; then
+        while [ "$tries" -lt 30 ] && ! grep -q " /vol${i} " /proc/self/mounts; do
+            sleep 1
+            tries=$((tries + 1))
+        done
+    fi
+    if grep -q " /vol${i} " /proc/self/mounts; then
         ROOTS="${ROOTS:+${ROOTS},}/vol${i}"
     fi
 done
