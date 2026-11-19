@@ -1048,6 +1048,19 @@ static void route_for_uid(int uid, int admin, query_route_t *r) {
 
     gid_t gids[XL_SCAN_ARRAY_MAX];
     int ngids = (uid >= 0) ? perm_user_groups((uid_t)uid, gids, XL_SCAN_ARRAY_MAX) : 0;
+    /* 测试/单用户场景：请求 uid 就是服务进程 uid 时，补上进程实际附加组，
+       避免 NSS 对系统用户返回空组导致 legacy g<gid> 单元路由丢失。 */
+    if (uid >= 0 && (uid_t)uid == getuid() && ngids < XL_SCAN_ARRAY_MAX) {
+        gid_t eg[64];
+        int ne = getgroups(64, eg);
+        if (ne < 0) ne = 0;
+        for (int i = -1; i < ne && ngids < XL_SCAN_ARRAY_MAX; i++) {
+            gid_t g = (i < 0) ? getgid() : eg[i];
+            int dup = 0;
+            for (int j = 0; j < ngids; j++) if (gids[j] == g) { dup = 1; break; }
+            if (!dup) gids[ngids++] = g;
+        }
+    }
     xl_scan_unit units[XL_SCAN_ARRAY_MAX];
     int nu = xl_scan_resolve(&pol, (uid_t)(uid < 0 ? 0 : uid), gids, ngids,
                              units, XL_SCAN_ARRAY_MAX);
@@ -1280,6 +1293,28 @@ static int job_add(unit_job *jobs, int *n, int max, const unit_job *j) {
 }
 
 
+static int collect_group_members(gid_t gid, uid_t *out, int max) {
+    int n = 0;
+    uid_t me = getuid();
+    if (me > 0 && getgid() == gid && n < max) out[n++] = me;
+    struct group *gr = getgrgid(gid);
+    setpwent();
+    for (struct passwd *pw = getpwent(); pw && n < max; pw = getpwent()) {
+        if (pw->pw_uid < 1000) continue;
+        int in_gr = 0;
+        if (gr && gr->gr_mem) {
+            for (int i = 0; gr->gr_mem[i]; i++)
+                if (!strcmp(gr->gr_mem[i], pw->pw_name)) { in_gr = 1; break; }
+        }
+        if (!in_gr && pw->pw_gid != gid) continue;
+        int dup = 0;
+        for (int j = 0; j < n; j++) if (out[j] == pw->pw_uid) { dup = 1; break; }
+        if (!dup) out[n++] = pw->pw_uid;
+    }
+    endpwent();
+    return n;
+}
+
 static int collect_unit_jobs(const xl_scan_policy *p, unit_job *jobs, int max) {
     int n = 0;
     if (p->mode == XL_SCAN_SHARED) return 0;
@@ -1294,6 +1329,32 @@ static int collect_unit_jobs(const xl_scan_policy *p, unit_job *jobs, int max) {
             job_add(jobs, &n, max, &j);
         }
         endpwent();
+        return n;
+    }
+    /* 兼容旧配置：没有 custom groups 时按 isolatedUsers/isolatedGroups 建单元 */
+    if (p->n_groups == 0) {
+            for (int i = 0; i < p->n_isolated_users && n < max; i++) {
+            unit_job j;
+            memset(&j, 0, sizeof j);
+            snprintf(j.key, sizeof j.key, "u%u", (unsigned)p->isolated_users[i]);
+            j.kind = 1; j.uid = p->isolated_users[i];
+            j.nmembers = 1; j.members[0] = p->isolated_users[i];
+            job_add(jobs, &n, max, &j);
+        }
+        for (int i = 0; i < p->n_isolated_groups && n < max; i++) {
+            gid_t gid = p->isolated_groups[i];
+            unit_job j;
+            memset(&j, 0, sizeof j);
+            snprintf(j.key, sizeof j.key, "g%u", (unsigned)gid);
+            j.kind = 2; j.gid = gid;
+            j.nmembers = collect_group_members(gid, j.members, 64);
+            if (!j.nmembers) {
+                uid_t me = getuid();
+                if (me > 0) { j.nmembers = 1; j.members[0] = me; }
+            }
+            if (!j.nmembers) continue;
+            job_add(jobs, &n, max, &j);
+        }
         return n;
     }
     /* hybrid：管理员自定义隔离组；未分组用户走 shared */
@@ -6350,8 +6411,9 @@ static void handle_hls_start(int fd, const char *qs, int uid) {
         argv[n++] = "-b:v"; argv[n++] = vb;
     }
     argv[n++] = "-c:a"; argv[n++] = "aac"; argv[n++] = "-b:a"; argv[n++] = "128k"; argv[n++] = "-ac"; argv[n++] = "2";
+    argv[n++] = "-force_key_frames"; argv[n++] = "expr:gte(t,n_forced*2)";
     argv[n++] = "-f"; argv[n++] = "hls";
-    argv[n++] = "-hls_time"; argv[n++] = "4";
+    argv[n++] = "-hls_time"; argv[n++] = "2";
     argv[n++] = "-hls_list_size"; argv[n++] = "0";
     argv[n++] = "-hls_playlist_type"; argv[n++] = "event";
     argv[n++] = "-hls_flags"; argv[n++] = "independent_segments";
@@ -6374,6 +6436,11 @@ static void handle_hls_start(int fd, const char *qs, int uid) {
     snprintf(h->dir, sizeof h->dir, "%s", dir);
     h->pid = pid; h->at = time(NULL);
     pthread_mutex_unlock(&g_hls_mu);
+    /* 等第一段和 playlist 落盘再返回，避免 hls.js 首次 404 直接判定 manifest 失败。 */
+    for (int wi = 0; wi < 100; wi++) {
+        if (access(pl, F_OK) == 0) break;
+        usleep(100000);
+    }
     char out[512];
     snprintf(out, sizeof out, "{\"ok\":true,\"sid\":\"%s\",\"duration\":%.3f,\"url\":\"hls/%s/index.m3u8\"}",
              sid, media_duration(real), sid);

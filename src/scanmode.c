@@ -220,6 +220,34 @@ int xl_scan_resolve(const xl_scan_policy *p, uid_t uid, const gid_t *gids,
         unit_user(&out[0], uid);
         return 1;
     }
+    /* 兼容旧配置：没有自定义 hybridGroups 时沿用 shareUsers/isolatedUsers/
+       shareGroups/isolatedGroups；新 UI 写入 custom groups 后只走自定义组。 */
+    if (p->n_groups == 0) {
+        for (int i = 0; i < p->n_share_users; i++)
+            if (p->share_users[i] == uid) { unit_shared(&out[0], 0); return 1; }
+        for (int i = 0; i < p->n_isolated_users; i++)
+            if (p->isolated_users[i] == uid) { unit_user(&out[0], uid); return 1; }
+        gid_t matched[XL_SCAN_ARRAY_MAX];
+        int nm = 0;
+        for (int i = 0; i < ngids; i++) {
+            for (int j = 0; j < p->n_isolated_groups; j++)
+                if (p->isolated_groups[j] == gids[i] && nm < XL_SCAN_ARRAY_MAX)
+                    matched[nm++] = gids[i];
+        }
+        if (nm > 0) {
+            for (int i = 0; i < nm; i++)
+                for (int j = i + 1; j < nm; j++)
+                    if (matched[j] < matched[i]) { gid_t t = matched[i]; matched[i] = matched[j]; matched[j] = t; }
+            int n = 0;
+            for (int i = 0; i < nm && n < cap; i++) unit_group(&out[n++], matched[i]);
+            return n;
+        }
+        for (int i = 0; i < ngids; i++)
+            for (int j = 0; j < p->n_share_groups; j++)
+                if (p->share_groups[j] == gids[i]) { unit_shared(&out[0], 0); return 1; }
+        unit_shared(&out[0], 1);
+        return 1;
+    }
     /* hybrid：只按管理员创建的自定义隔离组；未分组用户常驻 shared */
     int n = 0;
     for (int i = 0; i < p->n_groups && n < cap; i++) {
@@ -229,6 +257,6 @@ int xl_scan_resolve(const xl_scan_policy *p, uid_t uid, const gid_t *gids,
         }
     }
     if (n) return n;
-    unit_shared(&out[0], 0);
+    unit_shared(&out[0], 1);
     return 1;
 }
