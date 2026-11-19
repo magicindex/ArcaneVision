@@ -89,6 +89,8 @@
   .modeDoc.on b{color:#ffb3c8}
   .modeDoc p{margin:3px 0 0;font-size:11.5px;line-height:1.55;color:var(--fg2)}
   .modeDoc span{display:block;margin-top:3px;font-size:11px;line-height:1.5;color:#9fd8d1}
+  .modeDoc span.modeLine b{display:inline-block;min-width:32px;margin-right:4px;color:#f0b35b;font-weight:550}
+  html[data-theme="light"] .modeDoc span.modeLine b{color:#a36a18}
   .modeSub{margin-top:6px;padding:6px 8px;border-radius:6px;background:rgba(255,255,255,.035);border-left:2px solid rgba(90,200,190,.35)}
   .modeSub b{font-size:11.5px;color:#c9fff8}
   .modeSub p{margin:2px 0 0;font-size:11px;line-height:1.5;color:var(--fg2)}
@@ -2936,18 +2938,24 @@
     '<div class="modeDocs">' +
     '<div class="modeDoc" data-mode="shared"><b>共享</b>' +
     '<p>用途：家庭/多用户日常检索；只维护一份索引，结果按查询时 ACL 裁剪。</p>' +
-    '<span>效率：磁盘/内存/重建约 1×，ACL 变化不重建共享索引；适合大多数场景。</span></div>' +
+    '<span class="modeLine"><b>查询</b>最快：单索引一次检索 + ACL 裁剪</span>' +
+    '<span class="modeLine"><b>资源</b>最低：磁盘/内存/重建约 1×</span></div>' +
     '<div class="modeDoc" data-mode="isolated"><b>隔离</b>' +
     '<p>用途：需要物理隔离的敏感用户；每个用户独立索引，互不依赖。</p>' +
-    '<span>效率：磁盘/构建约用户数×；用户少时更稳，用户多时成本高。</span></div>' +
+    '<span class="modeLine"><b>查询</b>快：直接读本人索引，无 ACL 裁剪</span>' +
+    '<span class="modeLine"><b>资源</b>高：磁盘/内存/构建约用户数×</span></div>' +
     '<div class="modeDoc" data-mode="hybrid"><b>混合</b>' +
     '<p>普通用户共享；被隔离的用户/用户组各自独立索引。用户和组可分别配置。</p>' +
+    '<span class="modeLine"><b>查询</b>共享用户同共享；隔离用户/组读各自索引</span>' +
+    '<span class="modeLine"><b>资源</b>1× + 每个隔离用户/组各 1×</span>' +
     '<div class="modeSub"><b>按用户隔离</b>' +
     '<p>适用：少数敏感用户，需要与其他人物理隔离。</p>' +
-    '<span>效率：共享 1× + 每个隔离用户 1×；该用户 ACL 变化只重建其单元。</span></div>' +
+    '<span class="modeLine"><b>查询</b>直接读该用户索引</span>' +
+    '<span class="modeLine"><b>资源</b>共享 1× + 每个隔离用户 1×</span></div>' +
     '<div class="modeSub"><b>按用户组隔离</b>' +
     '<p>适用：团队/部门整体隔离，组内成员共享同一份组索引。</p>' +
-    '<span>效率：共享 1× + 每个隔离组 1×；组 ACL/成员变化只重建该组，推荐团队场景。</span></div>' +
+    '<span class="modeLine"><b>查询</b>直接读该组索引，组内成员共享</span>' +
+    '<span class="modeLine"><b>资源</b>共享 1× + 每个隔离组 1×</span></div>' +
     '</div>' +
     '</div>' +
     '<div id="scanHybrid">' +
