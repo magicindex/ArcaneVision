@@ -562,3 +562,11 @@ chmod 600 → 子树增量更新 → 查询再次为空
 - local 构建只扫 g_nvols_local；team 构建只扫 team 卷；
 - team 范围不出现在本地 ACL 列表；
 - 定时/全部重建通过 pending 顺序触发 team/usb/remote。
+
+
+## 43. 团队索引独立搜索接入（0.10.5）
+
+- 团队索引 team-volN.idx 纳入共享检索路由；
+- 团队路径不套用本地 scope 过滤；
+- 管理员可展开团队目录；
+- 团队 ACL 仍按成员权限过滤。

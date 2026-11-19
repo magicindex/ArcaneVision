@@ -3543,10 +3543,12 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
             if (sl == pd) sl[1] = 0; else *sl = 0;
             vol_t *rv = remote_vol_for_path(path);
             remote_ok = rv && remote_volume_allows(uid, admin, rv);
+            int team_ok = team_path(path);
             if (!remote_ok) {
-                if (!admin && system_path(path)) continue;
-                if (!perm_cache_check(pcache, pd, (uid_t)uid)) continue;
-                if (nsc >= 0 && strncmp(path, "/vol00/", 7) != 0 && !scope_allows(sc, nsc, path)) continue;
+                if (!admin && !team_ok && system_path(path)) continue;
+                if (!admin && !perm_cache_check(pcache, pd, (uid_t)uid)) continue;
+                if (!team_ok && nsc >= 0 && strncmp(path, "/vol00/", 7) != 0 &&
+                    !scope_allows(sc, nsc, path)) continue;
             }
         }
         {
@@ -3718,9 +3720,10 @@ static void handle_dir(sbuf *out, const char *qs, int uid, int admin) {
     /* 卷根 /volN 的 mode 是 0000，但飞牛允许浏览后按子目录授权；放行并在下面逐项判权。
        管理员也按当前账号的 ACL 过滤，避免列出别人的家目录与系统目录。 */
     int volroot = is_volroot(dir);
+    int teamdir = team_path(dir);
     int all = 0;
     { char tmp[8]; all = (admin && param(qs, "all", tmp, sizeof tmp)); }
-    if (uid >= 0 && !all) {
+    if (uid >= 0 && !all && !(admin && teamdir)) {
         if (system_path(dir) || (!volroot && !perm_dir_listable((uid_t)uid, dir))) {
             sb_puts(out, "{\"error\":\"forbidden\",\"entries\":[]}");
             return;
