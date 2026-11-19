@@ -266,6 +266,14 @@
   .openwin .vbar input[type=range]{accent-color:#59d3c8;height:16px;min-width:60px}
   .openwin .vbar #vseek{flex:1}
   .openwin .vbar #vvol{width:68px;flex:none}
+  .openwin .vbar.compact{left:50%;right:auto;bottom:14px;width:auto;max-width:calc(100% - 20px);
+    padding:7px 10px;border-radius:999px;background:rgba(8,14,24,.84);border:1px solid rgba(150,190,220,.22);
+    box-shadow:0 6px 22px rgba(0,0,0,.35);backdrop-filter:blur(10px);transform:translateX(-50%)}
+  .openwin #videoview.ctrlon .vbar.compact{transform:translateX(-50%)}
+  .openwin .vbar.compact #vvol,.openwin .vbar.compact #vfull{display:none}
+  .openwin .vbar.compact #vtime{font-size:10.5px}
+  .openwin .vbar.compact #vseek{min-width:80px;width:min(42vw,260px);flex:none}
+  .openwin .vbar.dragging{cursor:grabbing;user-select:none;transition:none}
   .openwin #vhint{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:2;
     font-size:11px;color:#dbe8f8;background:rgba(8,14,24,.62);border:1px solid rgba(160,190,230,.2);
     border-radius:999px;padding:4px 12px;opacity:0;transition:opacity .16s;pointer-events:none;white-space:nowrap}
@@ -895,6 +903,7 @@
     '<div class="vbar"><button id="vplay" type="button" aria-label="播放或暂停">▶</button>' +
     '<span id="vtime">0:00 / 0:00</span>' +
     '<input id="vseek" type="range" min="0" max="1000" value="0" step="1" aria-label="播放进度">' +
+    '<button id="vcompact" type="button" aria-label="切换胶囊控制条">胶囊</button>' +
     '<button id="vmute" type="button" aria-label="静音">音量</button>' +
     '<input id="vvol" type="range" min="0" max="100" value="100" step="1" aria-label="音量">' +
     '<button id="vfull" type="button" aria-label="全屏">全屏</button></div>' +
@@ -999,6 +1008,37 @@
   const vvol = openwin.querySelector('#vvol');
   const vfull = openwin.querySelector('#vfull');
   let vHideTimer = 0, vHover = false;
+  const vbar = openwin.querySelector('.vbar');
+  const vcompact = openwin.querySelector('#vcompact');
+  let vbarDrag = null;
+  function vbarSave(){
+    try {
+      localStorage.setItem('xl_vbar', JSON.stringify({
+        compact: vbar.classList.contains('compact'),
+        left: vbar.style.left, top: vbar.style.top,
+        bottom: vbar.style.bottom, transform: vbar.style.transform
+      }));
+    } catch (e) {}
+  }
+  function vbarLoad(){
+    let st = null;
+    try { st = JSON.parse(localStorage.getItem('xl_vbar') || 'null'); } catch (e) {}
+    if (st && st.compact) vbar.classList.add('compact');
+    if (st && st.left) {
+      vbar.style.left = st.left; vbar.style.top = st.top || 'auto';
+      vbar.style.bottom = st.bottom || 'auto'; vbar.style.transform = st.transform || 'none';
+    }
+  }
+  function vbarClamp(){
+    const pr = videoView.getBoundingClientRect(), br = vbar.getBoundingClientRect();
+    let l = parseFloat(vbar.style.left); let t = parseFloat(vbar.style.top);
+    if (!isFinite(l)) l = br.left - pr.left;
+    if (!isFinite(t)) t = br.top - pr.top;
+    l = Math.max(6, Math.min(pr.width - br.width - 6, l));
+    t = Math.max(6, Math.min(pr.height - br.height - 6, t));
+    vbar.style.left = l + 'px'; vbar.style.top = t + 'px'; vbar.style.bottom = 'auto';
+    vbar.style.transform = 'none';
+  }
 
   function fmtVideoTime(sec){
     if (!isFinite(sec) || sec < 0) return '0:00';
@@ -1113,6 +1153,43 @@
     const fn = el.requestFullscreen || el.webkitRequestFullscreen;
     if (fn) fn.call(el);
   });
+  vbarLoad();
+  if (vcompact) vcompact.onclick = () => {
+    vbar.classList.toggle('compact');
+    if (vbar.classList.contains('compact')) {
+      vbar.style.left = ''; vbar.style.top = ''; vbar.style.bottom = ''; vbar.style.transform = '';
+    }
+    vbarSave(); videoShowControls();
+  };
+  if (vbar) {
+    vbar.addEventListener('pointerdown', e => {
+      if (e.target.closest('button,input')) return;
+      e.preventDefault();
+      vHover = true; videoShowControls();
+      const pr = videoView.getBoundingClientRect(), br = vbar.getBoundingClientRect();
+      vbarDrag = { dx: e.clientX - br.left, dy: e.clientY - br.top, pr };
+      vbar.classList.add('dragging');
+      try { vbar.setPointerCapture(e.pointerId); } catch (err) {}
+    });
+    vbar.addEventListener('pointermove', e => {
+      if (!vbarDrag) return;
+      const pr = vbarDrag.pr;
+      let l = e.clientX - pr.left - vbarDrag.dx;
+      let t = e.clientY - pr.top - vbarDrag.dy;
+      const br = vbar.getBoundingClientRect();
+      l = Math.max(6, Math.min(pr.width - br.width - 6, l));
+      t = Math.max(6, Math.min(pr.height - br.height - 6, t));
+      vbar.style.left = l + 'px'; vbar.style.top = t + 'px';
+      vbar.style.bottom = 'auto'; vbar.style.transform = 'none';
+    });
+    const endDrag = () => {
+      if (!vbarDrag) return;
+      vbarDrag = null; vbar.classList.remove('dragging');
+      vbarClamp(); vbarSave(); videoShowControls();
+    };
+    vbar.addEventListener('pointerup', endDrag);
+    vbar.addEventListener('pointercancel', endDrag);
+  }
   videoView.addEventListener('mouseenter', () => { vHover = true; videoShowControls(); });
   videoView.addEventListener('mousemove', () => { vHover = true; videoShowControls(); });
   videoView.addEventListener('mouseleave', () => { vHover = false; videoHideControls(); });
