@@ -2651,7 +2651,7 @@
     '<label class="admrow" id="teamRow"><input type="checkbox" id="teamEnabled" checked>启用团队文件夹检索' +
     '<span class="hint2">默认开启；关闭后 /volN/@team 下内容不参与搜索，索引保留</span></label>' +
     '<div id="teamList" class="scanlist"><div class="hint">正在检测团队文件夹…</div></div></section>' +
-    '<section class="scard"><h3>本地检索</h3>' +
+    '<section class="scard" id="localCard"><h3>本地检索</h3>' +
     '<label class="admrow" id="localRow"><input type="checkbox" id="localEnabled" checked>启用本地卷检索' +
     '<span class="hint2" id="localVolHint">默认开启；关闭后本地卷不参与搜索，但索引保留</span></label>' +
     '<div class="hint" id="localHint"></div></section>' +
@@ -2662,7 +2662,7 @@
     '<span class="hint2">掉线自动关闭检索并清理旧索引；挂载点变化自动重建</span></label>' +
     '<div class="hint" id="usbHint"></div>' +
     '<div class="hint" id="usbRebuildRow"><a href="#" id="usbRebuild" style="color:#59d3c8">立即重建 USB 索引</a></div></section>' +
-    '<section class="scard"><h3>本地检索范围</h3><div class="hint" id="aclWho"></div>' +
+    '<section class="scard" id="rangeCard"><h3>本地检索范围</h3><div class="hint" id="aclWho"></div>' +
     '<div class="hint" id="localRangeHint">本地 ACL/范围只管理本地卷；远程挂载与远程凭据在下方「远程挂载」卡片独立管理。</div>' +
     '<label class="admrow" id="strictRow"><input type="checkbox" id="strictHome" checked>严格模式' +
     '<span class="hint2">默认开启；家目录内忽略「所有人」授权，只认属主与指定用户/组</span></label>' +
@@ -2677,17 +2677,19 @@
     /* 设置卡片按产品顺序重排；本地检索与本地检索范围合并为一张卡片 */
     const sb = setmask.querySelector('.setbody');
     const cards = [...sb.querySelectorAll('.scard')];
-    const byTitle = t => cards.find(c => (c.querySelector('h3') || {}).textContent === t);
-    const local = byTitle('本地检索');
-    const range = byTitle('本地检索范围');
+    const local = sb.querySelector('#localCard');
+    const range = sb.querySelector('#rangeCard');
     if (local && range) {
+      const block = document.createElement('div');
+      block.id = 'localRangeBlock';
       const sub = document.createElement('div');
       sub.className = 'scangroup';
       sub.textContent = '本地检索范围';
-      local.appendChild(sub);
+      block.appendChild(sub);
       [...range.children].forEach(ch => {
-        if (ch.tagName !== 'H3') local.appendChild(ch);
+        if (ch.tagName !== 'H3') block.appendChild(ch);
       });
+      local.appendChild(block);
       range.remove();
     }
     const order = ['打开位置', '扫描模式', '鼠标操作', '打开方式关联', '自动全盘扫描',
@@ -3015,6 +3017,8 @@
     who.textContent = settings.scopeAvailable && settings.scopeAvailable.admin
       ? '管理员：只列出当前账号可访问的目录；勾选目录即包含其下全部内容'
       : '勾选的目录才会被搜索；点 ▸ 可展开子目录';
+    const rangeBlock = setmask.querySelector('#localRangeBlock');
+    if (rangeBlock) rangeBlock.style.display = avail.length ? '' : 'none';
     if (!avail.length) { list.innerHTML = '<div>没有可访问目录</div>'; return; }
     list.innerHTML = '<div class="scangroup">本地卷（' + localVols() + '）</div>';
 
