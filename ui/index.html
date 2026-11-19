@@ -244,6 +244,10 @@
   .openwin #videoview{display:none;flex:1;flex-direction:column;min-height:0;background:#000;position:relative;overflow:hidden}
   .openwin #videoview.on{display:flex}
   .openwin #vvideo{flex:1;width:100%;min-height:0;object-fit:contain;background:#000;cursor:pointer;outline:none}
+  .openwin #vvideo::-webkit-media-controls,
+  .openwin #vvideo::-webkit-media-controls-enclosure,
+  .openwin #vvideo::-webkit-media-controls-panel,
+  .openwin #vvideo::-webkit-media-controls-start-playback-button{display:none!important;opacity:0!important}
   .openwin .vbar{position:absolute;left:0;right:0;bottom:0;z-index:2;display:flex;align-items:center;gap:8px;
     padding:22px 12px 11px;background:linear-gradient(180deg,rgba(0,0,0,0),rgba(0,0,0,.82));
     opacity:0;transform:translateY(8px);pointer-events:none;transition:opacity .16s,transform .16s}
@@ -880,7 +884,7 @@
     '<span id="pgcount">– / –</span><button id="pgnext">›</button><span class="sp"></span>' +
     '<button id="pgfit">适应宽度</button><button id="pgout">−</button>' +
     '<button id="pgin">+</button></div><div class="ppages" id="ppages"></div></div>' +
-    '<div id="videoview"><video id="vvideo" playsinline preload="metadata" tabindex="0"></video>' +
+    '<div id="videoview"><video id="vvideo" playsinline webkit-playsinline preload="metadata" tabindex="0" disablepictureinpicture></video>' +
     '<div class="vbar"><button id="vplay" type="button" aria-label="播放或暂停">▶</button>' +
     '<span id="vtime">0:00 / 0:00</span>' +
     '<input id="vseek" type="range" min="0" max="1000" value="0" step="1" aria-label="播放进度">' +
@@ -953,6 +957,12 @@
   const pdfPages = openwin.querySelector('#ppages');
   // ---- 内置视频播放器 ----
   const videoView = openwin.querySelector('#videoview');
+  const vvideoEl = openwin.querySelector('#vvideo');
+  if (vvideoEl) {
+    vvideoEl.controls = false;
+    vvideoEl.removeAttribute('controls');
+    vvideoEl.setAttribute('controlsList', 'nodownload nofullscreen noremoteplayback');
+  }
   const vvideo = openwin.querySelector('#vvideo');
   const vplay = openwin.querySelector('#vplay');
   const vtime = openwin.querySelector('#vtime');
@@ -1037,6 +1047,8 @@
     openwin.classList.add('on');
     applyOw();
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    vvideo.controls = false;
+    vvideo.removeAttribute('controls');
     vvideo.src = url;
     vvideo.load();
     try { vvideo.focus({ preventScroll: true }); } catch (e) { try { vvideo.focus(); } catch (e2) {} }

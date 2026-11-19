@@ -626,9 +626,9 @@ scripts/build-fpk.sh      打包装包
 
 - 最新版本：**0.10.5（公测）**（2026-11-19）
 - 源码 tag：`v0.10.5`
-- FPK：`dist/xuanlan_0.10.5_amd64.fpk`（1,077,618 字节）
-- MD5：`45525714382526b9db344a5e0b99c412`
-- SHA-256：`e006a5749e01f1a836ae4f198f4f4bab63eb2c5ee0ecbeaaa5b9d1573a6f180d`
+- FPK：`dist/xuanlan_0.10.5_amd64.fpk`（1,077,733 字节）
+- MD5：`96b81895068fbc2b23dfa26472b286ec`
+- SHA-256：`bec9af3d753a5b5aeec3ce35b2120481b410dcefc74fe6e314ed0f30714aa4ca`
 - 发布页：[GitHub Release](https://github.com/magicindex/ArcaneVision/releases/tag/v0.10.5) ·
   [Gitea Release](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.10.5)
 - 安装包直链：
