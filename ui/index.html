@@ -2788,6 +2788,7 @@
   // ---- 设置面板 ----
   const OPTS_DOC = [['docs','文档服务'],['fnpreview','在线预览（应用中心）'],['builtin','内置阅读器（适配页宽）'],['preview','浏览器直接打开'],['download','下载文件']];
   const OPTS_MEDIA = [['preview','浏览器直接打开'],['fnpreview','在线预览（应用中心）'],['download','下载文件']];
+  const OPTS_VIDEO = [['preview','内置播放器（适配控制条/胶囊）'],['fnpreview','在线预览（应用中心）'],['download','下载文件']];
   const OPTS_DL = [['download','下载文件'],['fnpreview','在线预览（应用中心）']];
   const OPTS_RICH = [['rich','内置富文本（Markdown/HTML 渲染）'],['docs','文档服务'],['preview','浏览器直接打开'],['fnpreview','在线预览（应用中心）'],['download','下载文件']];
   const ASSOC = [
@@ -2799,7 +2800,7 @@
     ['code', '代码', ['c','h','cc','cpp','hpp','py','js','mjs','ts','tsx','jsx','go','rs','java','kt','swift','rb','php','sh','bash','zsh','sql','css','scss','vue','svelte','yaml','yml'], OPTS_MEDIA, 'fnpreview'],
     ['image', '图片', ['jpg','jpeg','png','gif','webp','bmp','svg','ico','tif','tiff','heic','heif','avif','raw','cr2','nef','arw','dng'], OPTS_MEDIA, 'fnpreview'],
     ['audio', '音频', ['mp3','flac','wav','m4a','aac','ogg','oga','opus','ape','wma','aiff','alac'], OPTS_MEDIA, 'fnpreview'],
-    ['video', '视频', ['mp4','mkv','mov','avi','webm','wmv','flv','m4v','mpg','mpeg','ts','m2ts','rmvb','3gp'], OPTS_MEDIA, 'fnpreview'],
+    ['video', '视频', ['mp4','mkv','mov','avi','webm','wmv','flv','m4v','mpg','mpeg','ts','m2ts','rmvb','3gp'], OPTS_VIDEO, 'preview'],
     ['archive', '压缩包', ['zip','rar','7z','tar','gz','tgz','bz2','xz','zst','lz4','iso'], OPTS_DL, 'download']
   ];
   let remoteProtocols = [];
@@ -3305,7 +3306,8 @@
         '<select data-k="' + key + '">' +
         opts.map(([v, t]) => '<option value="' + v + '"' + (cur === v ? ' selected' : '') + '>' + t + '</option>').join('') +
         '</select>' +
-        (miss ? '<div class="hint2 bad">未检测到' + miss + '，实际打开时改用浏览器</div>' : '');
+        (miss ? '<div class="hint2 bad">未检测到' + miss + '，实际打开时改用浏览器</div>' : '') +
+        (key === 'video' ? '<div class="hint2">内置播放器才使用自定义控制条/胶囊；在线预览由应用中心播放。</div>' : '');
       box.appendChild(row);
     }
     const pv = settings.preview || {};
@@ -3695,12 +3697,12 @@
     fetch(API + 'settings', { method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ openWith: ow, openIn: oi, clickFolder, clickFile,
                              strictHome, skipHidden, teamEnabled, localEnabled, usbEnabled, usbWatch,
-                             scope, rebuild, settingsVersion: 3 }) })
+                             scope, rebuild, settingsVersion: 4 }) })
       .then(r => r.json()).then(d => {
         if (d && d.ok === false) {
           throw new Error(d.error || '未知错误');
         }
-        settings.openWith = ow; settings.scope = scope; settings.settingsVersion = 3; openIn = oi;
+        settings.openWith = ow; settings.scope = scope; settings.settingsVersion = 4; openIn = oi;
         settings.clickFolder = clickFolder; settings.clickFile = clickFile;
         settings.scanMode = scanMode;
         settings.shareGroups = [];
@@ -3742,14 +3744,22 @@
   //   旧「文本」关联（preview）→ 富文本内置；代码/图片/音频/视频 preview → 在线预览。
   //   保存一次后 settingsVersion=2，之后不再覆盖用户选择。
   function migrateOpenWith(d){
-    if (!d || (d.settingsVersion || 1) >= 2) return d;
-    const ow = d.openWith || (d.openWith = {});
-    if (!ow.rich) ow.rich = (ow.text && ow.text !== 'preview') ? ow.text : 'rich';
-    delete ow.text;
-    for (const k of ['code', 'image', 'audio', 'video']) {
-      if (!ow[k] || ow[k] === 'preview') ow[k] = 'fnpreview';
+    if (!d) return d;
+    if ((d.settingsVersion || 1) < 2) {
+      const ow = d.openWith || (d.openWith = {});
+      if (!ow.rich) ow.rich = (ow.text && ow.text !== 'preview') ? ow.text : 'rich';
+      delete ow.text;
+      for (const k of ['code', 'image', 'audio', 'video']) {
+        if (!ow[k] || ow[k] === 'preview') ow[k] = 'fnpreview';
+      }
+      d.settingsVersion = 2;
     }
-    d.settingsVersion = 2;
+    /* 0.10.5：视频默认改为内置播放器，在线预览仍可手动选择 */
+    if ((d.settingsVersion || 1) < 4) {
+      const ow = d.openWith || (d.openWith = {});
+      if (!ow.video || ow.video === 'fnpreview') ow.video = 'preview';
+      d.settingsVersion = 4;
+    }
     return d;
   }
   function loadScanMode(){

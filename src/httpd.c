@@ -4660,7 +4660,7 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
     const char *m = rc.mode == 1 ? "daily" : (rc.mode == 2 ? "interval" : "off");
     int team_on = json_bool_def(body, "\"teamEnabled\"", g_team_enabled);
     int local_on = json_bool_def(body, "\"localEnabled\"", g_local_enabled);
-    fprintf(f, "{\"settingsVersion\":3,\"openWith\":%.*s,\"openIn\":\"%s\","
+    fprintf(f, "{\"settingsVersion\":4,\"openWith\":%.*s,\"openIn\":\"%s\","
                "\"clickFolder\":\"%s\",\"clickFile\":\"%s\","
                "\"strictHome\":%s,\"skipHidden\":%s,\"teamEnabled\":%s,\"localEnabled\":%s,"
                "\"rebuild\":{\"mode\":\"%s\",\"hour\":%d,\"minute\":%d,\"hours\":%d}}",
