@@ -57,6 +57,14 @@
   .modeDoc b{font-size:12px;color:#8fe3da}
   .modeDoc p{margin:3px 0 0;font-size:11.5px;line-height:1.55;color:var(--fg2)}
   .modeDoc span{display:block;margin-top:3px;font-size:11px;line-height:1.5;color:#9fd8d1}
+  .modeSub{margin-top:6px;padding:6px 8px;border-radius:6px;background:rgba(255,255,255,.035);border-left:2px solid rgba(90,200,190,.35)}
+  .modeSub b{font-size:11.5px;color:#c9fff8}
+  .modeSub p{margin:2px 0 0;font-size:11px;line-height:1.5;color:var(--fg2)}
+  .modeSub span{display:block;margin-top:2px;font-size:10.5px;line-height:1.45;color:#9fd8d1}
+  html[data-theme="light"] .modeSub{background:#f7fcfb;border-left-color:#9ad8cf}
+  html[data-theme="light"] .modeSub b{color:#1f6f66}
+  html[data-theme="light"] .modeSub p{color:#44536a}
+  html[data-theme="light"] .modeSub span{color:#2f7169}
   html[data-theme="light"] .modeDoc{background:#f4fbf9;border-color:#c7e6df}
   html[data-theme="light"] .modeDoc.on{background:#e8f7f3;border-color:#7fcfc3}
   html[data-theme="light"] .modeDoc b{color:#1f6f66}
@@ -2636,8 +2644,14 @@
     '<p>用途：需要物理隔离的敏感用户；每个用户独立索引，互不依赖。</p>' +
     '<span>效率：磁盘/构建约用户数×；用户少时更稳，用户多时成本高。</span></div>' +
     '<div class="modeDoc" data-mode="hybrid"><b>混合</b>' +
-    '<p>用途：团队组隔离 + 普通用户共享；兼顾隔离与成本。</p>' +
-    '<span>效率：共享 1× + 每个隔离组 1×；组 ACL 变化只重建该组，推荐团队场景。</span></div>' +
+    '<p>普通用户共享；被隔离的用户/用户组各自独立索引。用户和组可分别配置。</p>' +
+    '<div class="modeSub"><b>按用户隔离</b>' +
+    '<p>适用：少数敏感用户，需要与其他人物理隔离。</p>' +
+    '<span>效率：共享 1× + 每个隔离用户 1×；该用户 ACL 变化只重建其单元。</span></div>' +
+    '<div class="modeSub"><b>按用户组隔离</b>' +
+    '<p>适用：团队/部门整体隔离，组内成员共享同一份组索引。</p>' +
+    '<span>效率：共享 1× + 每个隔离组 1×；组 ACL/成员变化只重建该组，推荐团队场景。</span></div>' +
+    '</div>' +
     '</div>' +
     '<div id="scanHybrid">' +
     '<div class="scanlist" id="scanCandidates"><div class="hint">正在检测飞牛目录与用户组…</div></div>' +
@@ -2978,7 +2992,7 @@
         const h = setmask.querySelector('#scanModeHint');
         if (h) h.textContent = m === 'shared' ? '所有人共用一份索引，成本最低；结果按 ACL 视图裁剪。'
           : m === 'isolated' ? '每个用户一份索引，物理隔离；构建/存储约为用户数倍。'
-          : '默认共享；isolated 组按组独立扫描，未分类组回退共享。';
+          : '默认共享；隔离用户每人一份，隔离组每组一份，未分类回退共享。';
         setmask.querySelectorAll('.modeDoc').forEach(x =>
           x.classList.toggle('on', x.dataset.mode === m));
         renderScanCandidates();
