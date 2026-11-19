@@ -51,6 +51,17 @@
     white-space:nowrap;color:#9fb3d1;background:rgba(255,255,255,.04);border:1px solid rgba(120,160,220,.22)}
   .usb-ind:hover{color:#cdf3ee;border-color:rgba(90,200,190,.45)}
   .usb-ind.warn{color:#f0b35b;border-color:rgba(240,179,91,.38);background:rgba(240,179,91,.07)}
+  .modeDocs{display:grid;gap:6px;margin:8px 0 4px}
+  .modeDoc{padding:7px 9px;border:1px solid rgba(90,200,190,.2);border-radius:8px;background:rgba(35,110,105,.08)}
+  .modeDoc.on{border-color:rgba(90,200,190,.55);background:rgba(35,110,105,.16)}
+  .modeDoc b{font-size:12px;color:#8fe3da}
+  .modeDoc p{margin:3px 0 0;font-size:11.5px;line-height:1.55;color:var(--fg2)}
+  .modeDoc span{display:block;margin-top:3px;font-size:11px;line-height:1.5;color:#9fd8d1}
+  html[data-theme="light"] .modeDoc{background:#f4fbf9;border-color:#c7e6df}
+  html[data-theme="light"] .modeDoc.on{background:#e8f7f3;border-color:#7fcfc3}
+  html[data-theme="light"] .modeDoc b{color:#1f6f66}
+  html[data-theme="light"] .modeDoc p{color:#44536a}
+  html[data-theme="light"] .modeDoc span{color:#2f7169}
   .remoteState{font-size:12px;line-height:1.6;padding:7px 9px;border-radius:8px;margin:6px 0;
     color:#9fd8d1;background:rgba(35,110,105,.12);border:1px solid rgba(90,200,190,.22)}
   .remoteState.warn{color:#f0b35b;background:rgba(240,179,91,.07);border-color:rgba(240,179,91,.3)}
@@ -2617,6 +2628,17 @@
     '<option value="isolated">隔离（每用户一份索引）</option>' +
     '<option value="hybrid">混合（默认共享，按组隔离）</option></select></div>' +
     '<div class="hint" id="scanModeHint"></div>' +
+    '<div class="modeDocs">' +
+    '<div class="modeDoc" data-mode="shared"><b>共享</b>' +
+    '<p>用途：家庭/多用户日常检索；只维护一份索引，结果按查询时 ACL 裁剪。</p>' +
+    '<span>效率：磁盘/内存/重建约 1×，ACL 变化不重建共享索引；适合大多数场景。</span></div>' +
+    '<div class="modeDoc" data-mode="isolated"><b>隔离</b>' +
+    '<p>用途：需要物理隔离的敏感用户；每个用户独立索引，互不依赖。</p>' +
+    '<span>效率：磁盘/构建约用户数×；用户少时更稳，用户多时成本高。</span></div>' +
+    '<div class="modeDoc" data-mode="hybrid"><b>混合</b>' +
+    '<p>用途：团队组隔离 + 普通用户共享；兼顾隔离与成本。</p>' +
+    '<span>效率：共享 1× + 每个隔离组 1×；组 ACL 变化只重建该组，推荐团队场景。</span></div>' +
+    '</div>' +
     '<div id="scanHybrid">' +
     '<div class="scanlist" id="scanCandidates"><div class="hint">正在检测飞牛目录与用户组…</div></div>' +
     '<div class="hint">检测依据：/etc/passwd、/etc/group、/volN/@team 与 system.trim_acl。勾选“共享/隔离”即确认分类；未勾选回退 shared。保存后自动重建索引。</div>' +
@@ -2957,6 +2979,8 @@
         if (h) h.textContent = m === 'shared' ? '所有人共用一份索引，成本最低；结果按 ACL 视图裁剪。'
           : m === 'isolated' ? '每个用户一份索引，物理隔离；构建/存储约为用户数倍。'
           : '默认共享；isolated 组按组独立扫描，未分类组回退共享。';
+        setmask.querySelectorAll('.modeDoc').forEach(x =>
+          x.classList.toggle('on', x.dataset.mode === m));
         renderScanCandidates();
       };
       if (sm) sm.onchange = syncScan;
