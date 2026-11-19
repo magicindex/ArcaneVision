@@ -554,3 +554,11 @@ chmod 600 → 子树增量更新 → 查询再次为空
 - `/api/rebuild` 支持 scope=local/team/usb/remote/all；
 - 定时重建设置 pending USB/远程，在本地构建完成后执行；
 - 团队索引纳入本地共享构建（teamEnabled 控制）。
+
+
+## 42. 板块索引隔离（0.10.5）
+
+- /volN/@team 独立为 team-volN.idx，不再写入本地共享索引；
+- local 构建只扫 g_nvols_local；team 构建只扫 team 卷；
+- team 范围不出现在本地 ACL 列表；
+- 定时/全部重建通过 pending 顺序触发 team/usb/remote。

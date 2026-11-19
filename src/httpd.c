@@ -141,6 +141,7 @@ typedef struct {
     int      building;
     int      usb;                 /* 1 = USB 外挂卷，独立快照 */
     char     usb_id[128];         /* 文件系统 UUID（挂载名变化时用来认同一设备） */
+    int      team;                /* 1 = /volN/@team 独立团队索引 */
     int      remote;              /* 1 = CIFS/NFS/WebDAV 远程挂载，owner-only */
     uid_t    remote_uid;          /* /vol02/<uid>-...；未知为 (uid_t)-1 */
     char     remote_kind[16];
@@ -174,6 +175,7 @@ static int  g_local_enabled = 1;
 static int  g_team_enabled = 1;
 static int  g_pending_usb_rebuild;
 static int  g_pending_remote_rebuild;
+static int  g_pending_team_rebuild;
 static int  g_usb_watch = 1;
 static int  g_usb_had;
 static char g_usb_msg[1024] = "USB 检索未开启";
@@ -865,6 +867,31 @@ typedef struct {
     uid_t uid;
 } remote_mount;
 
+static void team_add_volumes(void) {
+    int local = g_nvols_local;
+    for (int i = 0; i < local && g_nvols < MAX_VOL; i++) {
+        char troot[300], tfile[1100];
+        snprintf(troot, sizeof troot, "%.255s/@team", g_vols[i].root);
+        struct stat st;
+        if (stat(troot, &st) != 0 || !S_ISDIR(st.st_mode)) continue;
+        const char *base = strrchr(g_vols[i].root, '/');
+        base = base ? base + 1 : g_vols[i].root;
+        if (snprintf(tfile, sizeof tfile, "%s/team-%s.idx", g_idx_dir, base) >= (int)sizeof tfile) continue;
+        vol_t *v = &g_vols[g_nvols];
+        memset(v, 0, sizeof(*v));
+        v->team = 1;
+        snprintf(v->root, sizeof v->root, "%.255s", troot);
+        snprintf(v->file, sizeof v->file, "%.1023s", tfile);
+        if (snapshot_open(v->file, &v->sn) == 0) {
+            v->ok = 1;
+            v->records = v->sn.h.rec_count;
+            v->built_at = v->sn.h.built_at;
+            dir_index_build(v);
+        }
+        g_nvols++;
+    }
+}
+
 static int remote_scan_mounts(remote_mount *out, int max) {
     FILE *f = setmntent("/proc/mounts", "r");
     if (!f) return 0;
@@ -1019,6 +1046,7 @@ static void route_for_uid(int uid, int admin, query_route_t *r) {
             r->shared = 1;
             for (int i = 0; i < g_nvols && r->n < (int)(sizeof r->vols / sizeof r->vols[0]); i++) {
                 if (!g_local_enabled && i < g_nvols_local) continue;
+                if (g_vols[i].team && !g_team_enabled) continue;
                 if (g_vols[i].ok && remote_volume_allows(uid, admin, &g_vols[i]))
                     r->vols[r->n++] = &g_vols[i];
             }
@@ -1801,10 +1829,9 @@ static void *build_worker(void *arg) {
     g_failed = 0;
     g_err[0] = 0;
     g_build_start = now_ms();
-    scan_set_include_team(g_team_enabled);
+    scan_set_include_team(0);
     live_clear();                      /* 基线即将重建，旧 delta 作废 */
-    for (int i = 0; i < g_nvols && !g_stop; i++) {
-        if (g_vols[i].usb) continue;
+    for (int i = 0; i < g_nvols_local && !g_stop; i++) {
         g_cur_vol = i;
         g_floor_after = 0;
         xl_scan_records = 0;
@@ -1826,9 +1853,42 @@ static void *build_worker(void *arg) {
 }
 
 static void request_rebuild_all(void) {
+    g_pending_team_rebuild = 1;
     g_pending_usb_rebuild = 1;
     g_pending_remote_rebuild = 1;
     start_build();
+}
+
+static void *team_build_worker(void *arg) {
+    (void)arg;
+    build_low_priority();
+    g_building = 1;
+    g_failed = 0;
+    g_err[0] = 0;
+    g_build_start = now_ms();
+    scan_set_include_team(1);
+    for (int i = g_nvols_local; i < g_nvols && !g_stop; i++) {
+        if (!g_vols[i].team) continue;
+        if (build_one(i, 0) < 0) g_failed = 1;
+    }
+    scan_set_include_team(0);
+    g_build_ms = now_ms() - g_build_start;
+    g_last_rebuild = now_ms();
+    g_building = 0;
+    return NULL;
+}
+
+static void start_team_build(void) {
+    if (g_building) return;
+    pthread_t th;
+    g_building = 1;
+    if (pthread_create(&th, NULL, team_build_worker, NULL) != 0) {
+        g_building = 0;
+        g_failed = 1;
+        snprintf(g_err, sizeof(g_err), "无法创建团队构建线程");
+        return;
+    }
+    pthread_detach(th);
 }
 
 static void start_build(void) {
@@ -4616,10 +4676,7 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
         int team_changed = (g_team_enabled != (team_on ? 1 : 0));
         g_team_enabled = team_on ? 1 : 0;
         g_local_enabled = local_on ? 1 : 0;
-        if (team_changed) {
-            scan_set_include_team(g_team_enabled);
-            start_build();
-        }
+        if (team_changed && g_team_enabled) start_team_build();
         if (usb_watch != g_usb_watch) { g_usb_watch = usb_watch; usb_cfg_save(); }
         usb_enable(usb_on);
     }
@@ -4750,7 +4807,7 @@ static void handle_scanmode(sbuf *out, const char *body, int uid, int admin, int
     g_scan_policy_mtime = 0;      /* 下一次请求按文件 mtime 重新校验 */
     g_scan_policy_loaded = 1;
     pthread_mutex_unlock(&g_scan_policy_mu);
-    scan_set_include_team(g_team_enabled);
+    scan_set_include_team(0);
     unit_jobs_refresh();
     /* 模式/分类变化立即进入重建：共享索引与单元索引都会按新策略生成 */
     start_build();
@@ -4993,7 +5050,7 @@ static void handle_acl_list(sbuf *out, int uid, int admin, int all) {
         /* 管理员全盘视角：直接给卷根，展开时不再过滤 */
         pthread_rwlock_rdlock(&g_rw);
         for (int vi = 0; vi < g_nvols; vi++) {
-            if (g_vols[vi].remote || g_vols[vi].usb) continue;  /* 远程/挂载由独立卡片管理 */
+            if (g_vols[vi].remote || g_vols[vi].usb || g_vols[vi].team) continue;  /* 远程/挂载/团队独立管理 */
             if (!g_vols[vi].ok && !g_vols[vi].usb) continue;
             if (shown++) sb_puts(out, ",");
             sb_puts(out, "{\"path\":\"");
@@ -5009,6 +5066,7 @@ static void handle_acl_list(sbuf *out, int uid, int admin, int all) {
     pthread_rwlock_rdlock(&g_rw);
     for (int vi = 0; vi < g_nvols && shown < 200; vi++) {
         vol_t *v = &g_vols[vi];
+        if (v->team) continue;
         if (!v->ok && !v->usb) continue;
         if (v->usb) {
             /* 外接分区作为单一根节点，子目录展开时再列，不要把分区内容平铺到顶层 */
@@ -5878,6 +5936,9 @@ static void handle_client(int fd) {
                     sb_puts(&body, "{\"ok\":false,\"error\":\"远程对账正在运行\"}");
                     ok = 0;
                 }
+            } else if (!strcmp(scope, "team")) {
+                if (g_building) { ok = 0; code = 409; sb_puts(&body, "{\"ok\":false,\"error\":\"正在构建\"}"); }
+                else start_team_build();
             } else if (!strcmp(scope, "all")) {
                 request_rebuild_all();
             } else {
@@ -6434,7 +6495,7 @@ int httpd_serve(const xl_svc_opts *o) {
     }
     scan_policy_refresh();
     unit_jobs_refresh();
-    scan_set_include_team(g_team_enabled);
+    scan_set_include_team(0);
     if (o->sock_path[0] && probe_existing(o->sock_path)) {
         if (o->no_tcp || tcp_alive(o->port)) {
             fprintf(stderr, "xuanlan serve: 已有实例在 %s 上响应，本次退出\n", o->sock_path);
@@ -6484,6 +6545,7 @@ int httpd_serve(const xl_svc_opts *o) {
         g_nvols++;
     }
     g_nvols_local = g_nvols;
+    team_add_volumes();
     remote_cfg_load();
     remote_reconcile_mounts();
     if (!g_nvols) {
@@ -6565,6 +6627,10 @@ int httpd_serve(const xl_svc_opts *o) {
             if (c >= 0) enqueue(c);
         }
         if (!g_building) {
+            if (g_pending_team_rebuild) {
+                g_pending_team_rebuild = 0;
+                start_team_build();
+            }
             if (g_pending_usb_rebuild) {
                 g_pending_usb_rebuild = 0;
                 usb_rebuild_all();
@@ -6579,6 +6645,7 @@ int httpd_serve(const xl_svc_opts *o) {
                 localtime_r(&tnow, &tm);
                 g_last_run_yday = tm.tm_yday + tm.tm_year * 1000;
                 fprintf(stderr, "xuanlan serve: 定时全盘扫描开始（本地/团队/外接/远程）\n");
+                g_pending_team_rebuild = 1;
                 g_pending_usb_rebuild = 1;
                 g_pending_remote_rebuild = 1;
                 start_build();
