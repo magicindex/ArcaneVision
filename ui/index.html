@@ -3416,8 +3416,7 @@
         '<select data-k="' + key + '">' +
         opts.map(([v, t]) => '<option value="' + v + '"' + (cur === v ? ' selected' : '') + '>' + t + '</option>').join('') +
         '</select>' +
-        (miss ? '<div class="hint2 bad">未检测到' + miss + '，实际打开时改用浏览器</div>' : '') +
-        (key === 'video' ? '<div class="hint2">内置播放器才使用自定义控制条/胶囊；在线预览由应用中心播放。</div>' : '');
+        (miss ? '<div class="hint2 bad">未检测到' + miss + '，实际打开时改用浏览器</div>' : '');
       box.appendChild(row);
     }
     const pv = settings.preview || {};
