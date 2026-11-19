@@ -85,7 +85,7 @@ static void detect_default_roots(char *out, size_t cap) {
         }
         fclose(f);
     }
-    if (!n) snprintf(out, cap, "/vol1,/vol2,/vol3,/vol4");
+    if (!n) snprintf(out, cap, "/vol1,/vol2,/vol3,/vol4,/vol5,/vol6,/vol7,/vol8");
 }
 
 static int parse_id_list(const char *s, unsigned int *out, int max) {

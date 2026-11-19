@@ -466,7 +466,7 @@ int live_start(const char *roots_csv, int verbose) {
     for (int i = 0; i < LV_MAX_ROOTS; i++) L.root_fd[i] = -1;
 
     char tmp[1024];
-    snprintf(tmp, sizeof(tmp), "%s", roots_csv ? roots_csv : "/vol1,/vol2,/vol3,/vol4");
+    snprintf(tmp, sizeof(tmp), "%s", roots_csv ? roots_csv : "/vol1,/vol2,/vol3,/vol4,/vol5,/vol6,/vol7,/vol8");
     char *save = NULL;
     for (char *t = strtok_r(tmp, ",", &save); t && L.nroots < LV_MAX_ROOTS; t = strtok_r(NULL, ",", &save)) {
         while (*t == ' ') t++;
