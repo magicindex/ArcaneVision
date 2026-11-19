@@ -75,9 +75,12 @@
   html[data-theme="light"] .scanpickrow{border-color:#eef4f7}
   html[data-theme="light"] .scanpickmain span{color:#5f7183}
   .modeDocs{display:grid;gap:6px;margin:8px 0 4px}
-  .modeDoc{padding:7px 9px;border:1px solid rgba(90,200,190,.2);border-radius:8px;background:rgba(35,110,105,.08)}
-  .modeDoc.on{border-color:rgba(90,200,190,.55);background:rgba(35,110,105,.16)}
+  .modeDoc{position:relative;padding:7px 9px 7px 13px;border:1px solid rgba(90,200,190,.2);border-radius:8px;background:rgba(35,110,105,.08)}
+  .modeDoc.on{border-color:rgba(255,111,153,.85);background:rgba(255,86,142,.12);
+    box-shadow:0 0 0 1px rgba(255,111,153,.45),0 4px 14px rgba(255,86,142,.08)}
+  .modeDoc.on::before{content:'';position:absolute;left:4px;top:9px;bottom:9px;width:3px;border-radius:3px;background:#ff6f99}
   .modeDoc b{font-size:12px;color:#8fe3da}
+  .modeDoc.on b{color:#ffb3c8}
   .modeDoc p{margin:3px 0 0;font-size:11.5px;line-height:1.55;color:var(--fg2)}
   .modeDoc span{display:block;margin-top:3px;font-size:11px;line-height:1.5;color:#9fd8d1}
   .modeSub{margin-top:6px;padding:6px 8px;border-radius:6px;background:rgba(255,255,255,.035);border-left:2px solid rgba(90,200,190,.35)}
@@ -89,7 +92,9 @@
   html[data-theme="light"] .modeSub p{color:#44536a}
   html[data-theme="light"] .modeSub span{color:#2f7169}
   html[data-theme="light"] .modeDoc{background:#f4fbf9;border-color:#c7e6df}
-  html[data-theme="light"] .modeDoc.on{background:#e8f7f3;border-color:#7fcfc3}
+  html[data-theme="light"] .modeDoc.on{background:#fff0f5;border-color:#e46a92;
+    box-shadow:0 0 0 1px rgba(228,106,146,.35),0 4px 14px rgba(228,106,146,.08)}
+  html[data-theme="light"] .modeDoc.on b{color:#a83056}
   html[data-theme="light"] .modeDoc b{color:#1f6f66}
   html[data-theme="light"] .modeDoc p{color:#44536a}
   html[data-theme="light"] .modeDoc span{color:#2f7169}
@@ -2722,7 +2727,8 @@
     '<section class="scard" id="localCard"><h3>本地检索</h3>' +
     '<label class="admrow" id="localRow"><input type="checkbox" id="localEnabled" checked>启用本地卷检索' +
     '<span class="hint2" id="localVolHint">默认开启；关闭后本地卷不参与搜索，但索引保留</span></label>' +
-    '<div class="hint" id="localHint"></div></section>' +
+    '<div class="hint" id="localHint"></div>' +
+    '<div class="scanpickbar"><button class="act" id="aclRefresh" type="button">刷新本地卷列表</button></div></section>' +
     '<section class="scard"><h3>挂载检索（外接存储）</h3>' +
     '<label class="admrow" id="usbRow"><input type="checkbox" id="usbEnabled">启用挂载检索' +
     '<span class="hint2">默认关闭；只索引 /vol00 下的外挂挂载，使用独立索引，设备失效不影响本地索引</span></label>' +
@@ -3169,7 +3175,8 @@
     const rangeBlock = setmask.querySelector('#localRangeBlock');
     if (rangeBlock) rangeBlock.style.display = avail.length ? '' : 'none';
     if (!avail.length) { list.innerHTML = '<div>没有可访问目录</div>'; return; }
-    list.innerHTML = '<div class="scangroup">本地卷（' + localVols() + '）</div>';
+    const lvName = localVols();
+    list.innerHTML = '<div class="scangroup">本地卷' + (lvName === '本地卷' ? '' : '（' + lvName + '）') + '</div>';
 
     // 显示时去掉用户编号层：/vol3/1000/媒体库 → /vol3/媒体库
     // 去掉用户编号层：/vol3/1000/媒体库 → /vol3/媒体库
@@ -3379,6 +3386,8 @@
       if (lcb) lcb.checked = settings.localEnabled !== false;
       const lh = setmask.querySelector('#localHint');
       if (lh) lh.textContent = (settings.localEnabled !== false) ? '本地检索已启用' : '本地检索已关闭';
+      const ar = setmask.querySelector('#aclRefresh');
+      if (ar) ar.onclick = () => { reloadSettings(); };
       const lvh = setmask.querySelector('#localVolHint');
       if (lvh) lvh.textContent = (settings.localEnabled !== false)
         ? '默认开启；关闭后本地卷不参与搜索，但索引保留'
