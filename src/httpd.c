@@ -172,6 +172,8 @@ static int   g_nvols_local;       /* 前 g_nvols_local 个是 /volN 本地卷 */
 static int  g_usb_enabled;
 static int  g_local_enabled = 1;
 static int  g_team_enabled = 1;
+static int  g_pending_usb_rebuild;
+static int  g_pending_remote_rebuild;
 static int  g_usb_watch = 1;
 static int  g_usb_had;
 static char g_usb_msg[1024] = "USB 检索未开启";
@@ -1799,7 +1801,7 @@ static void *build_worker(void *arg) {
     g_failed = 0;
     g_err[0] = 0;
     g_build_start = now_ms();
-    scan_set_include_team(g_scan_policy.mode != XL_SCAN_SHARED);
+    scan_set_include_team(g_team_enabled);
     live_clear();                      /* 基线即将重建，旧 delta 作废 */
     for (int i = 0; i < g_nvols && !g_stop; i++) {
         if (g_vols[i].usb) continue;
@@ -1821,6 +1823,12 @@ static void *build_worker(void *arg) {
     g_last_rebuild = now_ms();
     g_building = 0;
     return NULL;
+}
+
+static void request_rebuild_all(void) {
+    g_pending_usb_rebuild = 1;
+    g_pending_remote_rebuild = 1;
+    start_build();
 }
 
 static void start_build(void) {
@@ -4605,8 +4613,13 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
     {
         int usb_watch = usb_json_bool(body, "\"usbWatch\"", g_usb_watch);
         int usb_on = usb_json_bool(body, "\"usbEnabled\"", g_usb_enabled);
+        int team_changed = (g_team_enabled != (team_on ? 1 : 0));
         g_team_enabled = team_on ? 1 : 0;
         g_local_enabled = local_on ? 1 : 0;
+        if (team_changed) {
+            scan_set_include_team(g_team_enabled);
+            start_build();
+        }
         if (usb_watch != g_usb_watch) { g_usb_watch = usb_watch; usb_cfg_save(); }
         usb_enable(usb_on);
     }
@@ -4737,7 +4750,7 @@ static void handle_scanmode(sbuf *out, const char *body, int uid, int admin, int
     g_scan_policy_mtime = 0;      /* 下一次请求按文件 mtime 重新校验 */
     g_scan_policy_loaded = 1;
     pthread_mutex_unlock(&g_scan_policy_mu);
-    scan_set_include_team(p.mode != XL_SCAN_SHARED);
+    scan_set_include_team(g_team_enabled);
     unit_jobs_refresh();
     /* 模式/分类变化立即进入重建：共享索引与单元索引都会按新策略生成 */
     start_build();
@@ -5854,9 +5867,23 @@ static void handle_client(int fd) {
             code = 415;
             sb_puts(&body, "{\"error\":\"use application/json\"}");
         } else {
-            if (req_body && strstr(req_body, "\"usb\":true")) usb_rebuild_all();
-            else start_build();
-            sb_puts(&body, "{\"ok\":true}");
+            char scope[32] = "";
+            if (req_body) json_str(req_body, "\"scope\"", scope, sizeof scope, "");
+            int ok = 1;
+            if (!strcmp(scope, "usb") || (req_body && strstr(req_body, "\"usb\":true"))) {
+                usb_rebuild_all();
+            } else if (!strcmp(scope, "remote")) {
+                if (remote_start_sync() != 0) {
+                    code = 409;
+                    sb_puts(&body, "{\"ok\":false,\"error\":\"远程对账正在运行\"}");
+                    ok = 0;
+                }
+            } else if (!strcmp(scope, "all")) {
+                request_rebuild_all();
+            } else {
+                start_build();
+            }
+            if (ok && code == 200) sb_puts(&body, "{\"ok\":true}");
         }
     } else if (!strcmp(pathonly, "/api/clientlog")) {
         char msg[1024];
@@ -6407,7 +6434,7 @@ int httpd_serve(const xl_svc_opts *o) {
     }
     scan_policy_refresh();
     unit_jobs_refresh();
-    scan_set_include_team(g_scan_policy.mode != XL_SCAN_SHARED);
+    scan_set_include_team(g_team_enabled);
     if (o->sock_path[0] && probe_existing(o->sock_path)) {
         if (o->no_tcp || tcp_alive(o->port)) {
             fprintf(stderr, "xuanlan serve: 已有实例在 %s 上响应，本次退出\n", o->sock_path);
@@ -6538,12 +6565,22 @@ int httpd_serve(const xl_svc_opts *o) {
             if (c >= 0) enqueue(c);
         }
         if (!g_building) {
+            if (g_pending_usb_rebuild) {
+                g_pending_usb_rebuild = 0;
+                usb_rebuild_all();
+            }
+            if (g_pending_remote_rebuild) {
+                g_pending_remote_rebuild = 0;
+                remote_start_sync();
+            }
             if (schedule_due()) {
                 time_t tnow = time(NULL);
                 struct tm tm;
                 localtime_r(&tnow, &tm);
                 g_last_run_yday = tm.tm_yday + tm.tm_year * 1000;
-                fprintf(stderr, "xuanlan serve: 定时全盘扫描开始\n");
+                fprintf(stderr, "xuanlan serve: 定时全盘扫描开始（本地/团队/外接/远程）\n");
+                g_pending_usb_rebuild = 1;
+                g_pending_remote_rebuild = 1;
                 start_build();
             } else if (live_overflowed()) {
                 fprintf(stderr, "xuanlan serve: 增量溢出，触发整卷重建\n");
