@@ -83,16 +83,6 @@ static int json_array_u32(const char *buf, const char *key, unsigned int *out, i
     return n;
 }
 
-static int gid_in(const gid_t *a, int n, gid_t g) {
-    for (int i = 0; i < n; i++) if (a[i] == g) return 1;
-    return 0;
-}
-
-static int uid_in(const uid_t *a, int n, uid_t u) {
-    for (int i = 0; i < n; i++) if (a[i] == u) return 1;
-    return 0;
-}
-
 /* 自定义隔离组：[{"id":"h1","name":"...","users":[1001,1002]}] */
 int xl_scan_groups_parse(const char *buf, xl_scan_group *groups, int max) {
     const char *key = strstr(buf, "\"hybridGroups\"");

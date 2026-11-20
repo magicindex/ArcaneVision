@@ -11,6 +11,9 @@ typedef struct {
     const xl_snap *sn;
     const char *needle;
     size_t nlen;
+    const xl_query_term *terms;
+    int nterms;
+    int match_all, case_sensitive, ordered;
     int dirs_only, files_only;
     uint32_t *hit;
     uint32_t n, cap, limit;
@@ -24,6 +27,41 @@ static int passes_filter(const collect_ctx *c, const xl_rec *r) {
     if (c->dirs_only && !(r->flags & XL_F_DIR)) return 0;
     if (c->files_only && (r->flags & XL_F_DIR)) return 0;
     return 1;
+}
+
+static int term_at(const char *name, size_t nlen, const xl_query_term *t,
+                   int case_sensitive, size_t from, size_t *pos) {
+    if (!t || !t->s || !t->len || t->len > nlen || from > nlen - t->len) return 0;
+    const char *p = name + from;
+    size_t remain = nlen - from;
+    if (case_sensitive) {
+        const char *h = memmem(p, remain, t->s, t->len);
+        if (!h) return 0;
+        if (pos) *pos = (size_t)(h - name);
+        return 1;
+    }
+    const char *h = memmem_ci(p, remain, t->s, t->len);
+    if (!h) return 0;
+    if (pos) *pos = (size_t)(h - name);
+    return 1;
+}
+
+static int terms_match(const collect_ctx *c, const char *name, size_t nlen) {
+    if (!c->terms || c->nterms <= 0) return 1;
+    size_t from = 0;
+    int hit = 0;
+    for (int i = 0; i < c->nterms; i++) {
+        const xl_query_term *t = &c->terms[i];
+        if (!t->s || !t->len) continue;
+        size_t pos = 0;
+        if (!term_at(name, nlen, t, c->case_sensitive, c->ordered ? from : 0, &pos)) {
+            if (c->match_all) return 0;
+            continue;
+        }
+        hit = 1;
+        if (c->ordered) from = pos + t->len;
+    }
+    return c->match_all ? 1 : hit;
 }
 
 /* 结果按 mtime 新→旧、同 mtime 短名优先；这里用「最差在堆顶」的小顶堆保留最新 K 条，
@@ -66,7 +104,7 @@ static void collect(collect_ctx *c, uint32_t id) {
     const xl_rec *r = &c->sn->recs[id];
     if (!passes_filter(c, r)) return;
     if (r->name_len < c->nlen) return;
-    if (!mem_ci(c->sn->names + r->name_off, r->name_len, c->needle, c->nlen)) return;
+    if (!terms_match(c, c->sn->names + r->name_off, r->name_len)) return;
     c->total++;
     if (c->n < c->limit) {
         if (c->n == c->cap) {
@@ -149,6 +187,11 @@ static int scan_pool_short(const xl_snap *sn, collect_ctx *c) {
     return 0;
 }
 
+static int cmp_u32(const void *a, const void *b) {
+    uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
+    return (x > y) - (x < y);
+}
+
 static int cmp_hit(const void *a, const void *b, void *arg) {
     const xl_rec *recs = arg;
     const xl_rec *ra = &recs[*(const uint32_t *)a];
@@ -177,22 +220,78 @@ void snap_path(const xl_snap *sn, uint32_t id, char *out, size_t cap) {
     else snprintf(out, cap, "%s%s", root, tail + pos);
 }
 
-uint32_t *query_hits(const xl_snap *sn, const char *needle, const xl_query_opts *o,
-                     uint32_t *n_out, int *truncated_out, uint64_t *elapsed_ms,
-                     uint64_t *total_out) {
+uint32_t *query_hits_terms(const xl_snap *sn, const xl_query_term *terms, int nterms,
+                           int match_all, int case_sensitive, int ordered,
+                           const xl_query_opts *o, uint32_t *n_out,
+                           int *truncated_out, uint64_t *elapsed_ms,
+                           uint64_t *total_out) {
     *n_out = 0;
     *truncated_out = 0;
     if (elapsed_ms) *elapsed_ms = 0;
-    if (!needle || !*needle) return NULL;
-    size_t nlen = strlen(needle);
+    if (!terms || nterms <= 0) return NULL;
+    /* 任一命中：分别查每个词再合并去重，避免只拿最长词做候选而漏掉其他词。 */
+    if (!match_all && nterms > 1) {
+        uint64_t t0 = now_ms();
+        uint32_t *all = NULL;
+        size_t na = 0, ca = 0;
+        int tr = 0;
+        uint64_t total = 0;
+        for (int i = 0; i < nterms; i++) {
+            if (!terms[i].s || !terms[i].len) continue;
+            uint32_t n = 0;
+            int t1 = 0;
+            uint64_t vt = 0;
+            uint32_t *h = query_hits_terms(sn, &terms[i], 1, 1, case_sensitive, 0,
+                                           o, &n, &t1, NULL, &vt);
+            total += vt;
+            tr |= t1;
+            if (n) {
+                if (na + n > ca) {
+                    while (na + n > ca) ca = ca ? ca * 2 : 1024;
+                    all = xrealloc(all, ca * sizeof(uint32_t));
+                }
+                memcpy(all + na, h, n * sizeof(uint32_t));
+                na += n;
+            }
+            free(h);
+        }
+        if (all && na > 1) {
+            qsort(all, na, sizeof(uint32_t), cmp_u32);
+            size_t w = 0;
+            for (size_t i = 0; i < na; i++)
+                if (i == 0 || all[i] != all[i - 1]) all[w++] = all[i];
+            na = w;
+            qsort_r(all, na, sizeof(uint32_t), cmp_hit, (void *)sn->recs);
+        }
+        uint32_t lim = o->max_results ? o->max_results : 200000u;
+        if (lim < 1000) lim = 1000;
+        if (na > lim) { na = lim; tr = 1; }
+        *n_out = (uint32_t)na;
+        *truncated_out = tr;
+        if (total_out) *total_out = na;
+        if (elapsed_ms) *elapsed_ms = now_ms() - t0;
+        return all;
+    }
+    const xl_query_term *candidate = NULL;
+    for (int i = 0; i < nterms; i++) {
+        if (!terms[i].s || !terms[i].len) continue;
+        if (!candidate || terms[i].len > candidate->len) candidate = &terms[i];
+    }
+    if (!candidate) return NULL;
+    size_t nlen = candidate->len;
     if (nlen > XL_NAME_MAX) return NULL;
 
     uint64_t t0 = now_ms();
     collect_ctx c;
     memset(&c, 0, sizeof(c));
     c.sn = sn;
-    c.needle = needle;
+    c.needle = candidate->s;
     c.nlen = nlen;
+    c.terms = terms;
+    c.nterms = nterms;
+    c.match_all = match_all;
+    c.case_sensitive = case_sensitive;
+    c.ordered = ordered && match_all;
     c.dirs_only = o->dirs_only;
     c.files_only = o->files_only;
     c.limit = o->max_results ? o->max_results : 200000u;
@@ -202,7 +301,7 @@ uint32_t *query_hits(const xl_snap *sn, const char *needle, const xl_query_opts 
         scan_pool_short(sn, &c);
     } else {
         char lb[XL_NAME_MAX + 1];
-        lower_copy(lb, needle, nlen);
+        lower_copy(lb, candidate->s, nlen);
         /* 选 count 最小的 trigram 作为候选源 */
         uint32_t best_tg = 0, best_cnt = UINT32_MAX;
         for (size_t i = 0; i + 3 <= nlen; i++) {
@@ -224,6 +323,14 @@ uint32_t *query_hits(const xl_snap *sn, const char *needle, const xl_query_opts 
     if (total_out) *total_out = c.total;
     if (elapsed_ms) *elapsed_ms = now_ms() - t0;
     return c.hit;
+}
+
+uint32_t *query_hits(const xl_snap *sn, const char *needle, const xl_query_opts *o,
+                     uint32_t *n_out, int *truncated_out, uint64_t *elapsed_ms,
+                     uint64_t *total_out) {
+    xl_query_term t;
+    t.s = needle; t.len = needle ? strlen(needle) : 0; t.phrase = 0;
+    return query_hits_terms(sn, &t, 1, 1, 0, 0, o, n_out, truncated_out, elapsed_ms, total_out);
 }
 
 static void json_escape(const char *s, size_t n, FILE *f) {

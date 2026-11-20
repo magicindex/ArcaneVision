@@ -163,11 +163,24 @@ typedef struct {
     int      files_only;
 } xl_query_opts;
 
+typedef struct {
+    const char *s;
+    size_t      len;
+    int         phrase;
+} xl_query_term;
+
 int query_run(const xl_snap *sn, const char *needle, const xl_query_opts *o);
 /* 收集命中记录号（malloc 返回，调用方 free）；无命中返回 NULL 且 *n_out=0 */
 uint32_t *query_hits(const xl_snap *sn, const char *needle, const xl_query_opts *o,
                      uint32_t *n_out, int *truncated_out, uint64_t *elapsed_ms,
                      uint64_t *total_out);
+/* 多词查询：terms 由调用方解析；match_all=1 需全部命中，否则任一命中；
+ * case_sensitive=1 区分 ASCII 大小写；ordered=1 且 match_all 时按出现顺序。 */
+uint32_t *query_hits_terms(const xl_snap *sn, const xl_query_term *terms, int nterms,
+                           int match_all, int case_sensitive, int ordered,
+                           const xl_query_opts *o, uint32_t *n_out,
+                           int *truncated_out, uint64_t *elapsed_ms,
+                           uint64_t *total_out);
 void snap_path(const xl_snap *sn, uint32_t id, char *out, size_t cap);
 uint32_t tri_lookup_sorted(const uint32_t *ids, uint32_t n, uint32_t tg);
 

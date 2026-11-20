@@ -3014,7 +3014,19 @@
     '<div class="hint" id="strictHint" style="display:none">严格模式：位于 /volN/&lt;用户&gt;/ 下的目录，即使带「所有人」读写权限，也只有属主和显式授权的用户/组可见；关闭后按文件权限原样判定（who 777 就谁都能看到）。</div>' +
     '<label class="admrow" id="allRow"><input type="checkbox" id="showAll">全盘视角（管理员）' +
     '<span class="hint2">默认关闭；开启后可选择任意目录</span></label>' +
-    '<div class="acl" id="aclList"></div></section></div>' +
+    '<div class="acl" id="aclList"></div></section>' +
+    '<section class="scard" id="searchCard"><h3>高级搜索</h3>' +
+    '<label class="admrow" id="searchMultiRow"><input type="checkbox" id="searchMulti" checked>启用多词搜索' +
+    '<span class="hint2">默认开启；多个关键词用分隔符分开，引号内保留空格作为精确词组</span></label>' +
+    '<div class="row2"><div class="k">多词关系</div><select id="searchMatchAll">' +
+    '<option value="1">同时命中（全部词都出现）</option><option value="0">单一命中（任一词出现）</option></select></div>' +
+    '<div class="row2"><div class="k">关键词分隔</div><select id="searchSep">' +
+    '<option value="space">空格</option><option value="comma">空格或逗号</option><option value="line">空格或换行</option></select></div>' +
+    '<label class="admrow"><input type="checkbox" id="searchCaseSensitive">区分英文大小写' +
+    '<span class="hint2">默认不区分；中文不受影响</span></label>' +
+    '<label class="admrow"><input type="checkbox" id="searchOrdered">按出现顺序匹配' +
+    '<span class="hint2">默认任意顺序；开启后词必须按输入顺序出现</span></label>' +
+    '<div class="hint" id="searchHelp">示例：<code>量子 计算</code> 同时命中两个词；<code>"量子 计算"</code> 精确匹配连续词组；<code>量子,计算</code> 在「空格或逗号」下等价。切换「单一命中」时，任一词出现即返回。</div></section></div>' +
     '<div class="foot"><button class="act" id="setClose">关闭</button>' +
     '<button class="act primary" id="setSave">保存</button></div></div>';
   document.body.appendChild(setmask);
@@ -3669,6 +3681,18 @@
       }
     }
     {
+      const mcb = setmask.querySelector('#searchMulti');
+      const mall = setmask.querySelector('#searchMatchAll');
+      const msep = setmask.querySelector('#searchSep');
+      const mcase = setmask.querySelector('#searchCaseSensitive');
+      const morder = setmask.querySelector('#searchOrdered');
+      if (mcb) mcb.checked = settings.searchMulti !== false;
+      if (mall) mall.value = settings.searchMatchAll === false ? '0' : '1';
+      if (msep) msep.value = settings.searchSeparator || 'space';
+      if (mcase) mcase.checked = settings.searchCaseSensitive === true;
+      if (morder) morder.checked = settings.searchOrdered === true;
+    }
+    {
       const tcb = setmask.querySelector('#teamEnabled');
       if (tcb) tcb.checked = settings.teamEnabled !== false;
       renderTeamList();
@@ -3811,9 +3835,15 @@
     const localEnabled = !!setmask.querySelector('#localEnabled').checked;
     const usbEnabled = !!setmask.querySelector('#usbEnabled').checked;
     const usbWatch = !!setmask.querySelector('#usbWatch').checked;
+    const searchMulti = !!setmask.querySelector('#searchMulti').checked;
+    const searchMatchAll = setmask.querySelector('#searchMatchAll').value !== '0';
+    const searchSeparator = setmask.querySelector('#searchSep').value;
+    const searchCaseSensitive = !!setmask.querySelector('#searchCaseSensitive').checked;
+    const searchOrdered = !!setmask.querySelector('#searchOrdered').checked;
     fetch(API + 'settings', { method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ openWith: ow, openIn: oi, clickFolder, clickFile,
                              strictHome, skipHidden, teamEnabled, localEnabled, usbEnabled, usbWatch,
+                             searchMulti, searchMatchAll, searchSeparator, searchCaseSensitive, searchOrdered,
                              scope, rebuild, settingsVersion: 4 }) })
       .then(r => r.json()).then(d => {
         if (d && d.ok === false) {
@@ -3830,6 +3860,9 @@
         settings.teamEnabled = teamEnabled;
         settings.localEnabled = localEnabled;
         settings.usbEnabled = usbEnabled; settings.usbWatch = usbWatch;
+        settings.searchMulti = searchMulti; settings.searchMatchAll = searchMatchAll;
+        settings.searchSeparator = searchSeparator;
+        settings.searchCaseSensitive = searchCaseSensitive; settings.searchOrdered = searchOrdered;
         const adminScan = !!(settings.scopeAvailable && settings.scopeAvailable.admin);
         if (!adminScan) return;
         return fetch(API + 'scanmode', { method: 'POST', headers: { 'content-type': 'application/json' },

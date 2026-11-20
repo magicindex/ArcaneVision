@@ -41,8 +41,10 @@ open(os.path.join(TMP, "scope.json"), "w").write(json.dumps({
 }))
 
 def start():
+    env = dict(os.environ)
+    env["XL_UNITS_AUTO"] = "0"  # 本测试手工准备单元索引，禁止启动时重建覆盖
     p = subprocess.Popen([BIN, "serve", "--no-tcp", "--socket", SOCK, "--ui", "ui",
-                          "--index-dir", IDX, "--roots", VOL],
+                          "--index-dir", IDX, "--roots", VOL], env=env,
                          cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(100):
         if os.path.exists(SOCK): return p

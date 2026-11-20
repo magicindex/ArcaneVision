@@ -173,6 +173,11 @@ static int   g_nvols_local;       /* 前 g_nvols_local 个是 /volN 本地卷 */
 static int  g_usb_enabled;
 static int  g_local_enabled = 1;
 static int  g_team_enabled = 1;
+static int  g_search_multi = 1;       /* 多词搜索总开关 */
+static int  g_search_all = 1;         /* 1=全部词命中，0=任一命中 */
+static int  g_search_case = 0;        /* 1=区分大小写 */
+static int  g_search_ordered = 0;     /* 1=按出现顺序 */
+static char g_search_sep[16] = "space"; /* space / comma / line */
 static int  g_pending_usb_rebuild;
 static int  g_pending_remote_rebuild;
 static int  g_pending_team_rebuild;
@@ -1877,6 +1882,8 @@ static void unit_patch_acl_paths(char paths[][4096], int n) {
 }
 
 static void units_build_all(void) {
+    const char *auto_units = getenv("XL_UNITS_AUTO");
+    if (auto_units && !strcmp(auto_units, "0")) return;
     xl_scan_policy p;
     pthread_mutex_lock(&g_scan_policy_mu);
     p = g_scan_policy;
@@ -3431,6 +3438,73 @@ static int rate_allow(int uid, int is_short) {
     return ok;
 }
 
+/* 多词查询解析：支持空格/逗号分隔，双引号内保留空格作为精确词组。
+ * 返回词数；term->s 指向 store 内部。 */
+static int search_terms_parse(const char *q, const char *sep,
+                              char *store, size_t store_cap,
+                              xl_query_term *terms, int max_terms) {
+    if (!q || !store || !terms || max_terms <= 0) return 0;
+    size_t ql = strlen(q);
+    if (ql >= store_cap) ql = store_cap - 1;
+    memcpy(store, q, ql); store[ql] = 0;
+    int n = 0;
+    char *p = store;
+    while (*p && n < max_terms) {
+        int is_sep = 0;
+        while (*p) {
+            unsigned char c = (unsigned char)*p;
+            if (strcmp(sep, "comma") == 0) {
+                if (c == ',' || (c == 0xEF && p[1] && (unsigned char)p[1] == 0xBC &&
+                                 p[2] && (unsigned char)p[2] == 0x8C)) {
+                    is_sep = 1; p += 3; continue;
+                }
+                if (isspace(c)) { is_sep = 1; p++; continue; }
+            } else if (strcmp(sep, "line") == 0) {
+                if (c == '\n' || c == '\r') { is_sep = 1; p++; continue; }
+            } else {
+                if (isspace(c)) { is_sep = 1; p++; continue; }
+            }
+            break;
+        }
+        (void)is_sep;
+        if (!*p) break;
+        int quoted = 0;
+        if (*p == '"') { quoted = 1; p++; }
+        char *start = p;
+        if (quoted) {
+            while (*p && *p != '"') p++;
+            if (*p == '"') *p++ = 0;
+        } else {
+            while (*p) {
+                unsigned char c = (unsigned char)*p;
+                int stop = 0;
+                if (strcmp(sep, "comma") == 0) {
+                    stop = isspace(c) || c == ',' ||
+                           (c == 0xEF && p[1] && (unsigned char)p[1] == 0xBC &&
+                            p[2] && (unsigned char)p[2] == 0x8C);
+                } else if (strcmp(sep, "line") == 0) {
+                    stop = (c == '\n' || c == '\r');
+                } else {
+                    stop = isspace(c);
+                }
+                if (stop) break;
+                p++;
+            }
+            if (*p) *p++ = 0;
+        }
+        while (*start == ' ' || *start == '\t') start++;
+        size_t tl = strlen(start);
+        while (tl > 0 && (start[tl - 1] == ' ' || start[tl - 1] == '\t')) start[--tl] = 0;
+        if (tl > 0) {
+            terms[n].s = start;
+            terms[n].len = tl;
+            terms[n].phrase = quoted;
+            n++;
+        }
+    }
+    return n;
+}
+
 static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
     char q[512] = "", s_limit[32] = "", s_off[32] = "", type[16] = "", s_cat[24] = "";
     param(qs, "q", q, sizeof(q));
@@ -3440,6 +3514,20 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
     param(qs, "cat", s_cat, sizeof(s_cat));
     int catmask = cat_parse(s_cat);
     if (!q[0]) {
+        sb_puts(out, "{\"error\":\"missing q\"}");
+        return;
+    }
+    xl_query_term terms[32];
+    char term_store[2048];
+    int nterms = 0;
+    if (g_search_multi) {
+        nterms = search_terms_parse(q, g_search_sep, term_store, sizeof term_store, terms, 32);
+    } else {
+        snprintf(term_store, sizeof term_store, "%s", q);
+        terms[0].s = term_store; terms[0].len = strlen(term_store); terms[0].phrase = 0;
+        nterms = terms[0].len ? 1 : 0;
+    }
+    if (nterms <= 0) {
         sb_puts(out, "{\"error\":\"missing q\"}");
         return;
     }
@@ -3501,7 +3589,9 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
         uint32_t n = 0;
         int t = 0;
         uint64_t vtotal = 0;
-        uint32_t *hits = query_hits(&v->sn, q, &o, &n, &t, NULL, &vtotal);
+        uint32_t *hits = query_hits_terms(&v->sn, terms, nterms, g_search_all,
+                                          g_search_case, g_search_ordered,
+                                          &o, &n, &t, NULL, &vtotal);
         total_hits += vtotal;
         if (t) trunc = 1;
         if (n) {
@@ -4526,6 +4616,11 @@ static void handle_settings_get(sbuf *out, int uid, int admin, int all) {
     sb_printf(out, ",\"strictHome\":%s",
               json_bool_def(buf, "\"strictHome\"", 1) ? "true" : "false");
     sb_printf(out, ",\"skipHidden\":%s", scan_skip_hidden() ? "true" : "false");
+    sb_printf(out, ",\"searchMulti\":%s,\"searchMatchAll\":%s,\"searchCaseSensitive\":%s,"
+              "\"searchOrdered\":%s,\"searchSeparator\":\"%s\"",
+              g_search_multi ? "true" : "false", g_search_all ? "true" : "false",
+              g_search_case ? "true" : "false", g_search_ordered ? "true" : "false",
+              g_search_sep);
     sb_printf(out, ",\"teamEnabled\":%s,\"localEnabled\":%s,\"usbEnabled\":%s,\"usbWatch\":%s,\"usbMessage\":\"",
               g_team_enabled ? "true" : "false",
               g_local_enabled ? "true" : "false",
@@ -4727,6 +4822,14 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
 
     /* 隐藏目录开关：默认开启；改变后立即重建索引（旧快照里可能仍有 @eaDir 等条目） */
     int skip_hidden = json_bool_def(body, "\"skipHidden\"", scan_skip_hidden());
+    int search_multi = json_bool_def(body, "\"searchMulti\"", g_search_multi);
+    int search_all = json_bool_def(body, "\"searchMatchAll\"", g_search_all);
+    int search_case = json_bool_def(body, "\"searchCaseSensitive\"", g_search_case);
+    int search_ordered = json_bool_def(body, "\"searchOrdered\"", g_search_ordered);
+    char search_sep[16];
+    json_str(body, "\"searchSeparator\"", search_sep, sizeof search_sep, g_search_sep);
+    if (strcmp(search_sep, "space") && strcmp(search_sep, "comma") && strcmp(search_sep, "line"))
+        snprintf(search_sep, sizeof search_sep, "space");
 
     char sp[1200], tmp[1300];
     settings_path(sp, sizeof sp);
@@ -4740,12 +4843,19 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
     fprintf(f, "{\"settingsVersion\":4,\"openWith\":%.*s,\"openIn\":\"%s\","
                "\"clickFolder\":\"%s\",\"clickFile\":\"%s\","
                "\"strictHome\":%s,\"skipHidden\":%s,\"teamEnabled\":%s,\"localEnabled\":%s,"
+               "\"searchMulti\":%s,\"searchMatchAll\":%s,\"searchCaseSensitive\":%s,"
+               "\"searchOrdered\":%s,\"searchSeparator\":\"%s\","
                "\"rebuild\":{\"mode\":\"%s\",\"hour\":%d,\"minute\":%d,\"hours\":%d}}",
             (int)len, b, open_in, click_folder, click_file,
             strict_home ? "true" : "false",
             skip_hidden ? "true" : "false",
             team_on ? "true" : "false",
             local_on ? "true" : "false",
+            search_multi ? "true" : "false",
+            search_all ? "true" : "false",
+            search_case ? "true" : "false",
+            search_ordered ? "true" : "false",
+            search_sep,
             m, rc.hour, rc.minute, rc.hours);
     fflush(f);
     fsync(fileno(f));
@@ -4754,6 +4864,12 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
         sb_puts(out, "{\"ok\":false,\"error\":\"cannot write\"}");
         return;
     }
+
+    g_search_multi = search_multi;
+    g_search_all = search_all;
+    g_search_case = search_case;
+    g_search_ordered = search_ordered;
+    snprintf(g_search_sep, sizeof g_search_sep, "%s", search_sep);
 
     if (skip_hidden != scan_skip_hidden()) {
         scan_set_skip_hidden(skip_hidden);
@@ -6752,6 +6868,13 @@ int httpd_serve(const xl_svc_opts *o) {
             perm_set_strict_home(json_bool_def(b, "\"strictHome\"", 1));
             g_local_enabled = json_bool_def(b, "\"localEnabled\"", 1);
             g_team_enabled = json_bool_def(b, "\"teamEnabled\"", 1);
+            g_search_multi = json_bool_def(b, "\"searchMulti\"", 1);
+            g_search_all = json_bool_def(b, "\"searchMatchAll\"", 1);
+            g_search_case = json_bool_def(b, "\"searchCaseSensitive\"", 0);
+            g_search_ordered = json_bool_def(b, "\"searchOrdered\"", 0);
+            json_str(b, "\"searchSeparator\"", g_search_sep, sizeof g_search_sep, "space");
+            if (strcmp(g_search_sep, "space") && strcmp(g_search_sep, "comma") && strcmp(g_search_sep, "line"))
+                snprintf(g_search_sep, sizeof g_search_sep, "space");
         }
     }
     const char *acl_env = getenv("XL_ACL_UID");
