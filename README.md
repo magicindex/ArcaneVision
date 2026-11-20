@@ -163,6 +163,9 @@ HLS 转码、分区域扫描统计和板块级重建收敛为正式版；0.9.0 �
 - 支持双引号精确词组、中文/英文混合、空格或逗号/换行分隔；
 - 可配置区分英文大小写、按出现顺序匹配；
 - 设置页最下方新增「高级搜索」面板，含详细示例和说明；
+- 自动全盘扫描支持「自定义周期」和「闲置时扫描」：
+  闲置模式检查 CPU 负载、可用内存、磁盘 IO，连续空闲 60 秒且 60 秒内无查询才启动；
+- 自动扫描默认关闭，可手动开启；
 - 后台 `/api/settings` 持久化 `searchMulti` / `searchMatchAll` /
   `searchSeparator` / `searchCaseSensitive` / `searchOrdered`；
 - 新增 `tests/multisearch_test.py`，覆盖全部/任一、引号、大小写、顺序、分隔符；
@@ -694,8 +697,8 @@ scripts/build-fpk.sh      打包装包
 
 - 最新版本：**0.10.7（正式版）**（2026-11-21）
 - 源码 tag：`v0.10.7`
-- FPK：`dist/xuanlan_0.10.7_amd64.fpk`（1,225,719 字节）
-- SHA-256：`2b4a42a77c19ba97a02c49f9dbc3b66cf44f77fcaf5abf1c803b1a448c4aa505`
+- FPK：`dist/xuanlan_0.10.7_amd64.fpk`（1,231,355 字节）
+- SHA-256：`8983ca5a2ea7daebfbbecbd7fe672e46ebaa793a2196c0fcb0e8fb756ff97bb8`
 - 发布页：[GitHub Release](https://github.com/magicindex/ArcaneVision/releases/tag/v0.10.7) ·
   [Gitea Release](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.10.7)
 - 安装包直链：

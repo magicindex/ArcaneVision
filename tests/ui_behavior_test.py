@@ -51,6 +51,7 @@ must("Math.min(max, cur + delta)" in src, "seek clamp")
 must('id="searchCard"' in src and 'id="searchMulti"' in src, "multi search setting")
 must('id="searchMatchAll"' in src and 'id="searchSep"' in src, "multi search options")
 must('id="searchCaseSensitive"' in src and 'id="searchOrdered"' in src, "multi search flags")
+must('id="rbMode"' in src and 'idle' in src and 'rbIdleHint' in src, "idle scan setting")
 
 # 内联脚本语法检查（可选）
 scripts = re.findall(r"<script>(.*?)</script>", src, re.S)

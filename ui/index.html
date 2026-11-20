@@ -2982,9 +2982,10 @@
     '<section class="scard"><h3>自动全盘扫描</h3>' +
     '<div class="rbline"><select id="rbMode">' +
     '<option value="off">关闭</option><option value="daily">每天定时</option>' +
-    '<option value="interval">按间隔</option></select>' +
+    '<option value="interval">自定义周期</option><option value="idle">闲置时扫描</option></select>' +
     '<span id="rbDaily"><input type="time" id="rbTime" value="03:00"></span>' +
-    '<span id="rbEvery">每 <input type="number" id="rbHours" min="1" max="168" value="6"> 小时</span></div>' +
+    '<span id="rbEvery"><span id="rbEveryLabel">每</span> <input type="number" id="rbHours" min="1" max="168" value="6"> 小时</span></div>' +
+    '<div class="hint2" id="rbIdleHint" style="display:none">闲置扫描会检查 CPU 负载、可用内存和磁盘 IO；连续空闲 60 秒且 60 秒内无查询时才启动，降低对搜索的影响。默认关闭。</div>' +
     '<div class="hint" id="rbHint"></div>' +
     '<div class="scanAreaStats" id="scanAreaStats"></div>' +
     '<label class="admrow" id="hiddenRow"><input type="checkbox" id="skipHidden" checked>忽略隐藏目录与系统杂项' +
@@ -3766,7 +3767,11 @@
       const sync = () => {
         const m = sel.value;
         setmask.querySelector('#rbDaily').style.display = m === 'daily' ? '' : 'none';
-        setmask.querySelector('#rbEvery').style.display = m === 'interval' ? '' : 'none';
+        setmask.querySelector('#rbEvery').style.display = (m === 'interval' || m === 'idle') ? '' : 'none';
+        const lab = setmask.querySelector('#rbEveryLabel');
+        if (lab) lab.textContent = m === 'idle' ? '最小间隔' : '每';
+        const ih = setmask.querySelector('#rbIdleHint');
+        if (ih) ih.style.display = m === 'idle' ? '' : 'none';
       };
       sync();
       sel.onchange = sync;
@@ -3777,6 +3782,7 @@
         hint.textContent = '上次扫描：' + (mins < 1 ? '刚刚' : mins < 60 ? mins + ' 分钟前' : Math.round(mins / 60) + ' 小时前');
       } else hint.textContent = '尚未扫描';
       hint.innerHTML += ' · <a href="#" id="rbNow" style="color:#59d3c8">立即全盘扫描</a>';
+      if (rb.mode === 'idle') hint.innerHTML += ' · 等待系统空闲';
       setmask.querySelector('#rbNow').onclick = (ev) => {
         ev.preventDefault();
         if (!confirm('立即对全部卷重新扫描？扫描期间搜索仍可用，但结果可能滞后。')) return;

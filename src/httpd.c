@@ -253,9 +253,13 @@ static int usb_path_blocked(int uid, const char *p) {
 static volatile uint64_t g_last_rebuild;
 /* 自动全盘扫描计划：mode 0=关 1=每天 2=每 N 小时 */
 typedef struct { int mode; int hour; int minute; int hours; } rebuild_cfg;
-static rebuild_cfg g_rcfg = {1, 3, 0, 6};   /* 默认：每天 03:00 */
+static rebuild_cfg g_rcfg = {0, 3, 0, 6};   /* 默认关闭；用户显式开启 */
 static pthread_mutex_t g_rcfg_mu = PTHREAD_MUTEX_INITIALIZER;
 static int g_last_run_yday = -1;
+static uint64_t g_last_query_ms;
+static uint64_t g_idle_since;
+static uint64_t g_idle_prev_ms;
+static uint64_t g_idle_prev_sectors;
 static int g_acl_uid = -1;      /* >=0 时按该 uid 过滤不可见目录 */
 static volatile int g_building;
 static volatile int g_failed;
@@ -3517,6 +3521,7 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
         sb_puts(out, "{\"error\":\"missing q\"}");
         return;
     }
+    g_last_query_ms = now_ms();
     xl_query_term terms[32];
     char term_store[2048];
     int nterms = 0;
@@ -4267,6 +4272,7 @@ static void rebuild_cfg_load(void) {
     int m = 0;
     if (!strcmp(mode, "daily")) m = 1;
     else if (!strcmp(mode, "interval")) m = 2;
+    else if (!strcmp(mode, "idle")) m = 3;
     int hour = json_int(tmp, "\"hour\"", 3);
     int minute = json_int(tmp, "\"minute\"", 0);
     int hours = json_int(tmp, "\"hours\"", 6);
@@ -4279,6 +4285,85 @@ static void rebuild_cfg_load(void) {
     pthread_mutex_unlock(&g_rcfg_mu);
 }
 
+/* 读取 /proc/diskstats 的累计扇区数，用于判断磁盘是否空闲。 */
+static uint64_t disk_sectors_total(void) {
+    FILE *f = fopen("/proc/diskstats", "r");
+    if (!f) return 0;
+    char line[512];
+    uint64_t sum = 0;
+    while (fgets(line, sizeof line, f)) {
+        int maj, min;
+        char dev[64];
+        unsigned long long rd, rdm, rsect, wr, wrm, wsect;
+        if (sscanf(line, "%d %d %63s %llu %llu %llu %llu %llu %llu",
+                   &maj, &min, dev, &rd, &rdm, &rsect, &wr, &wrm, &wsect) != 9) continue;
+        if (strncmp(dev, "sd", 2) && strncmp(dev, "nvme", 4) &&
+            strncmp(dev, "vd", 2) && strncmp(dev, "dm-", 3) &&
+            strncmp(dev, "md", 2)) continue;
+        sum += rsect + wsect;
+    }
+    fclose(f);
+    return sum;
+}
+
+static int idle_system_ok(void) {
+    /* 60 秒内有过查询则不抢资源。 */
+    if (g_last_query_ms && now_ms() - g_last_query_ms < 60000) return 0;
+
+    /* CPU load：1 分钟负载低于每核 35%。 */
+    FILE *f = fopen("/proc/loadavg", "r");
+    double load1 = 0;
+    if (!f) return 0;
+    if (fscanf(f, "%lf", &load1) != 1) { fclose(f); return 0; }
+    fclose(f);
+    long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+    if (ncpu < 1) ncpu = 1;
+    if (load1 > (double)ncpu * 0.35) return 0;
+
+    /* 内存：MemAvailable 至少 512MB 且不低于总内存 10%。 */
+    f = fopen("/proc/meminfo", "r");
+    if (!f) return 0;
+    unsigned long long total = 0, avail = 0;
+    char line[256];
+    while (fgets(line, sizeof line, f)) {
+        unsigned long long kb = 0;
+        if (sscanf(line, "MemTotal: %llu kB", &kb) == 1) total = kb;
+        else if (sscanf(line, "MemAvailable: %llu kB", &kb) == 1) avail = kb;
+    }
+    fclose(f);
+    if (!total || avail < 512 * 1024 || avail * 10 < total) return 0;
+
+    /* 磁盘：相邻采样的扇区增量低于约 16MB/s 才视为空闲。 */
+    uint64_t nowms = now_ms();
+    uint64_t sectors = disk_sectors_total();
+    if (!sectors) return 0;
+    if (g_idle_prev_ms && nowms > g_idle_prev_ms) {
+        uint64_t elapsed = nowms - g_idle_prev_ms;
+        uint64_t delta = sectors > g_idle_prev_sectors ? sectors - g_idle_prev_sectors : 0;
+        /* 512B/扇区；16MB/s = 32768 扇区/s */
+        if (elapsed > 0 && delta * 1000ull / elapsed > 32768ull) {
+            g_idle_prev_ms = nowms;
+            g_idle_prev_sectors = sectors;
+            return 0;
+        }
+    }
+    g_idle_prev_ms = nowms;
+    g_idle_prev_sectors = sectors;
+    return 1;
+}
+
+static int idle_due(const rebuild_cfg *c) {
+    if (c->mode != 3) return 0;
+    uint64_t now = now_ms();
+    if (g_last_rebuild && now - g_last_rebuild < (uint64_t)c->hours * 3600000ull) return 0;
+    if (!idle_system_ok()) { g_idle_since = 0; return 0; }
+    if (!g_idle_since) { g_idle_since = now; return 0; }
+    /* 连续空闲 60 秒再启动，避免瞬时低载就抢 IO。 */
+    if (now - g_idle_since < 60000) return 0;
+    g_idle_since = 0;
+    return 1;
+}
+
 /* 是否到了该全盘扫描的时间 */
 static int schedule_due(void) {
     rebuild_cfg c;
@@ -4286,6 +4371,7 @@ static int schedule_due(void) {
     c = g_rcfg;
     pthread_mutex_unlock(&g_rcfg_mu);
     if (c.mode == 0) return 0;
+    if (c.mode == 3) return idle_due(&c);
     time_t now = time(NULL);
     if (c.mode == 2)
         return g_last_rebuild && now_ms() - g_last_rebuild > (uint64_t)c.hours * 3600000ull;
@@ -4652,7 +4738,7 @@ static void handle_settings_get(sbuf *out, int uid, int admin, int all) {
         pthread_mutex_lock(&g_rcfg_mu);
         c = g_rcfg;
         pthread_mutex_unlock(&g_rcfg_mu);
-        const char *m = c.mode == 1 ? "daily" : (c.mode == 2 ? "interval" : "off");
+        const char *m = c.mode == 1 ? "daily" : (c.mode == 2 ? "interval" : (c.mode == 3 ? "idle" : "off"));
         sb_printf(out, ",\"rebuild\":{\"mode\":\"%s\",\"hour\":%d,\"minute\":%d,\"hours\":%d,"
                        "\"last\":%llu,\"building\":%s}",
                   m, c.hour, c.minute, c.hours,
@@ -4798,7 +4884,8 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
         tmp[rlen] = 0;
         char mode[16];
         json_mode(tmp, mode, sizeof mode);
-        rc.mode = !strcmp(mode, "daily") ? 1 : (!strcmp(mode, "interval") ? 2 : 0);
+        rc.mode = !strcmp(mode, "daily") ? 1 : (!strcmp(mode, "interval") ? 2 :
+                  (!strcmp(mode, "idle") ? 3 : 0));
         rc.hour = json_int(tmp, "\"hour\"", rc.hour);
         rc.minute = json_int(tmp, "\"minute\"", rc.minute);
         rc.hours = json_int(tmp, "\"hours\"", rc.hours);
@@ -7041,7 +7128,8 @@ int httpd_serve(const xl_svc_opts *o) {
                 struct tm tm;
                 localtime_r(&tnow, &tm);
                 g_last_run_yday = tm.tm_yday + tm.tm_year * 1000;
-                fprintf(stderr, "xuanlan serve: 定时全盘扫描开始（本地/团队/外接/远程）\n");
+                fprintf(stderr, "xuanlan serve: %s全盘扫描开始（本地/团队/外接/远程）\n",
+                        g_rcfg.mode == 3 ? "闲置" : "定时");
                 g_pending_team_rebuild = 1;
                 g_pending_usb_rebuild = 1;
                 g_pending_remote_rebuild = 1;
