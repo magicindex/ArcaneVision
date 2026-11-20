@@ -3460,7 +3460,7 @@ static int search_terms_parse(const char *q, const char *sep,
                 }
                 if (isspace(c)) { is_sep = 1; p++; continue; }
             } else if (strcmp(sep, "line") == 0) {
-                if (c == '\n' || c == '\r') { is_sep = 1; p++; continue; }
+                if (isspace(c)) { is_sep = 1; p++; continue; }
             } else {
                 if (isspace(c)) { is_sep = 1; p++; continue; }
             }
@@ -3483,7 +3483,7 @@ static int search_terms_parse(const char *q, const char *sep,
                            (c == 0xEF && p[1] && (unsigned char)p[1] == 0xBC &&
                             p[2] && (unsigned char)p[2] == 0x8C);
                 } else if (strcmp(sep, "line") == 0) {
-                    stop = (c == '\n' || c == '\r');
+                    stop = isspace(c);
                 } else {
                     stop = isspace(c);
                 }
