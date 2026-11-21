@@ -82,9 +82,14 @@ def req(path, extra="", body=None):
     s.close()
     return json.loads(out.partition(b"\r\n\r\n")[2])
 
+def result(q):
+    return req("/api/search?q=" + __import__("urllib.parse").parse.quote(q) + "&limit=50")
+
 def count(q):
-    d = req("/api/search?q=" + __import__("urllib.parse").parse.quote(q) + "&limit=50")
-    return len(d.get("items", []))
+    return len(result(q).get("items", []))
+
+def total(q):
+    return result(q).get("total", -1)
 
 def setting(body):
     req("/api/settings", "x-trim-isadmin: 1\r\n", json.dumps(body))
@@ -105,6 +110,13 @@ try:
     # 单一命中
     setting({"searchMatchAll": False})
     expect("any terms", count("alpha beta"), 4)
+    expect("any total", total("alpha beta"), 4)
+    expect("any total single term", total("alpha"), 4)
+    expect("any total no hit", total("zzzz"), 0)
+    expect("any total dedupe", total("alpha alpha"), 4)
+    d1 = req("/api/search?q=alpha%20beta&limit=1")
+    expect("any total at limit", d1.get("total"), 4)
+    expect("any items at limit", len(d1.get("items", [])), 1)
     setting({"searchMatchAll": True})
     expect("all terms", count("alpha beta"), 2)
 

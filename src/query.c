@@ -236,13 +236,16 @@ uint32_t *query_hits_terms(const xl_snap *sn, const xl_query_term *terms, int nt
         size_t na = 0, ca = 0;
         int tr = 0;
         uint64_t total = 0;
+        /* 统计 total 需要合并全部命中，不能沿用分页 limit；设上限防止异常内存。 */
+        xl_query_opts tall = *o;
+        if (tall.max_results < 500000u) tall.max_results = 500000u;
         for (int i = 0; i < nterms; i++) {
             if (!terms[i].s || !terms[i].len) continue;
             uint32_t n = 0;
             int t1 = 0;
             uint64_t vt = 0;
             uint32_t *h = query_hits_terms(sn, &terms[i], 1, 1, case_sensitive, 0,
-                                           o, &n, &t1, NULL, &vt);
+                                           &tall, &n, &t1, NULL, &vt);
             total += vt;
             tr |= t1;
             if (n) {
