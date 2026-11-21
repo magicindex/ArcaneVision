@@ -263,12 +263,13 @@ uint32_t *query_hits_terms(const xl_snap *sn, const xl_query_term *terms, int nt
             na = w;
             qsort_r(all, na, sizeof(uint32_t), cmp_hit, (void *)sn->recs);
         }
+        size_t unique_total = na;
         uint32_t lim = o->max_results ? o->max_results : 200000u;
         if (lim < 1000) lim = 1000;
         if (na > lim) { na = lim; tr = 1; }
         *n_out = (uint32_t)na;
         *truncated_out = tr;
-        if (total_out) *total_out = na;
+        if (total_out) *total_out = unique_total;
         if (elapsed_ms) *elapsed_ms = now_ms() - t0;
         return all;
     }

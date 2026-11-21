@@ -32,6 +32,7 @@ files = [
     "Alpha Beta.txt",
     "beta alpha.txt",
     "alpha only.txt",
+    "tango alpha.txt",
 ]
 for name in files:
     open(os.path.join(VOL, name), "w").write("x")
@@ -103,7 +104,7 @@ try:
 
     # 单一命中
     setting({"searchMatchAll": False})
-    expect("any terms", count("alpha beta"), 3)
+    expect("any terms", count("alpha beta"), 4)
     setting({"searchMatchAll": True})
     expect("all terms", count("alpha beta"), 2)
 
@@ -121,6 +122,9 @@ try:
     # 逗号分隔
     setting({"searchSeparator": "comma"})
     expect("comma", count("alpha,beta"), 2)
+    expect("chinese comma", count("alpha，beta"), 2)
+    setting({"searchSeparator": "line"})
+    expect("line", count("alpha\nbeta"), 2)
     setting({"searchSeparator": "space"})
     expect("space does not split comma", count("alpha,beta"), 0)
 

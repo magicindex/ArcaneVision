@@ -3458,8 +3458,9 @@ static int search_terms_parse(const char *q, const char *sep,
         while (*p) {
             unsigned char c = (unsigned char)*p;
             if (strcmp(sep, "comma") == 0) {
-                if (c == ',' || (c == 0xEF && p[1] && (unsigned char)p[1] == 0xBC &&
-                                 p[2] && (unsigned char)p[2] == 0x8C)) {
+                if (c == ',') { is_sep = 1; p++; continue; }
+                if (c == 0xEF && p[1] && (unsigned char)p[1] == 0xBC &&
+                    p[2] && (unsigned char)p[2] == 0x8C) {
                     is_sep = 1; p += 3; continue;
                 }
                 if (isspace(c)) { is_sep = 1; p++; continue; }
@@ -3494,7 +3495,15 @@ static int search_terms_parse(const char *q, const char *sep,
                 if (stop) break;
                 p++;
             }
-            if (*p) *p++ = 0;
+            if (*p) {
+                if ((unsigned char)*p == 0xEF && p[1] && (unsigned char)p[1] == 0xBC &&
+                    p[2] && (unsigned char)p[2] == 0x8C) {
+                    *p = 0;
+                    p += 3;
+                } else {
+                    *p++ = 0;
+                }
+            }
         }
         while (*start == ' ' || *start == '\t') start++;
         size_t tl = strlen(start);
