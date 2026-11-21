@@ -2699,15 +2699,45 @@
     return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
   }
   function esc(s){ return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function hiTerms(q){
+    const out = [];
+    let i = 0;
+    const isSep = (s, p) => {
+      const c = s.charCodeAt(p);
+      if (c === 0x2C || c === 0x3001 || c === 0xFF0C || c <= 0x20) return true;
+      return false;
+    };
+    while (i < q.length) {
+      while (i < q.length && isSep(q, i)) i++;
+      if (i >= q.length) break;
+      let quoted = false;
+      if (q[i] === '"') { quoted = true; i++; }
+      let start = i;
+      if (quoted) {
+        while (i < q.length && q[i] !== '"') i++;
+      } else {
+        while (i < q.length && !isSep(q, i)) i++;
+      }
+      const t = q.slice(start, i).trim();
+      if (quoted && q[i] === '"') i++;
+      if (t) out.push(t);
+    }
+    return out;
+  }
   function hi(name, term){
     if (!term) return esc(name);
-    const low = name.toLowerCase(), t = term.toLowerCase();
-    let out = '', i = 0, k;
-    while ((k = low.indexOf(t, i)) >= 0) {
-      out += esc(name.slice(i, k)) + '<mark>' + esc(name.slice(k, k+t.length)) + '</mark>';
-      i = k + t.length;
+    const terms = hiTerms(term);
+    if (!terms.length) return esc(name);
+    const uniq = [...new Set(terms)].sort((a, b) => b.length - a.length);
+    const re = new RegExp('(' + uniq.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')', 'gi');
+    let out = '', last = 0, m;
+    while ((m = re.exec(name)) !== null) {
+      if (m.index > last) out += esc(name.slice(last, m.index));
+      out += '<mark>' + esc(m[0]) + '</mark>';
+      last = m.index + m[0].length;
+      if (!m[0].length) re.lastIndex++;
     }
-    return out + esc(name.slice(i));
+    return out + esc(name.slice(last));
   }
   function parentPath(p){ const i = p.lastIndexOf('/'); return i > 0 ? p.slice(0, i) : '/'; }
   function remoteProtoOf(p){
@@ -3024,12 +3054,12 @@
     '<div class="row2"><div class="k">多词关系</div><select id="searchMatchAll">' +
     '<option value="1">同时命中（全部词都出现）</option><option value="0">单一命中（任一词出现）</option></select></div>' +
     '<div class="row2"><div class="k">关键词分隔</div><select id="searchSep">' +
-    '<option value="space">空格</option><option value="comma">空格或逗号</option><option value="line">空格或换行</option></select></div>' +
+    '<option value="space">仅空格</option><option value="comma">空格、逗号或顿号</option><option value="line">空格或换行</option></select></div>' +
     '<label class="admrow"><input type="checkbox" id="searchCaseSensitive">区分英文大小写' +
     '<span class="hint2">默认不区分；中文不受影响</span></label>' +
     '<label class="admrow"><input type="checkbox" id="searchOrdered">按出现顺序匹配' +
     '<span class="hint2">默认任意顺序；开启后词必须按输入顺序出现</span></label>' +
-    '<div class="hint" id="searchHelp">示例：<code>量子 计算</code> 同时命中两个词；<code>"量子 计算"</code> 精确匹配连续词组；<code>量子,计算</code> 在「空格或逗号」下等价。切换「单一命中」时，任一词出现即返回。</div></section></div>' +
+    '<div class="hint" id="searchHelp">示例：<code>量子 计算</code> 同时命中两个词；<code>"量子 计算"</code> 精确匹配连续词组；<code>量子,计算</code>、<code>量子，计算</code>、<code>量子、计算</code> 在默认分隔方式下等价；连续分隔符会合并。切换「单一命中」时，任一词出现即返回。</div></section></div>' +
     '<div class="foot"><button class="act" id="setClose">关闭</button>' +
     '<button class="act primary" id="setSave">保存</button></div></div>';
   document.body.appendChild(setmask);
@@ -3692,7 +3722,7 @@
       const morder = setmask.querySelector('#searchOrdered');
       if (mcb) mcb.checked = settings.searchMulti !== false;
       if (mall) mall.value = settings.searchMatchAll === false ? '0' : '1';
-      if (msep) msep.value = settings.searchSeparator || 'space';
+      if (msep) msep.value = settings.searchSeparator || 'comma';
       if (mcase) mcase.checked = settings.searchCaseSensitive === true;
       if (morder) morder.checked = settings.searchOrdered === true;
     }

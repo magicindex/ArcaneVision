@@ -169,7 +169,7 @@ HLS 转码、分区域扫描统计和板块级重建收敛为正式版；0.9.0 �
 ### 0.10.7 正式版已完成
 
 - 多词搜索：空格分隔、多个词同时命中；可切换单一命中；
-- 支持双引号精确词组、中文/英文混合、空格或逗号/换行分隔；
+- 支持双引号精确词组、中文/英文混合、空格/英文逗号/中文逗号/顿号分隔；
 - 可配置区分英文大小写、按出现顺序匹配；
 - 设置页最下方新增「高级搜索」面板，含详细示例和说明；
 - 自动全盘扫描支持「自定义周期」和「闲置时扫描」：
@@ -706,8 +706,8 @@ scripts/build-fpk.sh      打包装包
 
 - 最新版本：**0.10.8（正式版）**（2026-11-21）
 - 源码 tag：`v0.10.8`
-- FPK：`dist/xuanlan_0.10.8_amd64.fpk`（1,231,957 字节）
-- SHA-256：`732170e449b7634ede9a16e43a403a689f87aba3e848d16eceacddf83f0fc258`
+- FPK：`dist/xuanlan_0.10.8_amd64.fpk`（1,231,338 字节）
+- SHA-256：`f3cab7d166e7ea8839c03e31f30e714a6d2bcbb7b181dd6f890bb74a9119dfc8`
 - 发布页：[GitHub Release](https://github.com/magicindex/ArcaneVision/releases/tag/v0.10.8) ·
   [Gitea Release](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.10.8)
 - 安装包直链：

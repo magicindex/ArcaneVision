@@ -53,6 +53,7 @@ must('id="searchMatchAll"' in src and 'id="searchSep"' in src, "multi search opt
 must('id="searchCaseSensitive"' in src and 'id="searchOrdered"' in src, "multi search flags")
 must('id="rbMode"' in src and 'idle' in src and 'rbIdleHint' in src, "idle scan setting")
 must('id="loadStatus"' in src and 'function autoLoadMore' in src, "auto load more")
+must('function hiTerms' in src and "c === 0x3001" in src and "c === 0xFF0C" in src, "multi term highlight delimiters")
 must("&limit=500&offset=0" in src, "search page size 500")
 
 # 内联脚本语法检查（可选）

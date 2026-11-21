@@ -33,6 +33,7 @@ files = [
     "beta alpha.txt",
     "alpha only.txt",
     "tango alpha.txt",
+    "alpha 测试.txt",
 ]
 for name in files:
     open(os.path.join(VOL, name), "w").write("x")
@@ -83,6 +84,7 @@ def req(path, extra="", body=None):
     return json.loads(out.partition(b"\r\n\r\n")[2])
 
 def result(q):
+    time.sleep(0.06)  # 避免测试自身触发搜索限流
     return req("/api/search?q=" + __import__("urllib.parse").parse.quote(q) + "&limit=50")
 
 def count(q):
@@ -106,16 +108,17 @@ try:
     expect("phrase exact", count('"量子 计算"'), 1)
     expect("phrase no space", count('"量子计算"'), 1)
     expect("case-insensitive", count("quantum"), 2)
+    expect("default comma", count("alpha,beta"), 2)
 
     # 单一命中
     setting({"searchMatchAll": False})
-    expect("any terms", count("alpha beta"), 4)
-    expect("any total", total("alpha beta"), 4)
-    expect("any total single term", total("alpha"), 4)
+    expect("any terms", count("alpha beta"), 5)
+    expect("any total", total("alpha beta"), 5)
+    expect("any total single term", total("alpha"), 5)
     expect("any total no hit", total("zzzz"), 0)
-    expect("any total dedupe", total("alpha alpha"), 4)
+    expect("any total dedupe", total("alpha alpha"), 5)
     d1 = req("/api/search?q=alpha%20beta&limit=1")
-    expect("any total at limit", d1.get("total"), 4)
+    expect("any total at limit", d1.get("total"), 5)
     expect("any items at limit", len(d1.get("items", [])), 1)
     setting({"searchMatchAll": True})
     expect("all terms", count("alpha beta"), 2)
@@ -135,6 +138,9 @@ try:
     setting({"searchSeparator": "comma"})
     expect("comma", count("alpha,beta"), 2)
     expect("chinese comma", count("alpha，beta"), 2)
+    expect("dunhao", count("alpha、beta"), 2)
+    expect("mixed separators", count("alpha,,，、 beta"), 2)
+    expect("mixed language", count("alpha、测试"), 1)
     setting({"searchSeparator": "line"})
     expect("line", count("alpha\nbeta"), 2)
     setting({"searchSeparator": "space"})

@@ -177,7 +177,7 @@ static int  g_search_multi = 1;       /* 多词搜索总开关 */
 static int  g_search_all = 1;         /* 1=全部词命中，0=任一命中 */
 static int  g_search_case = 0;        /* 1=区分大小写 */
 static int  g_search_ordered = 0;     /* 1=按出现顺序 */
-static char g_search_sep[16] = "space"; /* space / comma / line */
+static char g_search_sep[16] = "comma"; /* comma 默认支持空格/，/,/、 */
 static int  g_pending_usb_rebuild;
 static int  g_pending_remote_rebuild;
 static int  g_pending_team_rebuild;
@@ -3442,8 +3442,22 @@ static int rate_allow(int uid, int is_short) {
     return ok;
 }
 
-/* 多词查询解析：支持空格/逗号分隔，双引号内保留空格作为精确词组。
- * 返回词数；term->s 指向 store 内部。 */
+/* 多词查询解析：支持空格、英文/中文逗号、顿号；双引号内保留空格。
+ * 分隔符按完整 UTF-8 字符消费，连续分隔符直接跳过。 */
+static int search_sep_len(const char *p, const char *sep) {
+    if (!p || !*p) return 0;
+    unsigned char c = (unsigned char)*p;
+    if (strcmp(sep, "space") == 0 || strcmp(sep, "line") == 0)
+        return isspace(c) ? 1 : 0;
+    /* comma / 默认：空格 + , + ，+ 、 */
+    if (c == ',') return 1;
+    if (c == 0xEF && p[1] && (unsigned char)p[1] == 0xBC &&
+        p[2] && (unsigned char)p[2] == 0x8C) return 3;   /* ， */
+    if (c == 0xE3 && p[1] && (unsigned char)p[1] == 0x80 &&
+        p[2] && (unsigned char)p[2] == 0x81) return 3;   /* 、 */
+    return isspace(c) ? 1 : 0;
+}
+
 static int search_terms_parse(const char *q, const char *sep,
                               char *store, size_t store_cap,
                               xl_query_term *terms, int max_terms) {
@@ -3454,24 +3468,8 @@ static int search_terms_parse(const char *q, const char *sep,
     int n = 0;
     char *p = store;
     while (*p && n < max_terms) {
-        int is_sep = 0;
-        while (*p) {
-            unsigned char c = (unsigned char)*p;
-            if (strcmp(sep, "comma") == 0) {
-                if (c == ',') { is_sep = 1; p++; continue; }
-                if (c == 0xEF && p[1] && (unsigned char)p[1] == 0xBC &&
-                    p[2] && (unsigned char)p[2] == 0x8C) {
-                    is_sep = 1; p += 3; continue;
-                }
-                if (isspace(c)) { is_sep = 1; p++; continue; }
-            } else if (strcmp(sep, "line") == 0) {
-                if (isspace(c)) { is_sep = 1; p++; continue; }
-            } else {
-                if (isspace(c)) { is_sep = 1; p++; continue; }
-            }
-            break;
-        }
-        (void)is_sep;
+        int sl;
+        while ((sl = search_sep_len(p, sep)) > 0) p += sl;
         if (!*p) break;
         int quoted = 0;
         if (*p == '"') { quoted = 1; p++; }
@@ -3480,29 +3478,11 @@ static int search_terms_parse(const char *q, const char *sep,
             while (*p && *p != '"') p++;
             if (*p == '"') *p++ = 0;
         } else {
-            while (*p) {
-                unsigned char c = (unsigned char)*p;
-                int stop = 0;
-                if (strcmp(sep, "comma") == 0) {
-                    stop = isspace(c) || c == ',' ||
-                           (c == 0xEF && p[1] && (unsigned char)p[1] == 0xBC &&
-                            p[2] && (unsigned char)p[2] == 0x8C);
-                } else if (strcmp(sep, "line") == 0) {
-                    stop = isspace(c);
-                } else {
-                    stop = isspace(c);
-                }
-                if (stop) break;
-                p++;
-            }
+            while (*p && !search_sep_len(p, sep)) p++;
             if (*p) {
-                if ((unsigned char)*p == 0xEF && p[1] && (unsigned char)p[1] == 0xBC &&
-                    p[2] && (unsigned char)p[2] == 0x8C) {
-                    *p = 0;
-                    p += 3;
-                } else {
-                    *p++ = 0;
-                }
+                sl = search_sep_len(p, sep);
+                *p = 0;
+                p += sl;
             }
         }
         while (*start == ' ' || *start == '\t') start++;
@@ -6968,7 +6948,7 @@ int httpd_serve(const xl_svc_opts *o) {
             g_search_all = json_bool_def(b, "\"searchMatchAll\"", 1);
             g_search_case = json_bool_def(b, "\"searchCaseSensitive\"", 0);
             g_search_ordered = json_bool_def(b, "\"searchOrdered\"", 0);
-            json_str(b, "\"searchSeparator\"", g_search_sep, sizeof g_search_sep, "space");
+            json_str(b, "\"searchSeparator\"", g_search_sep, sizeof g_search_sep, "comma");
             if (strcmp(g_search_sep, "space") && strcmp(g_search_sep, "comma") && strcmp(g_search_sep, "line"))
                 snprintf(g_search_sep, sizeof g_search_sep, "space");
         }
