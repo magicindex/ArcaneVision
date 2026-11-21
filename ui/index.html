@@ -3034,7 +3034,7 @@
   {
     /* 设置卡片按产品顺序重排；本地检索与本地检索范围合并为一张卡片 */
     const sb = setmask.querySelector('.setbody');
-    const cards = [...sb.querySelectorAll('.scard')];
+    let cards = [...sb.querySelectorAll('.scard')];
     const local = sb.querySelector('#localCard');
     const range = sb.querySelector('#rangeCard');
     if (local && range) {
@@ -3049,6 +3049,7 @@
       });
       local.appendChild(block);
       range.remove();
+      cards = cards.filter(c => c !== range);
     }
     const order = ['打开位置', '扫描模式', '鼠标操作', '打开方式关联', '自动全盘扫描',
                    '本地检索', '团队文件', '挂载检索（外接存储）', '远程挂载'];
