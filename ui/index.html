@@ -636,6 +636,8 @@
     font-size:18px;line-height:1;
   }
   .more:hover{color:var(--txt);border-color:rgba(94,234,212,.4)}
+  .loadmore #loadStatus{display:inline-block;margin-right:10px;font-size:11.5px;color:#7f93b3}
+  .loadmore #loadStatus.loading{color:#59d3c8}
   .ctx.sheet{
     left:10px!important;right:10px;top:auto!important;
     bottom:calc(10px + env(safe-area-inset-bottom));min-width:0;max-height:72vh;max-height:72dvh;overflow:auto;
@@ -826,7 +828,7 @@
   <div class="progress hide" id="prog"><i></i></div>
 
   <ul id="list"></ul>
-  <div class="loadmore" id="loadMoreWrap" style="display:none"><button id="loadMore" type="button">加载更多</button></div>
+  <div class="loadmore" id="loadMoreWrap" style="display:none"><span id="loadStatus"></span><button id="loadMore" type="button">加载更多</button></div>
   <div class="empty" id="empty">
     <div class="big">◍</div>
     输入任意字符开始检索<br>
@@ -3972,22 +3974,65 @@
   function updateMore(){
     const wrap = document.getElementById('loadMoreWrap');
     const btn = document.getElementById('loadMore');
+    const st = document.getElementById('loadStatus');
     if (!wrap || !btn) return;
     const has = items.length > 0 && items.length < searchTotal;
     wrap.style.display = has ? '' : 'none';
-    if (has) btn.textContent = '加载更多（已显示 ' + items.length + ' / ≈' + (searchTotal||0).toLocaleString() + '）';
+    if (!has) return;
+    const shown = items.length.toLocaleString();
+    const total = (searchTotal || 0).toLocaleString();
+    if (searchLoading) {
+      if (st) { st.textContent = '正在加载更多… ' + shown + ' / ' + total; st.className = 'loading'; }
+      btn.style.display = 'none';
+    } else {
+      if (st) { st.textContent = '已显示 ' + shown + ' / ' + total; st.className = ''; }
+      btn.style.display = '';
+      btn.textContent = '继续加载';
+    }
+  }
+
+  function autoLoadMore(my, manual) {
+    const term = q.value.trim();
+    if (!term || my !== seq || searchLoading) return;
+    if (items.length >= searchTotal) { updateMore(); return; }
+    /* 一次搜索最多自动加载 5000 条，避免超大结果集把浏览器拖死；剩余可点继续加载。 */
+    if (!manual && items.length >= 5000) { updateMore(); return; }
+    searchLoading = true;
+    let loadFailed = false;
+    updateMore();
+    spin.classList.add('on');
+    const limit = Math.min(500, Math.max(1, searchTotal - items.length));
+    fetch(API + 'search?q=' + encodeURIComponent(term) + '&limit=' + limit + '&offset=' + items.length +
+          (type ? '&type=' + type : '') + (cat ? '&cat=' + cat : ''))
+      .then(r => r.json())
+      .then(d => {
+        if (my !== seq) return;
+        if (d.error) { loadFailed = true; meta.textContent = d.error === 'rate limited' ? '查询过于频繁，请稍后再试' : ('查询失败：' + d.error); return; }
+        items = items.concat(d.items || []);
+        searchTotal = d.total || searchTotal;
+        render();
+      })
+      .catch(() => { loadFailed = true; if (my === seq) meta.textContent = '加载更多失败'; })
+      .finally(() => {
+        searchLoading = false;
+        spin.classList.remove('on');
+        updateMore();
+        if (!loadFailed && !manual && my === seq && items.length < searchTotal && items.length < 5000)
+          setTimeout(() => autoLoadMore(my, false), 100);
+      });
   }
 
   function search(){
     const term = q.value.trim();
     clearTimeout(timer);
     searchTotal = 0;
+    searchLoading = false;
     if (!term) { items = []; render(); meta.textContent = ''; spin.classList.remove('on'); return; }
     if (term.length < 2) { items = []; render(); meta.textContent = '请输入至少 2 个字符'; spin.classList.remove('on'); return; }
     spin.classList.add('on');
     const my = ++seq;
     timer = setTimeout(() => {
-      fetch(API + 'search?q=' + encodeURIComponent(term) + '&limit=200&offset=0' + (type ? '&type=' + type : '') + (cat ? '&cat=' + cat : ''))
+      fetch(API + 'search?q=' + encodeURIComponent(term) + '&limit=500&offset=0' + (type ? '&type=' + type : '') + (cat ? '&cat=' + cat : ''))
         .then(r => r.json())
         .then(d => {
           if (my !== seq) return;
@@ -3997,31 +4042,14 @@
           searchTotal = d.total || items.length;
           meta.innerHTML = '<b>' + (d.truncated ? '≥' : d.approx ? '≈' : '') + (d.total||0).toLocaleString() + '</b> 项 · ' + (d.ms||0).toFixed(1) + ' ms';
           render();
+          autoLoadMore(my);
         })
         .catch(()=>{ if (my===seq){ spin.classList.remove('on'); meta.textContent = '查询失败'; } });
     }, 90);
   }
 
   document.getElementById('loadMore').onclick = () => {
-    if (searchLoading) return;
-    const term = q.value.trim();
-    if (!term) return;
-    searchLoading = true;
-    spin.classList.add('on');
-    const my = seq;
-    fetch(API + 'search?q=' + encodeURIComponent(term) + '&limit=200&offset=' + items.length +
-          (type ? '&type=' + type : '') + (cat ? '&cat=' + cat : ''))
-      .then(r => r.json())
-      .then(d => {
-        if (my !== seq) return;
-        if (d.error) { meta.textContent = d.error === 'rate limited' ? '查询过于频繁，请稍后再试' : ('查询失败：' + d.error); return; }
-        items = items.concat(d.items || []);
-        searchTotal = d.total || searchTotal;
-        meta.innerHTML = '<b>' + (d.truncated ? '≥' : d.approx ? '≈' : '') + (d.total||0).toLocaleString() + '</b> 项 · ' + (d.ms||0).toFixed(1) + ' ms';
-        render();
-      })
-      .catch(() => {})
-      .finally(() => { searchLoading = false; spin.classList.remove('on'); });
+    autoLoadMore(seq, true);
   };
 
   let lastUsbEnabled = false;

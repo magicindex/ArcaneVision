@@ -140,8 +140,8 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
 
 ## 现在是什么状态
 
-当前版本 **0.10.7（正式版）**，更新记录见 [CHANGELOG.md](CHANGELOG.md)，发布说明见
-[RELEASE_NOTES.md](RELEASE_NOTES.md)。0.10.7 增加多词搜索；0.10.6 将 0.10.x 的团队独立索引、远程协议标识、
+当前版本 **0.10.8（正式版）**，更新记录见 [CHANGELOG.md](CHANGELOG.md)，发布说明见
+[RELEASE_NOTES.md](RELEASE_NOTES.md)。0.10.8 增加搜索结果自动分页加载；0.10.7 增加多词搜索；0.10.6 将 0.10.x 的团队独立索引、远程协议标识、
 HLS 转码、分区域扫描统计和板块级重建收敛为正式版；0.9.0 完成团队空间按权限索引；
 0.10.0 完成 fanotify ACL 自愈与修复退避。
 
@@ -156,6 +156,15 @@ HLS 转码、分区域扫描统计和板块级重建收敛为正式版；0.9.0 �
 4. **可运维**：单元索引有 epoch 原子切换、增量 delta、损坏检测/自动重建、容量告警、
    `.trash` 回收与一键回滚。
 5. **不牺牲检索性能**：共享索引仍是 mmap + trigram；单元索引只读 mmap，增量走 live + delta。
+
+### 0.10.8 正式版已完成
+
+- 搜索首屏从 200 条提升到 500 条；
+- 结果未显示完时自动继续请求后续分页；
+- 加载期间显示「正在加载更多… 已显示 X / Y」；
+- 自动加载失败停止重试，避免反复请求；
+- 超大结果集自动加载到 5000 条后保留「继续加载」，防止浏览器卡死；
+- UI 回归新增自动加载/分页大小断言。
 
 ### 0.10.7 正式版已完成
 
@@ -340,11 +349,11 @@ systemd xuanlan.service
 - [x] 编译 + `smoke` / `api` / `scanmode` / `route` / `unitbuild` / `epoch` /
       `unitdelta` / `group-intersection` / `units-admin` / `repair` / `ui` 回归
 - [x] docs/09 §8 标注为未来设计，与当前实现对齐
-- [x] 版本号 0.10.7、README / CHANGELOG / RELEASE_NOTES
+- [x] 版本号 0.10.8、README / CHANGELOG / RELEASE_NOTES
 - [x] 真机 fanotify → 队列 → 批量 delta → 重启恢复（docs/10）
-- [x] FPK 构建：`dist/xuanlan_0.10.7_amd64.fpk`
-- [x] Gitea 推送 + tag `v0.10.7` + Release
-- [x] GitHub 推送 + tag `v0.10.7` + Release
+- [x] FPK 构建：`dist/xuanlan_0.10.8_amd64.fpk`
+- [x] Gitea 推送 + tag `v0.10.8` + Release
+- [x] GitHub 推送 + tag `v0.10.8` + Release
 
 ### 0.8.9–0.8.17 更新内容（历史）
 
@@ -695,15 +704,15 @@ scripts/build-fpk.sh      打包装包
 
 ## 版本与安装包
 
-- 最新版本：**0.10.7（正式版）**（2026-11-21）
-- 源码 tag：`v0.10.7`
-- FPK：`dist/xuanlan_0.10.7_amd64.fpk`（1,231,632 字节）
-- SHA-256：`428f0d80badc5a17aa94bbf4c23d8911164d649d6efdba01207366228fe4e160`
-- 发布页：[GitHub Release](https://github.com/magicindex/ArcaneVision/releases/tag/v0.10.7) ·
-  [Gitea Release](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.10.7)
+- 最新版本：**0.10.8（正式版）**（2026-11-21）
+- 源码 tag：`v0.10.8`
+- FPK：`dist/xuanlan_0.10.8_amd64.fpk`（1,231,957 字节）
+- SHA-256：`732170e449b7634ede9a16e43a403a689f87aba3e848d16eceacddf83f0fc258`
+- 发布页：[GitHub Release](https://github.com/magicindex/ArcaneVision/releases/tag/v0.10.8) ·
+  [Gitea Release](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.10.8)
 - 安装包直链：
-  [GitHub](https://github.com/magicindex/ArcaneVision/releases/download/v0.10.7/xuanlan_0.10.7_amd64.fpk) ·
-  [Gitea](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/download/v0.10.7/xuanlan_0.10.7_amd64.fpk)
+  [GitHub](https://github.com/magicindex/ArcaneVision/releases/download/v0.10.8/xuanlan_0.10.8_amd64.fpk) ·
+  [Gitea](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/download/v0.10.8/xuanlan_0.10.8_amd64.fpk)
 
 > 0.10.6 为正式版；包含团队独立索引、HLS 视频、PDF 显示全部、分区域扫描统计、
 > 板块级重建隔离和本轮完整回归修复。

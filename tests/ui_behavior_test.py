@@ -52,6 +52,8 @@ must('id="searchCard"' in src and 'id="searchMulti"' in src, "multi search setti
 must('id="searchMatchAll"' in src and 'id="searchSep"' in src, "multi search options")
 must('id="searchCaseSensitive"' in src and 'id="searchOrdered"' in src, "multi search flags")
 must('id="rbMode"' in src and 'idle' in src and 'rbIdleHint' in src, "idle scan setting")
+must('id="loadStatus"' in src and 'function autoLoadMore' in src, "auto load more")
+must("&limit=500&offset=0" in src, "search page size 500")
 
 # 内联脚本语法检查（可选）
 scripts = re.findall(r"<script>(.*?)</script>", src, re.S)
