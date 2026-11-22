@@ -233,7 +233,9 @@
   .ctx div:hover{background:rgba(86,190,190,.16);color:#eaf6f6}
 
   .openwin{position:fixed;top:26px;right:26px;bottom:26px;left:26px;z-index:190;display:none;flex-direction:column;overflow:hidden;
-    min-width:min(560px,calc(100vw - 20px));min-height:min(360px,calc(100vh - 20px));
+    min-width:min(600px,calc(100vw - 20px));min-height:min(420px,calc(100vh - 20px));scrollbar-width:none}
+  .openwin::-webkit-scrollbar,.openwin #videoview::-webkit-scrollbar,.openwin .vbar::-webkit-scrollbar{display:none;width:0;height:0}
+  .openwin #videoview,.openwin .vbar{scrollbar-width:none}
     background:linear-gradient(180deg,rgba(22,31,48,.99),rgba(13,19,31,.99));
     border:1px solid rgba(120,180,200,.22);border-radius:14px;box-shadow:0 24px 70px rgba(0,0,0,.6)}
   .openwin.on{display:flex}
@@ -268,7 +270,7 @@
   .openwin #vvideo::-webkit-media-controls-enclosure,
   .openwin #vvideo::-webkit-media-controls-panel,
   .openwin #vvideo::-webkit-media-controls-start-playback-button{display:none!important;opacity:0!important}
-  .openwin .vbar{position:absolute;left:0;right:0;bottom:0;z-index:2;display:flex;align-items:center;gap:8px;
+  .openwin .vbar{position:absolute;left:0;right:0;bottom:0;z-index:2;display:flex;align-items:center;gap:8px;overflow:hidden;
     padding:22px 12px 11px;background:linear-gradient(180deg,rgba(0,0,0,0),rgba(0,0,0,.82));
     opacity:0;transform:translateY(8px);pointer-events:none;transition:opacity .16s,transform .16s}
   .openwin #videoview.ctrlon .vbar{opacity:1;transform:none;pointer-events:auto}
@@ -953,7 +955,7 @@
   document.body.appendChild(openwin);
   const owframe = openwin.querySelector('#owframe');
   let owUrl = '';
-  const OW_MIN_W = 560, OW_MIN_H = 360;
+  const OW_MIN_W = 600, OW_MIN_H = 420;
   function owMinW(){ return Math.max(320, Math.min(OW_MIN_W, innerWidth - 20)); }
   function owMinH(){ return Math.max(240, Math.min(OW_MIN_H, innerHeight - 20)); }
   const owState = (() => {
@@ -961,6 +963,7 @@
       if (v && v.w > 200) {
         v.w = Math.max(owMinW(), Math.min(innerWidth - 20, v.w));
         v.h = Math.max(owMinH(), Math.min(innerHeight - 20, v.h));
+        try { localStorage.setItem('xl_openwin', JSON.stringify(v)); } catch (e) {}
         return v;
       }
     } catch (e) {}
