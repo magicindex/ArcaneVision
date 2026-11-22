@@ -282,9 +282,10 @@
     padding:7px 10px;border-radius:999px;background:rgba(8,14,24,.84);border:1px solid rgba(150,190,220,.22);
     box-shadow:0 6px 22px rgba(0,0,0,.35);backdrop-filter:blur(10px);transform:translateX(-50%)}
   .openwin #videoview.ctrlon .vbar.compact{transform:translateX(-50%)}
-  .openwin .vbar.compact #vvol,.openwin .vbar.compact #vfull{display:none}
+  .openwin .vbar.compact #vfull{display:none}
+  .openwin .vbar.compact #vvol{display:inline-block;width:56px;min-width:44px;flex:none}
   .openwin .vbar.compact #vtime{font-size:10.5px}
-  .openwin .vbar.compact #vseek{min-width:80px;width:min(42vw,260px);flex:none}
+  .openwin .vbar.compact #vseek{min-width:70px;width:min(32vw,220px);flex:none}
   .openwin .vbar.dragging{cursor:grabbing;user-select:none;transition:none}
   .openwin #vhint{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:2;
     font-size:11px;color:#dbe8f8;background:rgba(8,14,24,.62);border:1px solid rgba(160,190,230,.2);
@@ -935,7 +936,7 @@
     '<span id="vtime">0:00 / 0:00</span>' +
     '<input id="vseek" type="range" min="0" max="1000" value="0" step="1" aria-label="播放进度">' +
     '<button id="vcompact" type="button" aria-label="切换胶囊控制条">胶囊</button>' +
-    '<button id="vmute" type="button" aria-label="静音">音量</button>' +
+    '<button id="vmute" type="button" aria-label="静音">静音</button>' +
     '<input id="vvol" type="range" min="0" max="100" value="100" step="1" aria-label="音量">' +
     '<button id="vfull" type="button" aria-label="全屏">全屏</button></div>' +
     '<div id="vhint">空格 播放/暂停 · ←/→ 快退/快进 5 秒</div></div>' +
@@ -1009,6 +1010,13 @@
   const vctx = vcanvas ? vcanvas.getContext('2d') : null;
   let vdrawRaf = 0;
   let vTranscode = null, vSeekDragging = false, vHls = null, vTranscodeSeekTarget = 0;
+  const VOL_KEY = 'xl_video_volume', MUTE_KEY = 'xl_video_muted';
+  let vSavedVolume = 1, vSavedMuted = false;
+  try {
+    const sv = parseFloat(localStorage.getItem(VOL_KEY));
+    if (isFinite(sv)) vSavedVolume = Math.max(0, Math.min(1, sv));
+    vSavedMuted = localStorage.getItem(MUTE_KEY) === '1';
+  } catch (e) {}
   function videoDrawFrame(){
     if (!videoView.classList.contains('on')) { vdrawRaf = 0; return; }
     if (vctx && vvideo.videoWidth && vvideo.videoHeight) {
@@ -1207,6 +1215,7 @@
       vvideo.src = url;
       vvideo.load();
     }
+    videoApplyVolume();
     try { vvideo.focus({ preventScroll: true }); } catch (e) { try { vvideo.focus(); } catch (e2) {} }
     const p = vvideo.play();
     if (p && p.catch) p.catch(() => {});
@@ -1251,13 +1260,49 @@
     }
     if (dur > 0) videoTranscodeSeek(dur * (Number(vseek.value) / 1000));
   });
-  const videoSyncVolume = () => {
-    vmute.textContent = vvideo.muted || vvideo.volume === 0 ? '静音中' : '音量';
-    vvol.value = String(Math.round((vvideo.muted ? 0 : vvideo.volume) * 100));
-  };
-  vmute.addEventListener('click', () => { vvideo.muted = !vvideo.muted; videoSyncVolume(); });
-  vvol.addEventListener('input', () => { vvideo.volume = Number(vvol.value) / 100; vvideo.muted = false; videoSyncVolume(); });
-  vvideo.addEventListener('volumechange', videoSyncVolume);
+  function videoPersistVolume(){
+    try {
+      localStorage.setItem(VOL_KEY, String(vSavedVolume));
+      localStorage.setItem(MUTE_KEY, vSavedMuted ? '1' : '0');
+    } catch (e) {}
+  }
+  function videoApplyVolume(){
+    vvideo.volume = vSavedVolume;
+    vvideo.muted = vSavedMuted;
+    videoSyncVolume();
+  }
+  function videoSyncVolume(){
+    if (!vvideo.muted) vSavedVolume = vvideo.volume;
+    vmute.textContent = vvideo.muted ? '取消静音' : '静音';
+    vmute.setAttribute('aria-label', vvideo.muted ? '取消静音' : '静音');
+    vvol.value = String(Math.round((vvideo.muted ? vSavedVolume : vvideo.volume) * 100));
+  }
+  if (vmute) vmute.addEventListener('click', () => {
+    vvideo.muted = !vvideo.muted;
+    vSavedMuted = vvideo.muted;
+    if (!vvideo.muted) {
+      if (!(vSavedVolume > 0)) vSavedVolume = 1;
+      vvideo.volume = vSavedVolume;
+    }
+    videoPersistVolume();
+    videoSyncVolume();
+    videoShowControls();
+  });
+  vvol.addEventListener('input', () => {
+    const v = Math.max(0, Math.min(1, Number(vvol.value) / 100));
+    vSavedVolume = v;
+    vvideo.volume = v;
+    if (v > 0 && vvideo.muted) vvideo.muted = false;
+    vSavedMuted = vvideo.muted;
+    videoPersistVolume();
+    videoSyncVolume();
+  });
+  vvideo.addEventListener('volumechange', () => {
+    vSavedMuted = vvideo.muted;
+    if (!vvideo.muted && vvideo.volume > 0) vSavedVolume = vvideo.volume;
+    videoPersistVolume();
+    videoSyncVolume();
+  });
   vfull.addEventListener('click', () => {
     const el = videoView;
     if (document.fullscreenElement) { document.exitFullscreen && document.exitFullscreen(); return; }
