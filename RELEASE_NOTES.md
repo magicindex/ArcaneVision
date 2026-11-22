@@ -4,8 +4,8 @@
 
 0.10.13 修复长列表搜索结果 total 与分页不一致，并优化滚动内存/渲染开销。
 
-安装包：`xuanlan_0.10.13_amd64.fpk`（1,238,522 字节）。
-SHA-256：`d945ef4f0f3b3eeabafcc59b1f15f8359b14fc0c2117b112eb86b3b4fac8cb86`。
+安装包：`xuanlan_0.10.13_amd64.fpk`（1,242,264 字节）。
+SHA-256：`af8b733dcd2067345c08e0848ac3fe9d1a2a7d425740dd0e61f4060b97701d2d`。
 
 ## 分页与 total
 

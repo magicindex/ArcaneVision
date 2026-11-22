@@ -3602,6 +3602,59 @@ done:
     return w;
 }
 
+/* 统计基线命中的唯一路径数。跨卷/符号链可能产生重复路径，total 必须与去重后的
+ * 可遍历结果一致；否则 UI 会出现「已显示 1300 / 1403」且没有下一页。 */
+static size_t unique_ref_paths(const ref_t *refs, size_t nref, int uid, int admin,
+                               char paths[][512], int nsc, const query_route_t *route) {
+    if (!refs || !nref) return 0;
+    size_t cap = 1;
+    while (cap < nref * 2 + 1) cap <<= 1;
+    char **tab = calloc(cap, sizeof(char *));
+    if (!tab) return nref;
+    size_t unique = 0;
+    for (size_t i = 0; i < nref; i++) {
+        char path[8192];
+        snap_path(&refs[i].v->sn, refs[i].id, path, sizeof path);
+        if (live_is_deleted(path) || route_delta_deleted(route, path)) continue;
+        if (!g_team_enabled && team_path(path)) continue;
+        vol_t *rv = remote_vol_for_path(path);
+        int remote_ok = rv && remote_volume_allows(uid, admin, rv);
+        struct stat st;
+        if (stat(path, &st) != 0) continue;
+        int is_dir = S_ISDIR(st.st_mode);
+        if (uid >= 0) {
+            char pd[8192];
+            snprintf(pd, sizeof pd, "%s", path);
+            char *sl = strrchr(pd, '/');
+            if (!sl) continue;
+            if (sl == pd) sl[1] = 0; else *sl = 0;
+            int team_ok = team_path(path);
+            if (!remote_ok) {
+                if (!admin && !team_ok && system_path(path)) continue;
+                if (!admin && !perm_dir_listable((uid_t)uid, pd)) continue;
+                if (!team_ok && nsc >= 0 && strncmp(path, "/vol00/", 7) != 0 &&
+                    !scope_allows(paths, nsc, path)) continue;
+            }
+            if (remote_ok && rv && !remote_path_allows(uid, admin, path, &st, rv)) continue;
+            if (!is_dir && !remote_ok && !perm_mode_readable((uid_t)uid, path, &st)) continue;
+        }
+        uint64_t h = 1469598103934665603ull;
+        for (const unsigned char *p = (const unsigned char *)path; *p; p++) {
+            h ^= *p; h *= 1099511628211ull;
+        }
+        size_t slot = (size_t)h & (cap - 1);
+        while (tab[slot] && strcmp(tab[slot], path)) slot = (slot + 1) & (cap - 1);
+        if (!tab[slot]) {
+            tab[slot] = strdup(path);
+            if (!tab[slot]) { for (size_t k = 0; k < cap; k++) free(tab[k]); free(tab); return nref; }
+            unique++;
+        }
+    }
+    for (size_t k = 0; k < cap; k++) free(tab[k]);
+    free(tab);
+    return unique;
+}
+
 /* live/delta 命中与基线快照可能重复；按最终路径去重，避免 total 与分页不一致。 */
 static void dedupe_live_against_refs(const ref_t *refs, size_t nref,
                                      xl_live_hit **lh, size_t *nlh) {
@@ -3782,7 +3835,41 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
         }
     }
     dedupe_live_against_refs(refs, nref, &lh, &nlh);
+    /* live 是增量事件；已删除/不可见路径不能计入 total，否则分页会显示虚高总数。 */
+    if (nlh) {
+        size_t w = 0;
+        for (size_t k = 0; k < nlh; k++) {
+            struct stat lstat_buf;
+            if (stat(lh[k].path, &lstat_buf) != 0 || system_path(lh[k].path) ||
+                (!g_team_enabled && team_path(lh[k].path))) {
+                free(lh[k].path);
+                continue;
+            }
+            if (!admin && uid >= 0) {
+                char pd[8192];
+                snprintf(pd, sizeof pd, "%s", lh[k].path);
+                char *sl = strrchr(pd, '/');
+                if (!sl) { free(lh[k].path); continue; }
+                if (sl == pd) sl[1] = 0; else *sl = 0;
+                if (!perm_dir_listable((uid_t)uid, pd) ||
+                    (!S_ISDIR(lstat_buf.st_mode) &&
+                     !perm_file_readable((uid_t)uid, lh[k].path))) {
+                    free(lh[k].path);
+                    continue;
+                }
+                if (nsc >= 0 && !team_path(lh[k].path) &&
+                    strncmp(lh[k].path, "/vol00/", 7) != 0 &&
+                    !scope_allows(sc, nsc, lh[k].path)) {
+                    free(lh[k].path);
+                    continue;
+                }
+            }
+            lh[w++] = lh[k];
+        }
+        nlh = w;
+    }
     if (nlh > 1) qsort(lh, nlh, sizeof(*lh), cmp_live);
+    total_hits = unique_ref_paths(refs, nref, uid, admin, sc, nsc, &route);
     if (catmask && nlh) {
         size_t w = 0;
         for (size_t k = 0; k < nlh; k++) {
