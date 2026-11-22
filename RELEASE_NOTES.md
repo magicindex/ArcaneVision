@@ -1,25 +1,24 @@
-# 玄览 0.10.23 发布说明
+# 玄览 0.10.24 发布说明
 
 > 发布：2026-11-22 · 适用于飞牛 fnOS（amd64）· 正式版
 
-0.10.23 修复 MKV 等容器无法直接播放的问题。
+0.10.24 增加 HLS 黑屏/无进度健康检查，避免“窗口已打开但视频长度 0、无画面”。
 
-安装包：`xuanlan_0.10.23_amd64.fpk`（1,245,484 字节）。
-SHA-256：`6c57629e39d62dd4ea4cad07491688280388a7a62fe29b4a22fdf8b3b8fe36c5`。
+安装包：`xuanlan_0.10.24_amd64.fpk`（1,245,648 字节）。
+SHA-256：`8d2e19a7acef1798fdedd857a85da607139fcb960e91d0b3f40846cd23ee6486`。
 
-## MKV/容器
+## 视频
 
-- MKV、AVI、WMV、FLV、TS、M2TS、RMVB、3GP 识别为浏览器不可靠容器；
-- 即使内部是 H.264 也强制走转码；
-- H.265/HDR/10bit/4K MKV 继续 HLS 1080p 转码；
-- Chromium 实测 MKV：
-  - `openwin on`
-  - `readyState=4`
-  - `paused=false`
-  - 无控制台错误。
+- HLS 播放后 8 秒检查：
+  - videoWidth 是否大于 0；
+  - 播放进度是否推进；
+- 只有音频/黑帧/无画面 → 自动回退直出转码；
+- MKV/AVI/WMV/FLV/TS 等容器强制转码；
+- H.264 DTS MKV、H.265 HDR MKV 实测可播放；
+- 回退/关闭回收 HLS ffmpeg。
 
 ## 安装包
 
-`xuanlan_0.10.23_amd64.fpk`
+`xuanlan_0.10.24_amd64.fpk`
 
 构建后补充字节数与 SHA-256。

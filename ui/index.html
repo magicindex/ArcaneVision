@@ -1041,7 +1041,7 @@
   const vctx = vcanvas ? vcanvas.getContext('2d') : null;
   let vdrawRaf = 0;
   let vTranscode = null, vSeekDragging = false, vHls = null, vTranscodeSeekTarget = 0;
-  let vHlsSid = '', vHlsGuard = 0, vHlsPlayed = false, vHlsFalling = false;
+  let vHlsSid = '', vHlsGuard = 0, vHlsPlayed = false, vHlsFalling = false, vHlsProgress = false;
   const VOL_KEY = 'xl_video_volume', MUTE_KEY = 'xl_video_muted';
   let vSavedVolume = 1, vSavedMuted = false;
   try {
@@ -1126,7 +1126,8 @@
   function videoSyncTime(){
     const tc = vTranscode;
     const cur = tc && tc.hls ? (vvideo.currentTime || 0) : ((tc ? tc.start : 0) + (vvideo.currentTime || 0));
-    const dur = tc && tc.duration > 0 ? tc.duration : vvideo.duration;
+    let dur = tc && tc.duration > 0 ? tc.duration : vvideo.duration;
+    if (!isFinite(dur) || dur <= 0) dur = 0;
     vtime.textContent = fmtVideoTime(cur) + ' / ' + fmtVideoTime(dur);
     if (isFinite(dur) && dur > 0) {
       vseek.disabled = false;
@@ -1262,9 +1263,13 @@
         const p = vvideo.play(); if (p && p.catch) p.catch(() => {});
       });
       clearTimeout(vHlsGuard);
+      vHlsProgress = false;
       vHlsGuard = setTimeout(() => {
-        if (!vHlsPlayed) videoFallbackHls('HLS 启动超时，已回退直出转码');
-      }, 10000);
+        /* 仅“开始播放”不够：部分 MKV 只有音频/黑帧，必须确认画面尺寸和播放进度。 */
+        if (!vHlsPlayed || !vHlsProgress || !vvideo.videoWidth) {
+          videoFallbackHls('HLS 无有效画面，已回退直出转码');
+        }
+      }, 8000);
       vHls.on(Hls.Events.ERROR, (evt, data) => {
         if (!data || !data.fatal) return;
         videoFallbackHls('HLS 播放失败，已回退直出转码');
@@ -1283,7 +1288,14 @@
   }
   vvideo.addEventListener('click', videoToggle);
   vplay.addEventListener('click', videoToggle);
-  vvideo.addEventListener('playing', () => { vHlsPlayed = true; clearTimeout(vHlsGuard); vHlsGuard = 0; });
+  vvideo.addEventListener('playing', () => { vHlsPlayed = true; });
+  vvideo.addEventListener('timeupdate', () => {
+    if (!vHlsSid) return;
+    if (vvideo.currentTime > 0.2 && vvideo.videoWidth > 0) {
+      vHlsProgress = true;
+      clearTimeout(vHlsGuard); vHlsGuard = 0;
+    }
+  });
   vvideo.addEventListener('play', () => { videoSyncPlay(); videoShowControls(); });
   vvideo.addEventListener('pause', () => { videoSyncPlay(); videoShowControls(); });
   vvideo.addEventListener('ended', () => { videoSyncPlay(); videoShowControls(); });
