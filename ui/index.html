@@ -202,6 +202,7 @@
     cursor:default;transition:background .13s, transform .13s;
     border:1px solid transparent;
   }
+  li.row{content-visibility:auto;contain-intrinsic-size:auto 58px}
   li.row:hover{background:rgba(255,255,255,.045);border-color:rgba(255,255,255,.06)}
   li.row.sel{background:rgba(94,234,212,.09);border-color:rgba(94,234,212,.28)}
   .ico{
@@ -2797,18 +2798,7 @@
       '" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">' + ICONS[c] + '</svg>';
   }
 
-  function render(){
-    sel = -1;
-    if (typeof picked !== 'undefined' && picked.size) clearPick();
-    list.innerHTML = '';
-    if (!items.length) {
-      empty.style.display = '';
-      if (q.value) empty.innerHTML = '<div class="big">∅</div>没有找到匹配项<br>试试更短的关键词';
-      return;
-    }
-    empty.style.display = 'none';
-    const frag = document.createDocumentFragment();
-    items.forEach((it, idx) => {
+  function makeRow(it, idx){
       const li = document.createElement('li');
       li.className = 'row';
       li.dataset.idx = idx;
@@ -2844,10 +2834,26 @@
         if (clickModeOf(it) === 'double') openEntry(it, items);
       };
       li.oncontextmenu = e => { e.preventDefault(); sel = idx; paintSel(); showCtx(e.clientX, e.clientY, it); };
-      frag.appendChild(li);
-    });
+      return li;
+  }
+  function appendRows(from){
+    if (!items.length) return;
+    empty.style.display = 'none';
+    const frag = document.createDocumentFragment();
+    for (let idx = from; idx < items.length; idx++) frag.appendChild(makeRow(items[idx], idx));
     list.appendChild(frag);
     updateMore();
+  }
+  function render(){
+    sel = -1;
+    if (typeof picked !== 'undefined' && picked.size) clearPick();
+    list.innerHTML = '';
+    if (!items.length) {
+      empty.style.display = '';
+      if (q.value) empty.innerHTML = '<div class="big">∅</div>没有找到匹配项<br>试试更短的关键词';
+      return;
+    }
+    appendRows(0);
   }
   function paintSel(){
     [...list.children].forEach((el, i) => el.classList.toggle('sel', i === sel));
@@ -4053,7 +4059,7 @@
         items = items.concat(d.items || []);
         searchTotal = d.total || searchTotal;
         if (items.length === before) loadFailed = true;
-        render();
+        else appendRows(before);
       })
       .catch(() => { loadFailed = true; if (my === seq) meta.textContent = '加载更多失败'; })
       .finally(() => {

@@ -1,35 +1,39 @@
-# 玄览 0.10.11 发布说明
+# 玄览 0.10.12 发布说明
 
 > 发布：2026-11-22 · 适用于飞牛 fnOS（amd64）· 正式版
 
-0.10.11 将页面背景改为固定视口层，仅文字内容滚动，降低搜索结果滚动时背景重绘的内存与渲染开销；同时补齐 ext4 镜像测试。
+0.10.12 优化长列表搜索结果滚动：固定背景只随视口绘制，结果行增量追加并启用内容可见性优化。
 
-安装包：`xuanlan_0.10.11_amd64.fpk`（1,232,513 字节）。
-SHA-256：`2dccbcec45799720c1d82d6b223d6bdb739dca9df7c29bbdf201b21174930ca9`。
+安装包：`xuanlan_0.10.12_amd64.fpk`（1,232,632 字节）。
+SHA-256：`c9bcb943a639278c10d54c5f68a7085c04aef85df9a6726ff93649fdd06384d5`。
 
-## 背景固定
+## 滚动优化
 
-- 背景从 `body` 背景图移到固定 `body::before`；
-- 使用 `position:fixed` 覆盖整个视口；
-- 搜索列表、设置页、文件列表滚动时背景不移动；
-- 暗色/亮色主题均使用固定背景层；
-- 避免移动端 `background-attachment:fixed` 不稳定导致的重绘。
+- 固定 `body::before` 背景层，背景不随列表滚动；
+- 搜索结果分页改为增量追加 DOM，不再每页重建整个列表；
+- `li.row { content-visibility:auto; contain-intrinsic-size:auto 58px }`
+  只绘制视口内行，降低长列表滚动渲染开销；
+- 列表加载失败/无新数据立即停止自动请求，避免反复渲染。
 
-## ext4 测试
+## 搜索结果
 
-- 测试镜像运行显式使用 `--entrypoint bash`；
-- 裸设备扫描与 `getdents` 全量对齐：
-  - `find=1543`
-  - `getdents=1543`
-  - `raw=1543`
-- 跳过隐藏项后 `1534` 条，符合预期。
+- 首屏 500 条，自动加载后续页；
+- 显示「正在加载更多… X / Y」；
+- 加载完成或失败保留继续加载入口；
+- 背景固定，只有文字内容滚动。
 
-## 延续
+## 回归
 
-多词搜索、单一命中 total、多词高亮、搜索自动分页、闲置扫描、团队独立索引、HLS 视频等保持。
+```text
+markdown / smoke / api / scanmode / route / unitbuild / epoch
+unitdelta / group-intersection / units-admin / repair
+multisearch / idle-scan / ui / ext4_image
+```
+
+全部通过。
 
 ## 安装包
 
-`xuanlan_0.10.11_amd64.fpk`
+`xuanlan_0.10.12_amd64.fpk`
 
 构建后补充字节数与 SHA-256。
