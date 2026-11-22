@@ -5679,6 +5679,7 @@ static pthread_mutex_t g_tc_mu = PTHREAD_MUTEX_INITIALIZER;
 static void handle_transcode(int fd, const char *qs, int uid);
 static void handle_hls_start(int fd, const char *qs, int uid);
 static void handle_hls_file(int fd, const char *pathonly);
+static void handle_hls_stop(int fd, const char *qs);
 static void handle_thumb(sbuf *out, const char *qs, int uid, int *code, const char **ctype);
 
 static void handle_remote(sbuf *out, int admin) {
@@ -6541,6 +6542,8 @@ static void handle_client(int fd) {
         handle_markdown(&body, qs, uid, &ctype);
     } else if (!strcmp(pathonly, "/api/probe")) {
         handle_probe(&body, qs, uid);
+    } else if (!strcmp(pathonly, "/api/hls/stop")) {
+        handle_hls_stop(fd, qs);
     } else if (!strncmp(pathonly, "/api/hls/", 9)) {
         handle_hls_file(fd, pathonly);
     } else if (!strcmp(pathonly, "/api/hls")) {
@@ -6810,6 +6813,8 @@ static void handle_hls_start(int fd, const char *qs, int uid) {
 
     char sid[32], dir[300];
     pthread_mutex_lock(&g_hls_mu);
+    for (int i = 0; i < HLS_MAX; i++)
+        if (g_hls[i].sid[0] && !strcmp(g_hls[i].path, real)) hls_kill(&g_hls[i]);
     int slot = -1;
     for (int i = 0; i < HLS_MAX; i++) if (!g_hls[i].sid[0]) { slot = i; break; }
     if (slot < 0) { hls_kill(&g_hls[0]); slot = 0; }
@@ -6877,6 +6882,24 @@ static void handle_hls_start(int fd, const char *qs, int uid) {
     send_simple(fd, 200, out);
 }
 
+static void handle_hls_stop(int fd, const char *qs) {
+    char sid[32] = "";
+    if (!param(qs, "sid", sid, sizeof sid) || !sid[0]) {
+        send_simple(fd, 400, "{\"ok\":false,\"error\":\"missing sid\"}");
+        return;
+    }
+    pthread_mutex_lock(&g_hls_mu);
+    int found = 0;
+    for (int i = 0; i < HLS_MAX; i++)
+        if (g_hls[i].sid[0] && !strcmp(g_hls[i].sid, sid)) {
+            hls_kill(&g_hls[i]);
+            found = 1;
+            break;
+        }
+    pthread_mutex_unlock(&g_hls_mu);
+    send_simple(fd, found ? 200 : 404, found ? "{\"ok\":true}" : "{\"ok\":false}");
+}
+
 static void handle_hls_file(int fd, const char *pathonly) {
     /* /api/hls/<sid>/<file> */
     const char *p = pathonly + 9;
@@ -6893,6 +6916,7 @@ static void handle_hls_file(int fd, const char *pathonly) {
     int found = 0;
     for (int i = 0; i < HLS_MAX; i++) if (g_hls[i].sid[0] && !strcmp(g_hls[i].sid, sid)) {
         snprintf(fpath, sizeof fpath, "%s/%s", g_hls[i].dir, file);
+        g_hls[i].at = time(NULL);
         found = 1; break;
     }
     pthread_mutex_unlock(&g_hls_mu);
@@ -7369,6 +7393,15 @@ int httpd_serve(const xl_svc_opts *o) {
         usb_tick();
         remote_health_tick();
         remote_sync_tick();
+        {
+            /* HLS 客户端断开后 ffmpeg 不能无限占用 NVENC；120 秒无分段请求即回收。 */
+            time_t now = time(NULL);
+            pthread_mutex_lock(&g_hls_mu);
+            for (int hi = 0; hi < HLS_MAX; hi++)
+                if (g_hls[hi].sid[0] && g_hls[hi].at && now - g_hls[hi].at > 120)
+                    hls_kill(&g_hls[hi]);
+            pthread_mutex_unlock(&g_hls_mu);
+        }
         units_tick();
         {
             static uint64_t drop_seen;

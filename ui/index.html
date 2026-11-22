@@ -1041,6 +1041,7 @@
   const vctx = vcanvas ? vcanvas.getContext('2d') : null;
   let vdrawRaf = 0;
   let vTranscode = null, vSeekDragging = false, vHls = null, vTranscodeSeekTarget = 0;
+  let vHlsSid = '', vHlsGuard = 0, vHlsPlayed = false, vHlsFalling = false;
   const VOL_KEY = 'xl_video_volume', MUTE_KEY = 'xl_video_muted';
   let vSavedVolume = 1, vSavedMuted = false;
   try {
@@ -1200,7 +1201,7 @@
   }
   function videoStop(){
     vTranscode = null; vSeekDragging = false;
-    if (vHls) { try { vHls.destroy(); } catch (e) {} vHls = null; }
+    stopHls();
     try { vvideo.pause(); } catch (e) {}
     vvideo.removeAttribute('src');
     try { vvideo.load(); } catch (e) {}
@@ -1208,6 +1209,29 @@
     videoStopDraw();
     clearTimeout(vHideTimer);
     vHover = false;
+  }
+  function stopHls(){
+    clearTimeout(vHlsGuard); vHlsGuard = 0;
+    if (vHls) { try { vHls.destroy(); } catch (e) {} vHls = null; }
+    if (vHlsSid) {
+      const sid = vHlsSid; vHlsSid = '';
+      fetch(API + 'hls/stop?sid=' + encodeURIComponent(sid), {method: 'POST', cache: 'no-store'}).catch(() => {});
+    }
+  }
+  function videoFallbackHls(reason){
+    if (vHlsFalling) return;
+    vHlsFalling = true;
+    const tc = vTranscode;
+    const at = vvideo.currentTime || (tc && tc.start) || 0;
+    stopHls();
+    if (!tc) { vHlsFalling = false; return; }
+    tc.hls = false;
+    tc.start = Math.max(0, at);
+    setOwTag('转码 1080p（兼容）');
+    say(reason || 'HLS 播放失败，已回退直出转码');
+    openVideo(API + 'transcode?path=' + encodeURIComponent(tc.path) + '&q=' + encodeURIComponent(tc.q || '1080') +
+      (tc.start > 0 ? '&t=' + tc.start.toFixed(3) : ''), baseName(tc.path));
+    vHlsFalling = false;
   }
   function openVideo(url, title){
     if (openIn !== 'embed') { videoStop(); window.open(url, '_blank'); return; }
@@ -1228,24 +1252,22 @@
     vvideo.removeAttribute('controls');
     if (vHls) { try { vHls.destroy(); } catch (e) {} vHls = null; }
     if (vTranscode && vTranscode.hls && /\.m3u8(?:$|\?)/.test(url) && window.Hls && window.Hls.isSupported()) {
+      const sm = url.match(/\/hls\/([^/]+)\//);
+      vHlsSid = sm ? sm[1] : '';
+      vHlsPlayed = false;
       vHls = new Hls({ enableWorker: true, lowLatencyMode: false });
       vHls.loadSource(url);
       vHls.attachMedia(vvideo);
       vHls.on(Hls.Events.MANIFEST_PARSED, () => {
         const p = vvideo.play(); if (p && p.catch) p.catch(() => {});
       });
+      clearTimeout(vHlsGuard);
+      vHlsGuard = setTimeout(() => {
+        if (!vHlsPlayed) videoFallbackHls('HLS 启动超时，已回退直出转码');
+      }, 10000);
       vHls.on(Hls.Events.ERROR, (evt, data) => {
         if (!data || !data.fatal) return;
-        const at = vvideo.currentTime || 0;
-        try { vHls.destroy(); } catch (e) {}
-        vHls = null;
-        const tc = vTranscode;
-        if (!tc) return;
-        tc.hls = false; tc.start = Math.max(0, at || tc.start || 0);
-        setOwTag('转码 1080p（兼容）');
-        say('HLS 播放失败，已回退直出转码');
-        openVideo(API + 'transcode?path=' + encodeURIComponent(tc.path) + '&q=' + encodeURIComponent(tc.q || '1080') +
-          (tc.start > 0 ? '&t=' + tc.start.toFixed(3) : ''), baseName(tc.path));
+        videoFallbackHls('HLS 播放失败，已回退直出转码');
       });
     } else {
       vvideo.src = url;
@@ -1261,6 +1283,7 @@
   }
   vvideo.addEventListener('click', videoToggle);
   vplay.addEventListener('click', videoToggle);
+  vvideo.addEventListener('playing', () => { vHlsPlayed = true; clearTimeout(vHlsGuard); vHlsGuard = 0; });
   vvideo.addEventListener('play', () => { videoSyncPlay(); videoShowControls(); });
   vvideo.addEventListener('pause', () => { videoSyncPlay(); videoShowControls(); });
   vvideo.addEventListener('ended', () => { videoSyncPlay(); videoShowControls(); });
@@ -1600,12 +1623,19 @@
   }
 
   async function openTranscode(p, why, start){
-    try { await ensureHls(); } catch (e) {}
-    let info = null;
+    let hlsOk = false;
     try {
-      const r = await fetch(API + 'hls?path=' + encodeURIComponent(p) + '&q=1080', {cache: 'no-store'});
-      info = await r.json();
+      await ensureHls();
+      hlsOk = !!(window.Hls && window.Hls.isSupported()) ||
+              !!vvideo.canPlayType('application/vnd.apple.mpegurl');
     } catch (e) {}
+    let info = null;
+    if (hlsOk) {
+      try {
+        const r = await fetch(API + 'hls?path=' + encodeURIComponent(p) + '&q=1080', {cache: 'no-store'});
+        info = await r.json();
+      } catch (e) {}
+    }
     if (!info || info.ok === false || !info.url) {
       /* HLS 启动失败时回退旧的分段直出转码 */
       let dur = 0;
