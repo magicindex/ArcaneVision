@@ -1,3 +1,10 @@
+## 0.10.23（正式版）
+
+- MKV/AVI/WMV/FLV/TS 等容器强制走转码，不再直接交给 <video>
+- 解决 H.264 MKV 因容器不支持而黑屏/无反应
+- H.265/HDR MKV 继续 HLS 1080p 转码
+- Chromium 实测 H.265 MKV HLS 播放成功
+
 ## 0.10.22（正式版）
 
 - 修复 openwin CSS 缺失右括号导致 `.openwin.on` 失效

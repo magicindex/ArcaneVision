@@ -1601,22 +1601,26 @@
     try { const r = await fetch(API + 'probe?path=' + encodeURIComponent(p)); return r.ok ? await r.json() : null; }
     catch (e) { return null; }
   }
-  // 浏览器解不了的音轨/编码，自动改用在线预览（它会转码）
+  // 浏览器解不了的音轨/编码/容器，自动改用内置转码
   async function mediaNeedsTranscode(p){
-    const cat = catOfExt(extOf(p));
+    const ext = extOf(p);
+    const cat = catOfExt(ext);
     if (cat !== 'video' && cat !== 'audio') return null;
+    /* 浏览器对 MKV/AVI/WMV/FLV 等容器没有稳定支持，即使内部是 H.264 也不能直接塞给 <video>。 */
+    const badContainer = ['mkv','avi','wmv','flv','ts','m2ts','rmvb','3gp'].includes(ext);
     const info = await probeMedia(p);
-    if (!info || !info.ok) return null;
+    if (!info || !info.ok) return badContainer ? (ext.toUpperCase() + ' 容器') : null;
     const badA = info.audio && !BS_AUDIO.includes((info.audio || '').toLowerCase());
     const badV = info.video && !BS_VIDEO.includes((info.video || '').toLowerCase());
     const deep = (info.pix || '').indexOf('10') >= 0 || (info.pix || '').indexOf('12') >= 0;
     const big  = (info.height || 0) > 1080;
     const hdr  = !!info.hdr;
-    if (!badA && !badV && !deep && !big && !hdr) return null;
+    if (!badA && !badV && !deep && !big && !hdr && !badContainer) return null;
     const parts = [];
     if (big) parts.push('4K');
     if (deep) parts.push('10bit');
     if (hdr) parts.push('HDR');
+    if (badContainer) parts.push(ext.toUpperCase() + ' 容器');
     if (badV) parts.push(info.video.toUpperCase());
     if (badA) parts.push('音轨 ' + info.audio.toUpperCase());
     return parts.join(' · ');
