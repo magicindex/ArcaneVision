@@ -274,6 +274,13 @@
   .openwin .vbar button{font-size:11.5px;padding:4px 9px;border-radius:6px;cursor:pointer;
     color:#dbe8f8;background:rgba(10,16,26,.55);border:1px solid rgba(160,190,230,.28)}
   .openwin .vbar button:hover{color:#fff;border-color:rgba(120,220,210,.6)}
+  .openwin .vbar button svg{display:block;width:15px;height:15px;pointer-events:none}
+  .openwin .vbar button[data-tip]{position:relative}
+  .openwin .vbar button[data-tip]::after{content:attr(data-tip);position:absolute;left:50%;bottom:calc(100% + 6px);
+    transform:translateX(-50%);white-space:nowrap;font-size:11px;line-height:1;padding:5px 7px;border-radius:6px;
+    color:#e9f5ff;background:rgba(8,14,24,.94);border:1px solid rgba(150,190,220,.25);
+    opacity:0;visibility:hidden;pointer-events:none;transition:opacity .12s;z-index:5}
+  .openwin .vbar button[data-tip]:hover::after{opacity:1;visibility:visible}
   .openwin .vbar #vtime{font-size:11.5px;color:#dbe8f8;white-space:nowrap;font-variant-numeric:tabular-nums}
   .openwin .vbar input[type=range]{accent-color:#59d3c8;height:16px;min-width:60px}
   .openwin .vbar #vseek{flex:1}
@@ -936,8 +943,8 @@
     '<div class="vbar"><button id="vplay" type="button" aria-label="播放或暂停">▶</button>' +
     '<span id="vtime">0:00 / 0:00</span>' +
     '<input id="vseek" type="range" min="0" max="1000" value="0" step="1" aria-label="播放进度">' +
-    '<button id="vcompact" type="button" aria-label="切换胶囊控制条">胶囊</button>' +
-    '<button id="vmute" type="button" aria-label="静音">静音</button>' +
+    '<button id="vcompact" type="button" aria-label="切换胶囊控制条" data-tip="切换胶囊控制条"></button>' +
+    '<button id="vmute" type="button" aria-label="静音" data-tip="静音"></button>' +
     '<input id="vvol" type="range" min="0" max="100" value="100" step="1" aria-label="音量">' +
     '<button id="vfull" type="button" aria-label="全屏">全屏</button></div>' +
     '<div id="vhint">空格 播放/暂停 · ←/→ 快退/快进 5 秒</div></div>' +
@@ -1047,6 +1054,11 @@
   const vseek = openwin.querySelector('#vseek');
   const vmute = openwin.querySelector('#vmute');
   const vvol = openwin.querySelector('#vvol');
+  const ICON_VOL_ON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16 9.5a3.5 3.5 0 0 1 0 5M18.5 7a7 7 0 0 1 0 10"/></svg>';
+  const ICON_VOL_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="m17 9 4 6M21 9l-4 6"/></svg>';
+  const ICON_CAPSULE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.2" y="7.2" width="17.6" height="9.6" rx="4.8"/><rect x="6.2" y="9.6" width="4.2" height="4.8" rx="2.1"/></svg>';
+  if (vcompact) { vcompact.innerHTML = ICON_CAPSULE; vcompact.title = '切换胶囊控制条'; }
+  if (vmute) { vmute.innerHTML = ICON_VOL_ON; vmute.title = '静音'; }
   const vfull = openwin.querySelector('#vfull');
   let vHideTimer = 0, vHover = false;
   const vbar = openwin.querySelector('.vbar');
@@ -1274,8 +1286,11 @@
   }
   function videoSyncVolume(){
     if (!vvideo.muted) vSavedVolume = vvideo.volume;
-    vmute.textContent = vvideo.muted ? '取消静音' : '静音';
-    vmute.setAttribute('aria-label', vvideo.muted ? '取消静音' : '静音');
+    vmute.innerHTML = vvideo.muted ? ICON_VOL_OFF : ICON_VOL_ON;
+    vmute.title = vvideo.muted ? '取消静音并恢复音量' : '静音';
+    vmute.setAttribute('data-tip', vmute.title);
+    vmute.setAttribute('aria-label', vvideo.muted ? '取消静音并恢复音量' : '静音');
+    vmute.setAttribute('aria-pressed', vvideo.muted ? 'true' : 'false');
     vvol.disabled = !!vvideo.muted;
     vvol.value = String(Math.round((vvideo.muted ? vSavedVolume : vvideo.volume) * 100));
   }
@@ -1317,6 +1332,12 @@
     if (vbar.classList.contains('compact')) {
       vbar.style.left = ''; vbar.style.top = ''; vbar.style.bottom = ''; vbar.style.transform = '';
     }
+    const compact = vbar.classList.contains('compact');
+    const tip = compact ? '切换完整控制条' : '切换胶囊控制条';
+    vcompact.title = tip;
+    vcompact.setAttribute('data-tip', tip);
+    vcompact.setAttribute('aria-label', tip);
+    vcompact.setAttribute('aria-pressed', compact ? 'true' : 'false');
     vbarSave(); videoShowControls();
   };
   if (vbar) {
