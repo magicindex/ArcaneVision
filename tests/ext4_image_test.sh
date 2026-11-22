@@ -50,7 +50,7 @@ if [ "${XL_EXT4_HOST:-0}" = "1" ]; then
     sudo umount /mnt/xl
     trap - EXIT
 else
-    docker run --rm --privileged -v "$PWD:/w" -v /tmp:/tmp "${XL_EXT4_IMAGE:-subnetdesk-build:bookworm}" bash -c "
+    docker run --rm --privileged --entrypoint bash -v "$PWD:/w" -v /tmp:/tmp "${XL_EXT4_IMAGE:-subnetdesk-build:bookworm}" -c "
 $(declare -f populate)
 set -e
 mkdir -p /mnt/xl

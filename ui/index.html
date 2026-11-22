@@ -17,18 +17,27 @@
   }
   *{box-sizing:border-box}
   html,body{height:100%}
+  html{background:var(--bg)}
   body{
-    margin:0; color:var(--txt); background:var(--bg);
+    margin:0; color:var(--txt); background:transparent;
     font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Inter","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
     -webkit-tap-highlight-color:transparent;
     -webkit-font-smoothing:antialiased;
+    position:relative;
+  }
+  /* 背景层固定在视口，滚动只移动内容；避免 iOS 把 background-image 随页面重绘/占用额外内存。 */
+  body::before{
+    content:''; position:fixed; inset:0; z-index:-1; pointer-events:none;
+    background-color:var(--bg);
     background-image:
       radial-gradient(1100px 600px at 12% -10%, rgba(94,234,212,.14), transparent 60%),
       radial-gradient(900px 520px at 88% 0%, rgba(129,140,248,.16), transparent 62%),
       radial-gradient(700px 500px at 50% 120%, rgba(129,140,248,.08), transparent 70%);
-    background-attachment:fixed;
+    background-repeat:no-repeat;
+    background-size:cover;
+    background-position:center;
   }
-  .wrap{max-width:980px;margin:0 auto;padding:34px 22px 80px}
+  .wrap{position:relative;z-index:1;max-width:980px;margin:0 auto;padding:34px 22px 80px}
   header{display:flex;align-items:center;gap:14px;margin-bottom:26px}
   .mark{
     width:44px;height:44px;border-radius:13px;flex:none;
@@ -525,8 +534,10 @@
     --line:rgba(15,23,42,.13); --txt:#101a2c; --dim:#5a6880;
     --teal:#0f9c8c; --indigo:#5b63d3; --amber:#b45309;
   }
-  html[data-theme="light"] body{
-    background:#f6f7fb; color:var(--txt);
+  html[data-theme="light"] body{color:var(--txt)}
+  html[data-theme="light"]{background:#f6f7fb}
+  html[data-theme="light"] body::before{
+    background-color:#f6f7fb;
     background-image:
       radial-gradient(1100px 600px at 12% -10%, rgba(15,156,140,.10), transparent 62%),
       radial-gradient(900px 520px at 88% 0%, rgba(91,99,211,.10), transparent 64%),
