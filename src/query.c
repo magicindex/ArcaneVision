@@ -220,6 +220,26 @@ void snap_path(const xl_snap *sn, uint32_t id, char *out, size_t cap) {
     else snprintf(out, cap, "%s%s", root, tail + pos);
 }
 
+/* 估算一个词的 trigram 候选量：取该词所有 trigram 中出现次数最少的一个。
+ * 返回 UINT32_MAX 表示没有可用 trigram（短词/空词），优先用长词。 */
+static uint32_t term_candidate_cost(const xl_snap *sn, const xl_query_term *t) {
+    if (!t || !t->s || t->len < 3) return UINT32_MAX;
+    char lb[XL_NAME_MAX + 1];
+    lower_copy(lb, t->s, t->len);
+    uint32_t best = UINT32_MAX;
+    for (size_t i = 0; i + 3 <= t->len; i++) {
+        uint32_t tg = ((uint32_t)(unsigned char)lb[i] << 16) |
+                      ((uint32_t)(unsigned char)lb[i + 1] << 8) |
+                      (uint32_t)(unsigned char)lb[i + 2];
+        uint32_t p = tri_lookup_sorted(sn->tri_ids, sn->h.tri_count, tg);
+        uint32_t cnt = (p < sn->h.tri_count && sn->tri_ids[p] == tg)
+                           ? sn->tri_ranges[p].count : 0;
+        if (cnt == 0) return 0;
+        if (cnt < best) best = cnt;
+    }
+    return best;
+}
+
 uint32_t *query_hits_terms(const xl_snap *sn, const xl_query_term *terms, int nterms,
                            int match_all, int case_sensitive, int ordered,
                            const xl_query_opts *o, uint32_t *n_out,
@@ -277,9 +297,16 @@ uint32_t *query_hits_terms(const xl_snap *sn, const xl_query_term *terms, int nt
         return all;
     }
     const xl_query_term *candidate = NULL;
+    uint32_t best_cost = UINT32_MAX;
     for (int i = 0; i < nterms; i++) {
         if (!terms[i].s || !terms[i].len) continue;
-        if (!candidate || terms[i].len > candidate->len) candidate = &terms[i];
+        uint32_t cost = term_candidate_cost(sn, &terms[i]);
+        /* 优先稀有的 trigram，其次更长的词；短词没有 trigram 时让长词出候选。 */
+        if (!candidate || cost < best_cost ||
+            (cost == best_cost && terms[i].len > candidate->len)) {
+            candidate = &terms[i];
+            best_cost = cost;
+        }
     }
     if (!candidate) return NULL;
     size_t nlen = candidate->len;

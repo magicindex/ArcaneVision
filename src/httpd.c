@@ -3455,6 +3455,8 @@ static int search_sep_len(const char *p, const char *sep) {
         p[2] && (unsigned char)p[2] == 0x8C) return 3;   /* ， */
     if (c == 0xE3 && p[1] && (unsigned char)p[1] == 0x80 &&
         p[2] && (unsigned char)p[2] == 0x81) return 3;   /* 、 */
+    if (c == 0xE3 && p[1] && (unsigned char)p[1] == 0x80 &&
+        p[2] && (unsigned char)p[2] == 0x80) return 3;   /* 全角空格 */
     return isspace(c) ? 1 : 0;
 }
 

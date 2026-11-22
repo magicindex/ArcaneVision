@@ -140,6 +140,7 @@ try:
     expect("chinese comma", count("alpha，beta"), 2)
     expect("dunhao", count("alpha、beta"), 2)
     expect("mixed separators", count("alpha,,，、 beta"), 2)
+    expect("fullwidth space", count("alpha　beta"), 2)
     expect("mixed language", count("alpha、测试"), 1)
     setting({"searchSeparator": "line"})
     expect("line", count("alpha\nbeta"), 2)

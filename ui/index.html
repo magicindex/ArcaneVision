@@ -2704,7 +2704,7 @@
     let i = 0;
     const isSep = (s, p) => {
       const c = s.charCodeAt(p);
-      if (c === 0x2C || c === 0x3001 || c === 0xFF0C || c <= 0x20) return true;
+      if (c === 0x2C || c === 0x3000 || c === 0x3001 || c === 0xFF0C || c <= 0x20) return true;
       return false;
     };
     while (i < q.length) {
@@ -4038,8 +4038,10 @@
       .then(d => {
         if (my !== seq) return;
         if (d.error) { loadFailed = true; meta.textContent = d.error === 'rate limited' ? '查询过于频繁，请稍后再试' : ('查询失败：' + d.error); return; }
+        const before = items.length;
         items = items.concat(d.items || []);
         searchTotal = d.total || searchTotal;
+        if (items.length === before) loadFailed = true;
         render();
       })
       .catch(() => { loadFailed = true; if (my === seq) meta.textContent = '加载更多失败'; })
