@@ -233,6 +233,7 @@
   .ctx div:hover{background:rgba(86,190,190,.16);color:#eaf6f6}
 
   .openwin{position:fixed;top:26px;right:26px;bottom:26px;left:26px;z-index:190;display:none;flex-direction:column;overflow:hidden;
+    min-width:min(560px,calc(100vw - 20px));min-height:min(360px,calc(100vh - 20px));
     background:linear-gradient(180deg,rgba(22,31,48,.99),rgba(13,19,31,.99));
     border:1px solid rgba(120,180,200,.22);border-radius:14px;box-shadow:0 24px 70px rgba(0,0,0,.6)}
   .openwin.on{display:flex}
@@ -952,9 +953,19 @@
   document.body.appendChild(openwin);
   const owframe = openwin.querySelector('#owframe');
   let owUrl = '';
+  const OW_MIN_W = 560, OW_MIN_H = 360;
+  function owMinW(){ return Math.max(320, Math.min(OW_MIN_W, innerWidth - 20)); }
+  function owMinH(){ return Math.max(240, Math.min(OW_MIN_H, innerHeight - 20)); }
   const owState = (() => {
-    try { const v = JSON.parse(localStorage.getItem('xl_openwin') || 'null'); if (v && v.w > 200) return v; } catch (e) {}
-    const first = { x: 26, y: 26, w: 0, h: 0, max: true };
+    try { const v = JSON.parse(localStorage.getItem('xl_openwin') || 'null');
+      if (v && v.w > 200) {
+        v.w = Math.max(owMinW(), Math.min(innerWidth - 20, v.w));
+        v.h = Math.max(owMinH(), Math.min(innerHeight - 20, v.h));
+        return v;
+      }
+    } catch (e) {}
+    const first = { x: 26, y: 26, w: Math.max(320, Math.min(OW_MIN_W, innerWidth - 52)),
+                    h: Math.max(240, Math.min(OW_MIN_H, innerHeight - 52)), max: false };
     try { localStorage.setItem('xl_openwin', JSON.stringify(first)); } catch (e) {}
     return first;
   })();
@@ -975,7 +986,13 @@
       openwin.style.width = ''; openwin.style.height = '';
       return;
     }
-    if (!owState.w) { owState.x = 26; owState.y = 26; owState.w = innerWidth - 52; owState.h = innerHeight - 52; }
+    if (!owState.w) {
+      owState.x = 26; owState.y = 26;
+      owState.w = Math.max(320, Math.min(OW_MIN_W, innerWidth - 52));
+      owState.h = Math.max(240, Math.min(OW_MIN_H, innerHeight - 52));
+    }
+    owState.w = Math.max(owMinW(), Math.min(innerWidth - 20, owState.w));
+    owState.h = Math.max(owMinH(), Math.min(innerHeight - 20, owState.h));
     setOwBox('auto', 'auto', 'auto', 'auto');
     openwin.style.left = owState.x + 'px';
     openwin.style.top = owState.y + 'px';
@@ -990,6 +1007,9 @@
   }
   openwin.querySelector('#owfit').onclick = toggleOwMax;
   openwin.querySelector('.owbar').ondblclick = toggleOwMax;
+  addEventListener('resize', () => {
+    if (openwin.classList.contains('on') && !owState.max) applyOw();
+  }, {passive:true});
   (() => {
     const h = openwin.querySelector('.rsz');
     let sx = 0, sy = 0, sw = 0, sh = 0, dragging = false;
@@ -1001,8 +1021,8 @@
     });
     h.addEventListener('pointermove', e => {
       if (!dragging) return;
-      owState.w = Math.max(420, sw + (e.clientX - sx));
-      owState.h = Math.max(280, sh + (e.clientY - sy));
+      owState.w = Math.max(owMinW(), Math.min(innerWidth - 20, sw + (e.clientX - sx)));
+      owState.h = Math.max(owMinH(), Math.min(innerHeight - 20, sh + (e.clientY - sy)));
       applyOw();
     });
     h.addEventListener('pointerup', e => { if (dragging) { dragging = false; h.releasePointerCapture(e.pointerId); saveOw(); } });

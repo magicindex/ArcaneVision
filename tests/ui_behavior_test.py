@@ -54,6 +54,7 @@ must(".vbar.compact #vvol" in src and 'id="vmute"' in src, "compact volume contr
 must("vvol.disabled = !!vvideo.muted" in src and "#vvol:disabled" in src, "muted slider disabled")
 must('body::before' in src and 'background-attachment' not in src, "fixed background layer")
 must('function appendRows' in src and 'content-visibility:auto' in src, "incremental list rendering")
+must('OW_MIN_W = 560' in src and 'owMinW()' in src and 'min-width:min(560px' in src, "open window minimum sizing")
 must('id="searchCard"' in src and 'id="searchMulti"' in src, "multi search setting")
 must('id="searchMatchAll"' in src and 'id="searchSep"' in src, "multi search options")
 must('id="searchCaseSensitive"' in src and 'id="searchOrdered"' in src, "multi search flags")
