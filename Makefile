@@ -42,6 +42,7 @@ test: $(BIN) bin/markdown_test
 	python3 tests/units_admin_test.py $(BIN)
 	python3 tests/repair_test.py $(BIN)
 	python3 tests/multisearch_test.py $(BIN)
+	python3 tests/pagination_test.py $(BIN)
 	python3 tests/idle_scan_test.py $(BIN)
 	python3 tests/ui_behavior_test.py
 	./tests/ext4_image_test.sh
