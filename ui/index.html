@@ -1057,12 +1057,12 @@
   const ICON_VOL_ON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16 9.5a3.5 3.5 0 0 1 0 5M18.5 7a7 7 0 0 1 0 10"/></svg>';
   const ICON_VOL_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="m17 9 4 6M21 9l-4 6"/></svg>';
   const ICON_CAPSULE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.2" y="7.2" width="17.6" height="9.6" rx="4.8"/><rect x="6.2" y="9.6" width="4.2" height="4.8" rx="2.1"/></svg>';
-  if (vcompact) { vcompact.innerHTML = ICON_CAPSULE; vcompact.title = '切换胶囊控制条'; }
-  if (vmute) { vmute.innerHTML = ICON_VOL_ON; vmute.title = '静音'; }
   const vfull = openwin.querySelector('#vfull');
   let vHideTimer = 0, vHover = false;
   const vbar = openwin.querySelector('.vbar');
   const vcompact = openwin.querySelector('#vcompact');
+  if (vcompact) { vcompact.innerHTML = ICON_CAPSULE; vcompact.title = '切换胶囊控制条'; }
+  if (vmute) { vmute.innerHTML = ICON_VOL_ON; vmute.title = '静音'; }
   let vbarDrag = null;
   function vbarSave(){
     try {
