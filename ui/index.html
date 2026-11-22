@@ -1329,9 +1329,8 @@
   vbarLoad();
   if (vcompact) vcompact.onclick = () => {
     vbar.classList.toggle('compact');
-    if (vbar.classList.contains('compact')) {
-      vbar.style.left = ''; vbar.style.top = ''; vbar.style.bottom = ''; vbar.style.transform = '';
-    }
+    /* 进入/退出胶囊都回到默认位置和默认样式，不继承上一次拖拽位置。 */
+    vbar.style.left = ''; vbar.style.top = ''; vbar.style.bottom = ''; vbar.style.transform = '';
     const compact = vbar.classList.contains('compact');
     const tip = compact ? '切换完整控制条' : '切换胶囊控制条';
     vcompact.title = tip;
