@@ -1122,6 +1122,45 @@ static size_t route_delta_query(const query_route_t *r, const char *q, xl_live_h
     return n;
 }
 
+static int live_term_match(const char *path, const xl_query_term *terms, int nterms,
+                           int match_all, int case_sensitive, int ordered);
+
+static size_t route_delta_query_terms(const query_route_t *r, const xl_query_term *terms,
+                                      int nterms, int match_all, int case_sensitive,
+                                      int ordered, xl_live_hit **out) {
+    *out = NULL;
+    size_t n = 0, cap = 0;
+    xl_live_hit *v = NULL;
+    for (int t = 0; t < nterms; t++) {
+        if (!terms[t].s || !terms[t].len) continue;
+        xl_live_hit *h = NULL;
+        size_t m = route_delta_query(r, terms[t].s, &h);
+        for (size_t k = 0; k < m; k++) {
+            int dup = 0;
+            for (size_t j = 0; j < n; j++)
+                if (!strcmp(v[j].path, h[k].path)) { dup = 1; break; }
+            if (dup) { free(h[k].path); continue; }
+            if (n == cap) {
+                cap = cap ? cap * 2 : 64;
+                xl_live_hit *nv = realloc(v, cap * sizeof(*v));
+                if (!nv) { for (; k < m; k++) free(h[k].path); free(h); goto done; }
+                v = nv;
+            }
+            v[n++] = h[k];
+        }
+        free(h);
+    }
+done:
+    size_t w = 0;
+    for (size_t i = 0; i < n; i++) {
+        if (live_term_match(v[i].path, terms, nterms, match_all, case_sensitive, ordered))
+            v[w++] = v[i];
+        else free(v[i].path);
+    }
+    *out = v;
+    return w;
+}
+
 /* ---------- 设备解析 ---------- */
 static int mount_dev_for(const char *root, char *dev, size_t cap) {
     FILE *f = fopen("/proc/self/mounts", "r");
@@ -3500,6 +3539,93 @@ static int search_terms_parse(const char *q, const char *sep,
     return n;
 }
 
+static int live_term_match(const char *path, const xl_query_term *terms, int nterms,
+                           int match_all, int case_sensitive, int ordered) {
+    const char *name = strrchr(path, '/');
+    name = name ? name + 1 : path;
+    size_t nlen = strlen(name), from = 0;
+    int hit = 0;
+    for (int i = 0; i < nterms; i++) {
+        const char *s = terms[i].s;
+        size_t sl = terms[i].len;
+        if (!s || !sl || sl > nlen || from > nlen - sl) {
+            if (match_all) return 0;
+            continue;
+        }
+        const char *h = case_sensitive ? memmem(name + from, nlen - from, s, sl)
+                                       : memmem_ci(name + from, nlen - from, s, sl);
+        if (!h) {
+            if (match_all) return 0;
+            continue;
+        }
+        hit = 1;
+        if (ordered) from = (size_t)(h - name) + sl;
+    }
+    return match_all ? 1 : hit;
+}
+
+/* 多词 live/delta 不能直接用完整 q 做子串过滤；逐词取候选后按最终词义过滤。 */
+static size_t live_query_terms(const xl_query_term *terms, int nterms,
+                               int match_all, int case_sensitive, int ordered,
+                               xl_live_hit **out) {
+    *out = NULL;
+    size_t n = 0, cap = 0;
+    xl_live_hit *v = NULL;
+    for (int i = 0; i < nterms; i++) {
+        if (!terms[i].s || !terms[i].len) continue;
+        xl_live_hit *h = NULL;
+        size_t m = live_query(terms[i].s, &h);
+        for (size_t k = 0; k < m; k++) {
+            int dup = 0;
+            for (size_t j = 0; j < n; j++)
+                if (!strcmp(v[j].path, h[k].path)) { dup = 1; break; }
+            if (dup) { free(h[k].path); continue; }
+            if (n == cap) {
+                cap = cap ? cap * 2 : 64;
+                xl_live_hit *nv = realloc(v, cap * sizeof(*v));
+                if (!nv) { for (; k < m; k++) free(h[k].path); free(h); goto done; }
+                v = nv;
+            }
+            v[n++] = h[k];
+        }
+        free(h);
+    }
+done:
+    size_t w = 0;
+    for (size_t i = 0; i < n; i++) {
+        if (live_term_match(v[i].path, terms, nterms, match_all, case_sensitive, ordered))
+            v[w++] = v[i];
+        else
+            free(v[i].path);
+    }
+    *out = v;
+    return w;
+}
+
+/* live/delta 命中与基线快照可能重复；按最终路径去重，避免 total 与分页不一致。 */
+static void dedupe_live_against_refs(const ref_t *refs, size_t nref,
+                                     xl_live_hit **lh, size_t *nlh) {
+    if (!lh || !*lh || !*nlh || !refs || !nref) return;
+    char **rp = calloc(nref, sizeof(char *));
+    if (!rp) return;
+    for (size_t i = 0; i < nref; i++) {
+        char path[8192];
+        snap_path(&refs[i].v->sn, refs[i].id, path, sizeof path);
+        rp[i] = strdup(path);
+    }
+    size_t w = 0;
+    for (size_t k = 0; k < *nlh; k++) {
+        int dup = 0;
+        for (size_t i = 0; i < nref; i++)
+            if (rp[i] && !strcmp(rp[i], (*lh)[k].path)) { dup = 1; break; }
+        if (dup) free((*lh)[k].path);
+        else (*lh)[w++] = (*lh)[k];
+    }
+    *nlh = w;
+    for (size_t i = 0; i < nref; i++) free(rp[i]);
+    free(rp);
+}
+
 static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
     char q[512] = "", s_limit[32] = "", s_off[32] = "", type[16] = "", s_cat[24] = "";
     param(qs, "q", q, sizeof(q));
@@ -3619,20 +3745,43 @@ static void handle_search(sbuf *out, const char *qs, int uid, int admin) {
     xl_live_hit *lh = NULL;
     /* 单元索引是基线；实时增量统一从全局 live 查询，输出仍按请求 uid 的 ACL 复核。
        这样新建/改名文件立刻可见，删除项由墓碑过滤，单元索引在下一次对账追上。 */
-    size_t nlh = live_query(q, &lh);
+    size_t nlh;
+    if (nterms > 1) {
+        nlh = live_query_terms(terms, nterms, g_search_all, g_search_case, g_search_ordered, &lh);
+    } else {
+        nlh = live_query(q, &lh);
+    }
     {
         xl_live_hit *dh = NULL;
-        size_t nd = route_delta_query(&route, q, &dh);
+        size_t nd = (nterms > 1)
+            ? route_delta_query_terms(&route, terms, nterms, g_search_all,
+                                      g_search_case, g_search_ordered, &dh)
+            : route_delta_query(&route, q, &dh);
         if (nd) {
-            xl_live_hit *nv = realloc(lh, (nlh + nd) * sizeof(*lh));
-            if (nv) {
-                lh = nv;
-                memcpy(lh + nlh, dh, nd * sizeof(*dh));
-                nlh += nd;
+            /* 单测/单元模式也可能有 delta；多词时按最终词义过滤。 */
+            if (nterms > 1) {
+                size_t w = 0;
+                for (size_t k = 0; k < nd; k++) {
+                    if (live_term_match(dh[k].path, terms, nterms, g_search_all,
+                                        g_search_case, g_search_ordered))
+                        dh[w++] = dh[k];
+                    else
+                        free(dh[k].path);
+                }
+                nd = w;
+            }
+            if (nd) {
+                xl_live_hit *nv = realloc(lh, (nlh + nd) * sizeof(*lh));
+                if (nv) {
+                    lh = nv;
+                    memcpy(lh + nlh, dh, nd * sizeof(*dh));
+                    nlh += nd;
+                }
             }
             free(dh);
         }
     }
+    dedupe_live_against_refs(refs, nref, &lh, &nlh);
     if (nlh > 1) qsort(lh, nlh, sizeof(*lh), cmp_live);
     if (catmask && nlh) {
         size_t w = 0;
