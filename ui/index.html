@@ -264,6 +264,9 @@
   /* 视频预览：自定义控制条，鼠标离开播放窗口即隐藏，避免遮挡画面 */
   .openwin #videoview{display:none;flex:1;flex-direction:column;min-height:0;background:#000;position:relative;overflow:hidden}
   .openwin #videoview.on{display:flex}
+  .openwin #videoview.loading::after{content:'正在准备视频…';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+    z-index:4;font-size:13px;color:#dbe8f8;background:rgba(8,14,24,.82);border:1px solid rgba(150,190,220,.24);
+    padding:8px 14px;border-radius:9px;pointer-events:none}
   .openwin #vvideo{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;cursor:pointer;outline:none;opacity:0;z-index:1}
   .openwin #vcanvas{position:absolute;inset:0;width:100%;height:100%;background:#000;object-fit:contain;pointer-events:none;z-index:0}
   .openwin #vvideo::-webkit-media-controls,
@@ -1206,7 +1209,7 @@
     try { vvideo.pause(); } catch (e) {}
     vvideo.removeAttribute('src');
     try { vvideo.load(); } catch (e) {}
-    videoView.classList.remove('on', 'ctrlon');
+    videoView.classList.remove('on', 'ctrlon', 'loading');
     videoStopDraw();
     clearTimeout(vHideTimer);
     vHover = false;
@@ -1234,6 +1237,20 @@
       (tc.start > 0 ? '&t=' + tc.start.toFixed(3) : ''), baseName(tc.path));
     vHlsFalling = false;
   }
+  function videoPending(title){
+    videoStop();
+    pdfHide();
+    owframe.style.display = 'none';
+    owframe.removeAttribute('src');
+    owframe.removeAttribute('srcdoc');
+    openwin.querySelector('#owtitle').textContent = title || '视频';
+    openwin.classList.add('on');
+    videoView.classList.add('on', 'loading');
+    videoView.classList.remove('ctrlon');
+    setOwTag('准备转码');
+    applyOw();
+    try { videoShowControls(); } catch (e) {}
+  }
   function openVideo(url, title){
     if (openIn !== 'embed') { videoStop(); window.open(url, '_blank'); return; }
     if (url.indexOf('/api/transcode') < 0 && url.indexOf('/hls/') < 0) { setOwTag(''); vTranscode = null; }
@@ -1245,6 +1262,7 @@
     owframe.removeAttribute('srcdoc');
     openwin.querySelector('#owtitle').textContent = title || '视频';
     videoView.classList.add('on');
+    videoView.classList.remove('loading');
     openwin.classList.add('on');
     videoStartDraw();
     applyOw();
@@ -1638,7 +1656,18 @@
     return parts.join(' · ');
   }
 
+  function refreshTranscodeDuration(p){
+    fetch(API + 'probe?path=' + encodeURIComponent(p), {cache:'no-store'})
+      .then(r => r.json())
+      .then(d => {
+        if (vTranscode && vTranscode.path === p && vTranscode.duration <= 0) {
+          vTranscode.duration = Number(d.duration) || 0;
+          videoSyncTime();
+        }
+      }).catch(() => {});
+  }
   async function openTranscode(p, why, start){
+    videoPending(baseName(p));
     let hlsOk = false;
     try {
       await ensureHls();
@@ -1653,18 +1682,18 @@
       } catch (e) {}
     }
     if (!info || info.ok === false || !info.url) {
-      /* HLS 启动失败时回退旧的分段直出转码 */
-      let dur = 0;
-      try { const pi = await fetch(API + 'probe?path=' + encodeURIComponent(p), {cache:'no-store'}).then(r=>r.json()); dur = Number(pi.duration)||0; } catch(e) {}
-      vTranscode = { path:p, why:why||'', q:'1080', duration:dur, start:Math.max(0, Number(start)||0) };
+      /* HLS 启动失败时回退旧的分段直出转码；时长异步补齐，不阻塞打开。 */
+      vTranscode = { path:p, why:why||'', q:'1080', duration:0, start:Math.max(0, Number(start)||0) };
       setOwTag('转码 1080p（直出）');
       openVideo(API + 'transcode?path=' + encodeURIComponent(p) + '&q=1080' + (vTranscode.start > 0 ? '&t=' + vTranscode.start.toFixed(3) : ''), baseName(p));
+      refreshTranscodeDuration(p);
       return;
     }
-    vTranscode = { path:p, why:why||'', q:'1080', duration:Number(info.duration)||0, start:0, hls:true };
+    vTranscode = { path:p, why:why||'', q:'1080', duration:0, start:0, hls:true };
     setOwTag('转码 1080p · HLS');
     say('正在转码播放（1080p HLS，可拖动）');
     openVideo(API + info.url, baseName(p));
+    refreshTranscodeDuration(p);
   }
 
   function setOwTag(text){

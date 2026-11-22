@@ -6830,25 +6830,27 @@ static void handle_hls_start(int fd, const char *qs, int uid) {
     snprintf(vf, sizeof vf, "scale=%d:%d:force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuv420p", W, H);
     char vb[16];
     snprintf(vb, sizeof vb, "%dM", br);
-    char *argv[48];
+    char *argv[80];
     int n = 0;
     argv[n++] = (char *)ffmpeg_path();
     argv[n++] = "-hide_banner"; argv[n++] = "-loglevel"; argv[n++] = "error"; argv[n++] = "-nostdin";
+    argv[n++] = "-analyzeduration"; argv[n++] = "0"; argv[n++] = "-probesize"; argv[n++] = "1000000";
+    argv[n++] = "-hwaccel"; argv[n++] = "auto";
     argv[n++] = "-i"; argv[n++] = real;
     argv[n++] = "-t"; argv[n++] = "14400";
     argv[n++] = "-map"; argv[n++] = "0:v:0"; argv[n++] = "-map"; argv[n++] = "0:a:0?";
     argv[n++] = "-vf"; argv[n++] = vf;
     if (g_have_nvenc) {
-        argv[n++] = "-c:v"; argv[n++] = "h264_nvenc"; argv[n++] = "-preset"; argv[n++] = "p4";
+        argv[n++] = "-c:v"; argv[n++] = "h264_nvenc"; argv[n++] = "-preset"; argv[n++] = "p1";
         argv[n++] = "-rc"; argv[n++] = "vbr"; argv[n++] = "-b:v"; argv[n++] = vb;
     } else {
         argv[n++] = "-c:v"; argv[n++] = "libx264"; argv[n++] = "-preset"; argv[n++] = "veryfast";
         argv[n++] = "-b:v"; argv[n++] = vb;
     }
     argv[n++] = "-c:a"; argv[n++] = "aac"; argv[n++] = "-b:a"; argv[n++] = "128k"; argv[n++] = "-ac"; argv[n++] = "2";
-    argv[n++] = "-force_key_frames"; argv[n++] = "expr:gte(t,n_forced*2)";
+    argv[n++] = "-force_key_frames"; argv[n++] = "expr:gte(t,n_forced*1)";
     argv[n++] = "-f"; argv[n++] = "hls";
-    argv[n++] = "-hls_time"; argv[n++] = "2";
+    argv[n++] = "-hls_time"; argv[n++] = "1";
     argv[n++] = "-hls_list_size"; argv[n++] = "0";
     argv[n++] = "-hls_playlist_type"; argv[n++] = "event";
     argv[n++] = "-hls_flags"; argv[n++] = "independent_segments";
@@ -6877,8 +6879,8 @@ static void handle_hls_start(int fd, const char *qs, int uid) {
         usleep(100000);
     }
     char out[512];
-    snprintf(out, sizeof out, "{\"ok\":true,\"sid\":\"%s\",\"duration\":%.3f,\"url\":\"hls/%s/index.m3u8\"}",
-             sid, media_duration(real), sid);
+    snprintf(out, sizeof out, "{\"ok\":true,\"sid\":\"%s\",\"duration\":0,\"url\":\"hls/%s/index.m3u8\"}",
+             sid, sid);
     send_simple(fd, 200, out);
 }
 
