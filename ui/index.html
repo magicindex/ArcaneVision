@@ -278,6 +278,7 @@
   .openwin .vbar input[type=range]{accent-color:#59d3c8;height:16px;min-width:60px}
   .openwin .vbar #vseek{flex:1}
   .openwin .vbar #vvol{width:68px;flex:none}
+  .openwin .vbar #vvol:disabled{opacity:.35;filter:grayscale(1);cursor:not-allowed}
   .openwin .vbar.compact{left:50%;right:auto;bottom:14px;width:auto;max-width:calc(100% - 20px);
     padding:7px 10px;border-radius:999px;background:rgba(8,14,24,.84);border:1px solid rgba(150,190,220,.22);
     box-shadow:0 6px 22px rgba(0,0,0,.35);backdrop-filter:blur(10px);transform:translateX(-50%)}
@@ -1275,6 +1276,7 @@
     if (!vvideo.muted) vSavedVolume = vvideo.volume;
     vmute.textContent = vvideo.muted ? '取消静音' : '静音';
     vmute.setAttribute('aria-label', vvideo.muted ? '取消静音' : '静音');
+    vvol.disabled = !!vvideo.muted;
     vvol.value = String(Math.round((vvideo.muted ? vSavedVolume : vvideo.volume) * 100));
   }
   if (vmute) vmute.addEventListener('click', () => {
