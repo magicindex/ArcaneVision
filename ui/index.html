@@ -233,11 +233,11 @@
   .ctx div:hover{background:rgba(86,190,190,.16);color:#eaf6f6}
 
   .openwin{position:fixed;top:26px;right:26px;bottom:26px;left:26px;z-index:190;display:none;flex-direction:column;overflow:hidden;
-    min-width:min(600px,calc(100vw - 20px));min-height:min(420px,calc(100vh - 20px));scrollbar-width:none}
-  .openwin::-webkit-scrollbar,.openwin #videoview::-webkit-scrollbar,.openwin .vbar::-webkit-scrollbar{display:none;width:0;height:0}
-  .openwin #videoview,.openwin .vbar{scrollbar-width:none}
+    min-width:min(600px,calc(100vw - 20px));min-height:min(420px,calc(100vh - 20px));scrollbar-width:none;
     background:linear-gradient(180deg,rgba(22,31,48,.99),rgba(13,19,31,.99));
     border:1px solid rgba(120,180,200,.22);border-radius:14px;box-shadow:0 24px 70px rgba(0,0,0,.6)}
+  .openwin::-webkit-scrollbar,.openwin #videoview::-webkit-scrollbar,.openwin .vbar::-webkit-scrollbar{display:none;width:0;height:0}
+  .openwin #videoview,.openwin .vbar{scrollbar-width:none}
   .openwin.on{display:flex}
   .openwin .owbar{display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12.5px;color:#9fb3d1;
     border-bottom:1px solid rgba(120,160,220,.14)}
