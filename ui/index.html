@@ -992,6 +992,13 @@
       openwin.style.width = ''; openwin.style.height = '';
       return;
     }
+    if (coarse || innerWidth <= 620) {
+      /* 手机/窄屏：播放器必须铺满视口，避免 26px 左边距把右侧裁掉。 */
+      setOwBox('0px', '0px', '0px', '0px');
+      openwin.style.width = 'auto';
+      openwin.style.height = 'auto';
+      return;
+    }
     if (!owState.w) {
       owState.x = 26; owState.y = 26;
       owState.w = Math.max(320, Math.min(OW_MIN_W, innerWidth - 52));
@@ -1418,6 +1425,8 @@
   if (vbar) {
     vbar.addEventListener('pointerdown', e => {
       if (e.target.closest('button,input')) return;
+      /* 只有胶囊模式允许拖动；完整控制条固定在底部。 */
+      if (!vbar.classList.contains('compact')) return;
       e.preventDefault();
       vHover = true; videoShowControls();
       const pr = videoView.getBoundingClientRect(), br = vbar.getBoundingClientRect();
