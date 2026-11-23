@@ -174,6 +174,7 @@ static int  g_usb_enabled;
 static int  g_local_enabled = 1;
 static int  g_team_enabled = 1;
 static int  g_search_multi = 1;       /* 多词搜索总开关 */
+static int  g_autoplay = 1;           /* 打开视频自动播放，默认开启 */
 static int  g_search_all = 1;         /* 1=全部词命中，0=任一命中 */
 static int  g_search_case = 0;        /* 1=区分大小写 */
 static int  g_search_ordered = 0;     /* 1=按出现顺序 */
@@ -4928,6 +4929,7 @@ static void handle_settings_get(sbuf *out, int uid, int admin, int all) {
     }
     sb_printf(out, ",\"strictHome\":%s",
               json_bool_def(buf, "\"strictHome\"", 1) ? "true" : "false");
+    sb_printf(out, ",\"autoplay\":%s", g_autoplay ? "true" : "false");
     sb_printf(out, ",\"skipHidden\":%s", scan_skip_hidden() ? "true" : "false");
     sb_printf(out, ",\"searchMulti\":%s,\"searchMatchAll\":%s,\"searchCaseSensitive\":%s,"
               "\"searchOrdered\":%s,\"searchSeparator\":\"%s\"",
@@ -5140,6 +5142,7 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
     int search_all = json_bool_def(body, "\"searchMatchAll\"", g_search_all);
     int search_case = json_bool_def(body, "\"searchCaseSensitive\"", g_search_case);
     int search_ordered = json_bool_def(body, "\"searchOrdered\"", g_search_ordered);
+    int autoplay = json_bool_def(body, "\"autoplay\"", g_autoplay);
     char search_sep[16];
     json_str(body, "\"searchSeparator\"", search_sep, sizeof search_sep, g_search_sep);
     if (strcmp(search_sep, "space") && strcmp(search_sep, "comma") && strcmp(search_sep, "line"))
@@ -5158,7 +5161,7 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
                "\"clickFolder\":\"%s\",\"clickFile\":\"%s\","
                "\"strictHome\":%s,\"skipHidden\":%s,\"teamEnabled\":%s,\"localEnabled\":%s,"
                "\"searchMulti\":%s,\"searchMatchAll\":%s,\"searchCaseSensitive\":%s,"
-               "\"searchOrdered\":%s,\"searchSeparator\":\"%s\","
+               "\"searchOrdered\":%s,\"searchSeparator\":\"%s\",\"autoplay\":%s,"
                "\"rebuild\":{\"mode\":\"%s\",\"hour\":%d,\"minute\":%d,\"hours\":%d}}",
             (int)len, b, open_in, click_folder, click_file,
             strict_home ? "true" : "false",
@@ -5170,6 +5173,7 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
             search_case ? "true" : "false",
             search_ordered ? "true" : "false",
             search_sep,
+            autoplay ? "true" : "false",
             m, rc.hour, rc.minute, rc.hours);
     fflush(f);
     fsync(fileno(f));
@@ -5183,6 +5187,7 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
     g_search_all = search_all;
     g_search_case = search_case;
     g_search_ordered = search_ordered;
+    g_autoplay = autoplay;
     snprintf(g_search_sep, sizeof g_search_sep, "%s", search_sep);
 
     if (skip_hidden != scan_skip_hidden()) {
@@ -7212,6 +7217,7 @@ int httpd_serve(const xl_svc_opts *o) {
             g_search_all = json_bool_def(b, "\"searchMatchAll\"", 1);
             g_search_case = json_bool_def(b, "\"searchCaseSensitive\"", 0);
             g_search_ordered = json_bool_def(b, "\"searchOrdered\"", 0);
+            g_autoplay = json_bool_def(b, "\"autoplay\"", 1);
             json_str(b, "\"searchSeparator\"", g_search_sep, sizeof g_search_sep, "comma");
             if (strcmp(g_search_sep, "space") && strcmp(g_search_sep, "comma") && strcmp(g_search_sep, "line"))
                 snprintf(g_search_sep, sizeof g_search_sep, "space");

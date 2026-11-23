@@ -1285,6 +1285,7 @@
       vHls.loadSource(url);
       vHls.attachMedia(vvideo);
       vHls.on(Hls.Events.MANIFEST_PARSED, () => {
+        if (settings.autoplay === false) return;
         const p = vvideo.play(); if (p && p.catch) p.catch(() => {});
       });
       clearTimeout(vHlsGuard);
@@ -1305,8 +1306,12 @@
     }
     videoApplyVolume();
     try { vvideo.focus({ preventScroll: true }); } catch (e) { try { vvideo.focus(); } catch (e2) {} }
-    const p = vvideo.play();
-    if (p && p.catch) p.catch(() => {});
+    if (settings.autoplay !== false) {
+      const p = vvideo.play();
+      if (p && p.catch) p.catch(() => {});
+    } else {
+      try { vvideo.pause(); } catch (e) {}
+    }
     videoSyncPlay();
     videoSyncTime();
     videoShowControls();
@@ -3198,6 +3203,8 @@
     '<option value="single">单击</option><option value="double">双击</option></select></div>' +
     '<div class="row2"><div class="k">文件 / 图片打开</div><select id="clickFile">' +
     '<option value="single">单击</option><option value="double">双击</option></select></div>' +
+    '<label class="admrow"><input type="checkbox" id="videoAutoplay" checked>点开视频自动播放' +
+    '<span class="hint2">默认开启；关闭后打开视频停在首帧，需要手动点播放</span></label>' +
     '<div class="hint">默认：文件夹单击、文件双击；触屏始终单击打开。</div></section>' +
     '<section class="scard"><h3>打开方式关联</h3><div id="assoc"></div>' +
     '<div class="hint" id="ooHint"></div>' +
@@ -4070,11 +4077,12 @@
     const searchSeparator = setmask.querySelector('#searchSep').value;
     const searchCaseSensitive = !!setmask.querySelector('#searchCaseSensitive').checked;
     const searchOrdered = !!setmask.querySelector('#searchOrdered').checked;
+    const videoAutoplay = !!setmask.querySelector('#videoAutoplay').checked;
     fetch(API + 'settings', { method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ openWith: ow, openIn: oi, clickFolder, clickFile,
                              strictHome, skipHidden, teamEnabled, localEnabled, usbEnabled, usbWatch,
                              searchMulti, searchMatchAll, searchSeparator, searchCaseSensitive, searchOrdered,
-                             scope, rebuild, settingsVersion: 4 }) })
+                             autoplay: videoAutoplay, scope, rebuild, settingsVersion: 4 }) })
       .then(r => r.json()).then(d => {
         if (d && d.ok === false) {
           throw new Error(d.error || '未知错误');
