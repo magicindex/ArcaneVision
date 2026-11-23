@@ -328,12 +328,12 @@
     background:none;box-shadow:none;text-shadow:0 1px 4px rgba(0,0,0,.95),0 0 2px rgba(0,0,0,.9);
     opacity:0;visibility:hidden;pointer-events:none;transition:opacity .12s;white-space:nowrap}
   .openwin #vrate.on{opacity:.95;visibility:visible}
-  .openwin #vexitfull{position:absolute;top:calc(10px + env(safe-area-inset-top));right:12px;z-index:10000;
+  .openwin #vexitfull{position:absolute;left:12px;top:calc(10px + env(safe-area-inset-top));z-index:9;
     width:34px;height:34px;border-radius:50%;display:none;align-items:center;justify-content:center;padding:0;
     color:#fff;background:rgba(8,14,24,.72);border:1px solid rgba(180,210,235,.35);cursor:pointer;
     backdrop-filter:blur(8px)}
   .openwin #vexitfull svg{width:16px;height:16px;display:block;pointer-events:none}
-  .openwin #videoview.fs #vexitfull{display:flex}
+  .openwin #videoview.fs.ctrlon #vexitfull{display:flex}
   @media(max-width:620px),(pointer:coarse){
     .openwin .vbar #vvol{display:none}
     .openwin .vbar{padding-bottom:max(11px,env(safe-area-inset-bottom))}
@@ -987,9 +987,9 @@
     '<button id="vfull" type="button" aria-label="全屏">全屏</button></div>' +
     '<button id="vorient" type="button" aria-label="切换横竖屏" data-tip="切换横屏"></button>' +
     '<div id="vhint">空格 播放/暂停 · ←/→ 快退/快进 5 秒</div>' +
-    '<div id="vrate">2× 倍速</div></div>' +
+    '<div id="vrate">2× 倍速</div>' +
     '<button id="vexitfull" type="button" aria-label="退出全屏" title="退出全屏并恢复竖屏">' +
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>' +
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div></div>' +
     '<div class="rsz"></div>';
   document.body.appendChild(openwin);
   const owframe = openwin.querySelector('#owframe');
