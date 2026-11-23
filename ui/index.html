@@ -61,10 +61,13 @@
   .usb-ind:hover{color:#cdf3ee;border-color:rgba(90,200,190,.45)}
   .usb-ind.warn{color:#f0b35b;border-color:rgba(240,179,91,.38);background:rgba(240,179,91,.07)}
   .scanpickbar{display:flex;align-items:center;gap:10px;margin:6px 0}
-  .scanAreaStats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 12px;margin:6px 0}
+  .scanAreaStats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 12px;margin:8px 0;
+    padding:10px 12px;border:1px solid rgba(120,160,220,.22);border-radius:10px;
+    background:rgba(255,255,255,.025)}
   .scanAreaStats .sa{font-size:11px;color:var(--fg2,#9fb0bd);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .scanAreaStats .sa b{color:#9fd8d1;font-weight:550}
   .scanAreaStats .sa.run b{color:#f0b35b}
+  html[data-theme="light"] .scanAreaStats{border-color:rgba(15,23,42,.14);background:rgba(15,23,42,.025)}
   html[data-theme="light"] .scanAreaStats .sa{color:#5f7183}
   html[data-theme="light"] .scanAreaStats .sa b{color:#1f6f66}
   .scanchips{display:flex;flex-wrap:wrap;gap:5px;margin:4px 0}
@@ -505,6 +508,8 @@
   .setbox .rbline{display:flex;align-items:center;gap:10px;font-size:12.5px;color:#a9bad6;margin:6px 0}
   .setbox .rbline select,.setbox .rbline input{background:#0d1526;color:#cfe0f5;border:1px solid #1e2a44;border-radius:7px;padding:4px 8px;font-size:12.5px}
   .setbox .rbline input[type=number]{width:64px}
+  .setbox #nightFields{flex-wrap:wrap;row-gap:8px}
+  .setbox #nightFields input[type=time]{flex:1 1 104px;min-width:92px;max-width:140px}
   .setbox .hint2{font-size:11px;color:#5d6c8a}
   .setbox .admrow.disabled{opacity:.45;cursor:not-allowed}
   .setbox .admrow.disabled input{cursor:not-allowed}
