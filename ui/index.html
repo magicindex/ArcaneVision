@@ -3402,7 +3402,7 @@
     '<div class="hint2" id="rbIdleHint" style="display:none">闲置扫描会检查 CPU 负载、可用内存和磁盘 IO；连续空闲 60 秒且 60 秒内无查询时才启动，降低对搜索的影响。默认关闭。</div>' +
     '<div class="hint" id="rbHint"></div>' +
     '<label class="admrow" id="nightRow"><input type="checkbox" id="nightEnabled">启用夜间模式' +
-    '<span class="hint2">仅自定义周期生效；建议 00:00–08:00，夜间 0 小时=不扫描</span></label>' +
+    '<span class="hint2">全局模式：每天定时/自定义周期/闲置扫描均生效，关闭时不影响；0 小时=夜间不扫描</span></label>' +
     '<div class="rbline" id="nightFields"><span>夜间</span><input type="time" id="nightStart" value="00:00">' +
     '—<input type="time" id="nightEnd" value="08:00"><span>每</span>' +
     '<input type="number" id="nightHours" min="0" max="168" value="0"> 小时</div>' +
@@ -4197,17 +4197,18 @@
         const m = sel.value;
         setmask.querySelector('#rbDaily').style.display = m === 'daily' ? '' : 'none';
         setmask.querySelector('#rbEvery').style.display = (m === 'interval' || m === 'idle') ? '' : 'none';
-        /* 夜间模式入口始终可操作；勾选时自动切到自定义周期。 */
+        /* 夜间模式是全局配置：除关闭外所有自动扫描模式都生效。 */
         setmask.querySelector('#nightRow').style.display = '';
         ncb.disabled = false;
-        setmask.querySelector('#nightFields').style.display = (m === 'interval' && ncb.checked) ? '' : 'none';
+        setmask.querySelector('#nightFields').style.display = (m !== 'off' && ncb.checked) ? '' : 'none';
         const lab = setmask.querySelector('#rbEveryLabel');
         if (lab) lab.textContent = m === 'idle' ? '最小间隔' : '每';
         const ih = setmask.querySelector('#rbIdleHint');
         if (ih) ih.style.display = m === 'idle' ? '' : 'none';
       };
       ncb.onchange = () => {
-        if (ncb.checked && sel.value !== 'interval') sel.value = 'interval';
+        /* 关闭模式没有自动扫描；勾选夜间时默认进入自定义周期。 */
+        if (ncb.checked && sel.value === 'off') sel.value = 'interval';
         sync();
       };
       sync();

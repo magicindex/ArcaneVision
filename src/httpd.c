@@ -4607,10 +4607,10 @@ static int idle_system_ok(void) {
     return 1;
 }
 
-static int idle_due(const rebuild_cfg *c) {
+static int idle_due_hours(const rebuild_cfg *c, int hours) {
     if (c->mode != 3) return 0;
     uint64_t now = now_ms();
-    if (g_last_rebuild && now - g_last_rebuild < (uint64_t)c->hours * 3600000ull) return 0;
+    if (g_last_rebuild && now - g_last_rebuild < (uint64_t)hours * 3600000ull) return 0;
     if (!idle_system_ok()) { g_idle_since = 0; return 0; }
     if (!g_idle_since) { g_idle_since = now; return 0; }
     /* 连续空闲 60 秒再启动，避免瞬时低载就抢 IO。 */
@@ -4618,31 +4618,41 @@ static int idle_due(const rebuild_cfg *c) {
     g_idle_since = 0;
     return 1;
 }
+static int idle_due(const rebuild_cfg *c) { return idle_due_hours(c, c->hours); }
 
-/* 是否到了该全盘扫描的时间 */
+static int cfg_in_night(const rebuild_cfg *c) {
+    time_t now = time(NULL);
+    struct tm tm;
+    localtime_r(&now, &tm);
+    int mins = tm.tm_hour * 60 + tm.tm_min;
+    return (c->night_start <= c->night_end)
+        ? (mins >= c->night_start && mins < c->night_end)
+        : (mins >= c->night_start || mins < c->night_end);
+}
+
+/* 是否到了该全盘扫描的时间。夜间模式是全局覆盖：daily/interval/idle 都生效。 */
 static int schedule_due(void) {
     rebuild_cfg c;
     pthread_mutex_lock(&g_rcfg_mu);
     c = g_rcfg;
     pthread_mutex_unlock(&g_rcfg_mu);
     if (c.mode == 0) return 0;
-    if (c.mode == 3) return idle_due(&c);
+    int night = c.night_enabled && cfg_in_night(&c);
+    if (night && c.night_hours <= 0) return 0;
+
+    if (c.mode == 3) {
+        rebuild_cfg t = c;
+        t.hours = night ? c.night_hours : c.hours;
+        return idle_due(&t);
+    }
     time_t now = time(NULL);
     if (c.mode == 2) {
-        int hours = c.hours;
-        if (c.night_enabled) {
-            struct tm ntm;
-            localtime_r(&now, &ntm);
-            int mins = ntm.tm_hour * 60 + ntm.tm_min;
-            int in_night = (c.night_start <= c.night_end)
-                ? (mins >= c.night_start && mins < c.night_end)
-                : (mins >= c.night_start || mins < c.night_end);
-            if (in_night) {
-                if (c.night_hours <= 0) return 0;
-                hours = c.night_hours;
-            }
-        }
+        int hours = night ? c.night_hours : c.hours;
         return g_last_rebuild && now_ms() - g_last_rebuild > (uint64_t)hours * 3600000ull;
+    }
+    if (night) {
+        /* 每天定时模式在夜间按夜间间隔执行。 */
+        return g_last_rebuild && now_ms() - g_last_rebuild > (uint64_t)c.night_hours * 3600000ull;
     }
     struct tm tm;
     localtime_r(&now, &tm);
