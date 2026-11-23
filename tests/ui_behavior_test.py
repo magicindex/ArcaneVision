@@ -52,6 +52,7 @@ must("VOL_KEY" in src and "MUTE_KEY" in src and "vSavedVolume" in src, "video vo
 must('id="videoAutoplay"' in src and "settings.autoplay !== false" in src, "default autoplay setting")
 must('id="refresh"' in src and '{"scope":"all"}' in src, "manual full scan button")
 must('settings.rebuild = rebuild' in src and 'nightEnabled' in src, "settings rebuild local sync")
+must('owRememberScroll' in src and 'owRestoreScroll' in src and "closest('#list li.row')" in src, "restore list scroll after player")
 must('.chips{display:flex;gap:6px;flex-wrap:nowrap' in src, "single line chips")
 must("lock.call(so, target)" in src and "h > w ? 'portrait' : 'landscape'" in src, "video orientation lock")
 must('id="vstage"' in src and "vstage.classList.toggle('force-landscape'" in src, "rotatable video stage")

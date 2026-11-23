@@ -1006,6 +1006,28 @@
   document.body.appendChild(openwin);
   const owframe = openwin.querySelector('#owframe');
   let owUrl = '';
+  let owReturnScroll = 0, owScrollSaved = false;
+  function owRememberScroll(force){
+    if (!force && owScrollSaved) return;
+    if (openwin.classList.contains('on')) return;
+    owReturnScroll = (window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0);
+    owScrollSaved = true;
+  }
+  /* 行点击会在 paintSel 里 scrollIntoView，必须在事件处理前捕获滚动位置。 */
+  document.addEventListener('pointerdown', e => {
+    if (openwin.classList.contains('on')) return;
+    if (e.target && e.target.closest && e.target.closest('#list li.row')) owRememberScroll(true);
+  }, true);
+  function owRestoreScroll(){
+    if (!owScrollSaved) return;
+    const y = owReturnScroll;
+    owScrollSaved = false;
+    const restore = () => {
+      try { window.scrollTo({top: y, left: 0, behavior: 'auto'}); } catch (e) { window.scrollTo(0, y); }
+    };
+    restore();
+    requestAnimationFrame(() => { restore(); setTimeout(restore, 40); });
+  }
   const OW_MIN_W = 600, OW_MIN_H = 420;
   function owMinW(){ return Math.max(320, Math.min(OW_MIN_W, innerWidth - 20)); }
   function owMinH(){ return Math.max(240, Math.min(OW_MIN_H, innerHeight - 20)); }
@@ -1366,6 +1388,7 @@
   }
   function openVideo(url, title){
     if (openIn !== 'embed') { videoStop(); window.open(url, '_blank'); return; }
+    if (!videoView.classList.contains('on')) owRememberScroll();
     if (url.indexOf('/api/transcode') < 0 && url.indexOf('/hls/') < 0) { setOwTag(''); vTranscode = null; }
     owUrl = url;
     setOwBrowser();
@@ -1665,6 +1688,7 @@
     pdfDoc = null;
   }
   async function openPdf(url, title){
+    if (!openwin.classList.contains('on')) owRememberScroll();
     owUrl = url;
     setOwBrowser();
     videoStop();
@@ -1758,6 +1782,7 @@
     owframe.src = 'about:blank';
     pdfHide();
     videoStop();
+    owRestoreScroll();
   }
   openwin.querySelector('#owclose').onclick = closeOpen;
   openwin.querySelector('#owbrowser').onclick = () => owUrl && window.open(owUrl, '_blank');
@@ -1780,6 +1805,7 @@
   });
   let owUserToggled = false;
   function openURL(url, title){
+    if (!openwin.classList.contains('on')) owRememberScroll();
     if (url.indexOf('/api/transcode') < 0) setOwTag('');
     if (openIn !== 'embed') { window.open(url, '_blank'); return; }
     if (!owState.max && !owUserToggled) { owState.max = true; saveOw(); }

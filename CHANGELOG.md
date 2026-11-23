@@ -1,3 +1,9 @@
+## 0.10.52（正式版）
+
+- 关闭视频/文档后恢复搜索结果滚动位置
+- pointerdown 捕获滚动位置，避免 paintSel scrollIntoView 重置
+- 关闭后双帧恢复，兼容 body 锁
+
 ## 0.10.51（正式版）
 
 - 夜间模式改为全局配置：daily/interval/idle 均生效
