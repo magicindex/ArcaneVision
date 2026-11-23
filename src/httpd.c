@@ -6037,6 +6037,22 @@ static int serve_file(sbuf *out, const char *rel, int *code) {
     return mime_for(path) ? 1 : 1;
 }
 
+static int accepts_gzip(const char *req) {
+    const char *p = req;
+    while ((p = strcasestr(p, "accept-encoding:")) != NULL) {
+        if (p == req || p[-1] == '\n' || p[-1] == '\r') {
+            const char *e = strstr(p, "\r\n");
+            size_t n = e ? (size_t)(e - p) : strlen(p);
+            char buf[256];
+            if (n >= sizeof buf) n = sizeof buf - 1;
+            memcpy(buf, p, n); buf[n] = 0;
+            return strcasestr(buf, "gzip") != NULL;
+        }
+        p += 16;
+    }
+    return 0;
+}
+
 static int write_all(int fd, const char *p, size_t n) {
     while (n) {
         ssize_t w = send(fd, p, n, MSG_NOSIGNAL);
@@ -6365,6 +6381,7 @@ static void handle_client(int fd) {
     memset(&body, 0, sizeof(body));
     int code = 200;
     const char *ctype = "application/json; charset=utf-8";
+    const char *content_encoding = NULL;
 
     static _Thread_local char bodybuf[REQ_MAX];
     const char *req_body = strstr(req, "\r\n\r\n");
@@ -6567,16 +6584,36 @@ static void handle_client(int fd) {
         sb_puts(&body, "ok");
     } else if (!strcmp(pathonly, "/") || !strcmp(pathonly, "/index.html")) {
         ctype = "text/html; charset=utf-8";
-        if (!serve_file(&body, "index.html", &code)) {
+        char gz_index[4200];
+        snprintf(gz_index, sizeof gz_index, "%s/index.html.gz", g_ui_dir);
+        int gz = accepts_gzip(req) && access(gz_index, R_OK) == 0;
+        if (gz && serve_file(&body, "index.html.gz", &code)) {
+            content_encoding = "gzip";
+        } else if (!serve_file(&body, "index.html", &code)) {
             sb_puts(&body, "玄览 UI 缺失");
             ctype = "text/plain; charset=utf-8";
         }
     } else if (!strncmp(pathonly, "/vendor/", 8)) {
-        if (!serve_file(&body, pathonly + 1, &code)) {
-            ctype = "text/plain; charset=utf-8";
-            sb_puts(&body, "not found");
-        } else {
-            ctype = mime_for(pathonly);
+        const char *ext = strrchr(pathonly, '.');
+        int gz = accepts_gzip(req) && ext &&
+                 (!strcasecmp(ext, ".js") || !strcasecmp(ext, ".mjs") || !strcasecmp(ext, ".css"));
+        if (gz) {
+            char gzpath[4200];
+            snprintf(gzpath, sizeof gzpath, "%s.gz", pathonly + 1);
+            if (!serve_file(&body, gzpath, &code)) {
+                gz = 0;
+            } else {
+                ctype = mime_for(pathonly);
+                content_encoding = "gzip";
+            }
+        }
+        if (!gz) {
+            if (!serve_file(&body, pathonly + 1, &code)) {
+                ctype = "text/plain; charset=utf-8";
+                sb_puts(&body, "not found");
+            } else {
+                ctype = mime_for(pathonly);
+            }
         }
     } else if (!strcmp(pathonly, "/favicon.ico")) {
         code = 204;
@@ -6619,9 +6656,11 @@ static void handle_client(int fd) {
     sbuf resp;
     memset(&resp, 0, sizeof(resp));
     sb_printf(&resp, "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %zu\r\n"
-                     "%s%s%sConnection: close\r\n\r\n",
+                     "%s%s%s%s%sConnection: close\r\n\r\n",
               code, code == 200 ? "OK" : (code == 404 ? "Not Found" : "Error"),
               ctype, body.n, g_range_hdr, g_extra_hdr,
+              content_encoding ? "Content-Encoding: gzip\r\n" : "",
+              content_encoding ? "Vary: Accept-Encoding\r\n" : "",
               g_no_store ? "Cache-Control: no-store\r\n" : "");
     if (body.n) sb_add(&resp, body.p, body.n);
     write_all(fd, resp.p, resp.n);

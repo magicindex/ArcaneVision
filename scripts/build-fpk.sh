@@ -2,7 +2,7 @@
 # 打包 fnOS 应用：dist/xuanlan_<version>_amd64.fpk
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="${VERSION:-0.10.27}"
+VERSION="${VERSION:-0.10.28}"
 PORT="${PORT:-8971}"
 STAGE="$ROOT/build/fpk"
 PAYLOAD="$STAGE/payload"
@@ -19,6 +19,8 @@ mkdir -p "$PAYLOAD/bin" "$PAYLOAD/ui/images" "$PAYLOAD/ui/vendor" "$PAYLOAD/conf
 # ---- payload（解到安装目录） ----
 install -m 0755 "$ROOT/bin/xuanlan" "$PAYLOAD/bin/xuanlan"
 install -m 0644 "$ROOT/ui/index.html" "$PAYLOAD/ui/index.html"
+gzip -9 -c "$ROOT/ui/index.html" > "$PAYLOAD/ui/index.html.gz"
+chmod 0644 "$PAYLOAD/ui/index.html.gz"
 install -m 0644 "$ROOT/pkg/ui/config" "$PAYLOAD/ui/config"
 install -m 0644 "$ROOT/pkg/ui/images/icon_64.png" "$PAYLOAD/ui/images/icon_64.png"
 install -m 0644 "$ROOT/pkg/ui/images/icon_256.png" "$PAYLOAD/ui/images/icon_256.png"
@@ -26,6 +28,10 @@ install -m 0644 "$ROOT/ui/vendor/pdf.min.mjs" "$PAYLOAD/ui/vendor/pdf.min.mjs"
 install -m 0644 "$ROOT/ui/vendor/pdf.worker.min.mjs" "$PAYLOAD/ui/vendor/pdf.worker.min.mjs"
 install -m 0644 "$ROOT/ui/vendor/fflate.min.js" "$PAYLOAD/ui/vendor/fflate.min.js"
 install -m 0644 "$ROOT/ui/vendor/hls.min.js" "$PAYLOAD/ui/vendor/hls.min.js"
+for f in pdf.min.mjs pdf.worker.min.mjs fflate.min.js hls.min.js; do
+    gzip -9 -c "$ROOT/ui/vendor/$f" > "$PAYLOAD/ui/vendor/$f.gz"
+    chmod 0644 "$PAYLOAD/ui/vendor/$f.gz"
+done
 install -m 0644 "$ROOT/ui/vendor/LICENSE.pdfjs" "$PAYLOAD/ui/vendor/LICENSE.pdfjs"
 install -m 0644 "$ROOT/ui/vendor/LICENSE.fflate.txt" "$PAYLOAD/ui/vendor/LICENSE.fflate.txt"
 install -m 0644 "$ROOT/ui/vendor/LICENSE.hls.js" "$PAYLOAD/ui/vendor/LICENSE.hls.js"

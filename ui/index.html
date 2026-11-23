@@ -308,6 +308,8 @@
   @media(max-width:620px),(pointer:coarse){
     .openwin .vbar #vvol{display:none}
     .openwin .vbar{padding-bottom:max(11px,env(safe-area-inset-bottom))}
+    .card,.setbox,.finder .panel,.openwin .vbar.compact{backdrop-filter:none}
+    .openwin{box-shadow:none}
   }
   /* 图片预览：全屏查看、左右切换、键盘操作；列表来自当前搜索 items，不重新请求 */
   .imgview{position:fixed;top:0;right:0;bottom:0;left:0;z-index:260;display:none;
@@ -913,6 +915,7 @@
     behavior:matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'});
   const q = $('q'), list = $('list'), empty = $('empty'), meta = $('meta');
   const coarse = matchMedia('(pointer:coarse)').matches;
+  if (coarse || innerWidth <= 620) q.placeholder = '搜索文件与文件夹';
   if (!coarse) q.focus({preventScroll:true});
 
   // ---- 右键菜单 ----
@@ -4174,8 +4177,9 @@
     }).catch(() => {});
   }
   loadSettings();
-  loadRemoteProtocols();
-  refreshTrashCount();
+  const deferredLoad = () => { loadRemoteProtocols(); refreshTrashCount(); };
+  if (coarse || innerWidth <= 620) setTimeout(deferredLoad, 900);
+  else deferredLoad();
 
   function copy(p){
     // HTTP 访问时不是安全上下文，navigator.clipboard 不存在；用 execCommand 兜底
@@ -4350,7 +4354,8 @@
     else if (e.key === 'Enter' && sel >= 0) { copy(items[sel].path); }
   });
 
-  status(); setInterval(status, 2000);
+  status();
+  setInterval(status, (coarse || innerWidth <= 620) ? 5000 : 2000);
 })();
 </script>
 </body>
