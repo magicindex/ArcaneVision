@@ -1392,7 +1392,16 @@
     videoSyncTime();
     videoShowControls();
   }
-  vvideo.addEventListener('click', videoToggle);
+  let vTapHadControls = false;
+  vvideo.addEventListener('pointerdown', () => {
+    /* 记录按下瞬间控件是否可见：触摸会先触发 mousemove 显示控件。 */
+    vTapHadControls = videoView.classList.contains('ctrlon');
+  });
+  vvideo.addEventListener('click', () => {
+    /* 手机：控件隐藏时第一次点击只唤出控件，控件显示时点击才播放/暂停。 */
+    if (!vTapHadControls) { videoShowControls(); return; }
+    videoToggle();
+  });
   vplay.addEventListener('click', videoToggle);
   vvideo.addEventListener('playing', () => { vHlsPlayed = true; });
   vvideo.addEventListener('timeupdate', () => {
