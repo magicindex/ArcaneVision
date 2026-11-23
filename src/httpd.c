@@ -5154,7 +5154,7 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
     FILE *f = fopen(tmp, "w");
     if (!f) { sb_puts(out, "{\"ok\":false,\"error\":\"cannot write\"}"); return; }
     fchmod(fileno(f), 0600);
-    const char *m = rc.mode == 1 ? "daily" : (rc.mode == 2 ? "interval" : "off");
+    const char *m = rc.mode == 1 ? "daily" : (rc.mode == 2 ? "interval" : (rc.mode == 3 ? "idle" : "off"));
     int team_on = json_bool_def(body, "\"teamEnabled\"", g_team_enabled);
     int local_on = json_bool_def(body, "\"localEnabled\"", g_local_enabled);
     fprintf(f, "{\"settingsVersion\":4,\"openWith\":%.*s,\"openIn\":\"%s\","

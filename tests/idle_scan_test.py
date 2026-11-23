@@ -64,6 +64,14 @@ try:
         d = req("/api/settings")
         if d.get("rebuild", {}).get("mode") != mode:
             print("FAIL mode", mode, d.get("rebuild")); sys.exit(1)
+        # 关键：重启后从 settings.json 重新读取，idle 不能退化成 off
+        p.terminate()
+        try: p.wait(timeout=5)
+        except Exception: p.kill()
+        p = start()
+        d = req("/api/settings")
+        if d.get("rebuild", {}).get("mode") != mode:
+            print("FAIL persisted mode", mode, d.get("rebuild")); sys.exit(1)
     req("/api/settings", {"rebuild": {"mode": "off", "hour": 3, "minute": 0, "hours": 6}})
     d = req("/api/settings")
     if d.get("rebuild", {}).get("mode") != "off":
