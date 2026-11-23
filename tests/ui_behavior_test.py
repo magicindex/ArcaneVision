@@ -52,6 +52,8 @@ must("VOL_KEY" in src and "MUTE_KEY" in src and "vSavedVolume" in src, "video vo
 must('id="videoAutoplay"' in src and "settings.autoplay !== false" in src, "default autoplay setting")
 must('.chips{display:flex;gap:6px;flex-wrap:nowrap' in src, "single line chips")
 must("lock.call(so, target)" in src and "h > w ? 'portrait' : 'landscape'" in src, "video orientation lock")
+must('id="vstage"' in src and "vstage.classList.toggle('force-landscape'" in src, "rotatable video stage")
+must('id="vorient"' in src and '.vbar.compact #vvol{display:none}' in src, "floating orientation button/compact volume")
 must("vbar.classList.toggle('compact')" in src and "vbar.style.left = ''; vbar.style.top" in src, "capsule reset position")
 must(".vbar.compact #vvol" in src and 'id="vmute"' in src, "compact volume controls")
 must("vvol.disabled = !!vvideo.muted" in src and "#vvol:disabled" in src, "muted slider disabled")

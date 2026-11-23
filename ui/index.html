@@ -269,6 +269,7 @@
   /* 视频预览：自定义控制条，鼠标离开播放窗口即隐藏，避免遮挡画面 */
   .openwin #videoview{display:none;flex:1;flex-direction:column;min-height:0;background:#000;position:relative;overflow:hidden}
   .openwin #videoview.on{display:flex}
+  .openwin #vstage{position:absolute;inset:0;overflow:hidden;background:#000}
   .openwin #videoview.loading::after{content:'正在准备视频…';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
     z-index:4;font-size:13px;color:#dbe8f8;background:rgba(8,14,24,.82);border:1px solid rgba(150,190,220,.24);
     padding:8px 14px;border-radius:9px;pointer-events:none}
@@ -296,13 +297,25 @@
   .openwin .vbar input[type=range]{accent-color:#59d3c8;height:16px;min-width:60px}
   .openwin .vbar #vseek{flex:1}
   .openwin .vbar #vvol{width:68px;flex:none}
+  .openwin #vorient{position:absolute;right:12px;bottom:calc(64px + env(safe-area-inset-bottom));z-index:6;
+    width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    color:#dbe8f8;background:rgba(8,14,24,.72);border:1px solid rgba(150,190,220,.3);
+    backdrop-filter:blur(8px);cursor:pointer;padding:0}
+  .openwin #vorient svg{width:17px;height:17px;display:block;pointer-events:none}
+  .openwin #vorient:active{transform:scale(.94)}
+  .openwin #vstage.force-landscape{position:fixed !important;left:50% !important;top:50% !important;
+    width:100dvh !important;height:100vw !important;max-width:none !important;max-height:none !important;
+    transform:translate(-50%,-50%) rotate(90deg) !important;transform-origin:center center !important;
+    z-index:9999 !important;background:#000}
+  .openwin .vbar.compact #vvol{display:none}
+  .openwin .vbar.compact{max-width:calc(100% - 16px);box-sizing:border-box}
   .openwin .vbar #vvol:disabled{opacity:.35;filter:grayscale(1);cursor:not-allowed}
   .openwin .vbar.compact{left:50%;right:auto;bottom:14px;width:auto;max-width:calc(100% - 20px);
     padding:7px 10px;border-radius:999px;background:rgba(8,14,24,.84);border:1px solid rgba(150,190,220,.22);
     box-shadow:0 6px 22px rgba(0,0,0,.35);backdrop-filter:blur(10px);transform:translateX(-50%)}
   .openwin #videoview.ctrlon .vbar.compact{transform:translateX(-50%)}
   .openwin .vbar.compact #vfull{display:none}
-  .openwin .vbar.compact #vvol{display:inline-block;width:56px;min-width:44px;flex:none}
+  .openwin .vbar.compact #vvol{display:none}
   .openwin .vbar.compact #vtime{font-size:10.5px}
   .openwin .vbar.compact #vseek{min-width:70px;width:min(32vw,220px);flex:none}
   .openwin .vbar.dragging{cursor:grabbing;user-select:none;transition:none}
@@ -953,16 +966,16 @@
     '<span id="pgcount">– / –</span><button id="pgnext">›</button><span class="sp"></span>' +
     '<button id="pgfit">适应宽度</button><button id="pgall">显示全部</button><button id="pgout">−</button>' +
     '<button id="pgin">+</button></div><div class="ppages" id="ppages"></div></div>' +
-    '<div id="videoview"><video id="vvideo" playsinline webkit-playsinline preload="metadata" tabindex="0" disablepictureinpicture></video><canvas id="vcanvas"></canvas>' +
+    '<div id="videoview"><div id="vstage"><video id="vvideo" playsinline webkit-playsinline preload="metadata" tabindex="0" disablepictureinpicture></video><canvas id="vcanvas"></canvas>' +
     '<div class="vbar"><button id="vplay" type="button" aria-label="播放或暂停">▶</button>' +
     '<span id="vtime">0:00 / 0:00</span>' +
     '<input id="vseek" type="range" min="0" max="1000" value="0" step="1" aria-label="播放进度">' +
     '<button id="vcompact" type="button" aria-label="切换胶囊控制条" data-tip="切换胶囊控制条"></button>' +
     '<button id="vmute" type="button" aria-label="静音" data-tip="静音"></button>' +
     '<input id="vvol" type="range" min="0" max="100" value="100" step="1" aria-label="音量">' +
-    '<button id="vorient" type="button" aria-label="切换横竖屏" data-tip="切换横屏"></button>' +
     '<button id="vfull" type="button" aria-label="全屏">全屏</button></div>' +
-    '<div id="vhint">空格 播放/暂停 · ←/→ 快退/快进 5 秒</div></div>' +
+    '<button id="vorient" type="button" aria-label="切换横竖屏" data-tip="切换横屏"></button>' +
+    '<div id="vhint">空格 播放/暂停 · ←/→ 快退/快进 5 秒</div></div></div>' +
     '<div class="rsz"></div>';
   document.body.appendChild(openwin);
   const owframe = openwin.querySelector('#owframe');
@@ -1091,6 +1104,7 @@
     vvideoEl.removeAttribute('controls');
     vvideoEl.setAttribute('controlsList', 'nodownload nofullscreen noremoteplayback');
   }
+  const vstage = openwin.querySelector('#vstage');
   const vvideo = openwin.querySelector('#vvideo');
   const vplay = openwin.querySelector('#vplay');
   const vtime = openwin.querySelector('#vtime');
@@ -1301,25 +1315,24 @@
     } catch (e) {}
   }
   function videoToggleOrientation(){
-    const enter = () => {
-      const so = screen.orientation || screen;
-      const cur = (so && so.type) || '';
-      const target = cur.indexOf('landscape') >= 0 ? 'portrait' : 'landscape';
+    const apply = (target) => {
+      if (vstage) vstage.classList.toggle('force-landscape', target === 'landscape');
       if (vorient) {
-        const tip = target === 'landscape' ? '切换横屏' : '切换竖屏';
+        const tip = target === 'landscape' ? '切换竖屏' : '切换横屏';
         vorient.title = tip; vorient.setAttribute('data-tip', tip); vorient.setAttribute('aria-label', tip);
       }
-      videoLockTo(target);
     };
+    const target = (vstage && vstage.classList.contains('force-landscape')) ? 'portrait' : 'landscape';
+    if (target === 'landscape' && innerHeight > innerWidth) say('已切换横屏，请横握手机');
     if (!document.fullscreenElement) {
       const el = videoView;
       const fn = el.requestFullscreen || el.webkitRequestFullscreen;
       if (fn) {
         const p = fn.call(el);
-        if (p && p.then) p.then(enter).catch(() => enter());
-        else enter();
-      } else enter();
-    } else enter();
+        if (p && p.then) p.then(() => apply(target)).catch(() => apply(target));
+        else apply(target);
+      } else apply(target);
+    } else apply(target);
   }
   function openVideo(url, title){
     if (openIn !== 'embed') { videoStop(); window.open(url, '_blank'); return; }
@@ -1393,10 +1406,7 @@
   vvideo.addEventListener('pause', () => { videoSyncPlay(); videoShowControls(); });
   vvideo.addEventListener('ended', () => { videoSyncPlay(); videoShowControls(); });
   vvideo.addEventListener('timeupdate', videoSyncTime);
-  vvideo.addEventListener('loadedmetadata', () => {
-    videoSyncTime(); videoShowControls();
-    if (document.fullscreenElement) videoLockOrientation();
-  });
+  vvideo.addEventListener('loadedmetadata', () => { videoSyncTime(); videoShowControls(); });
   vseek.addEventListener('input', () => {
     const tc = vTranscode;
     const dur = tc && tc.duration > 0 ? tc.duration : vvideo.duration;
@@ -1484,13 +1494,27 @@
     const fn = el.requestFullscreen || el.webkitRequestFullscreen;
     if (fn) {
       const p = fn.call(el);
-      if (p && p.then) p.then(videoLockOrientation).catch(() => {});
-      else videoLockOrientation();
+      if (p && p.catch) p.catch(() => {});
     }
   });
+  addEventListener('resize', () => {
+    if (vstage && vstage.classList.contains('force-landscape') && innerWidth > innerHeight) {
+      vstage.classList.remove('force-landscape');
+      if (vorient) {
+        vorient.title = '切换横屏'; vorient.setAttribute('data-tip', '切换横屏');
+      }
+    }
+  }, {passive:true});
   document.addEventListener('fullscreenchange', () => {
-    if (document.fullscreenElement) videoLockOrientation();
-    else videoUnlockOrientation();
+    if (!document.fullscreenElement) {
+      if (vstage) vstage.classList.remove('force-landscape');
+      videoUnlockOrientation();
+      if (vorient) {
+        vorient.title = '切换横屏';
+        vorient.setAttribute('data-tip', '切换横屏');
+        vorient.setAttribute('aria-label', '切换横屏');
+      }
+    }
   });
   if (vorient) vorient.addEventListener('click', videoToggleOrientation);
   vbarLoad();
