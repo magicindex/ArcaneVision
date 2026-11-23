@@ -323,6 +323,11 @@
     font-size:11px;color:#dbe8f8;background:rgba(8,14,24,.62);border:1px solid rgba(160,190,230,.2);
     border-radius:999px;padding:4px 12px;opacity:0;transition:opacity .16s;pointer-events:none;white-space:nowrap}
   .openwin #videoview.ctrlon #vhint{opacity:.9}
+  .openwin #vrate{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:5;
+    padding:9px 15px;border-radius:10px;font-size:13px;font-weight:600;color:#fff;
+    background:rgba(8,14,24,.78);border:1px solid rgba(120,220,210,.5);
+    box-shadow:0 6px 24px rgba(0,0,0,.35);opacity:0;visibility:hidden;pointer-events:none;transition:opacity .12s}
+  .openwin #vrate.on{opacity:1;visibility:visible}
   @media(max-width:620px),(pointer:coarse){
     .openwin .vbar #vvol{display:none}
     .openwin .vbar{padding-bottom:max(11px,env(safe-area-inset-bottom))}
@@ -975,7 +980,8 @@
     '<input id="vvol" type="range" min="0" max="100" value="100" step="1" aria-label="音量">' +
     '<button id="vfull" type="button" aria-label="全屏">全屏</button></div>' +
     '<button id="vorient" type="button" aria-label="切换横竖屏" data-tip="切换横屏"></button>' +
-    '<div id="vhint">空格 播放/暂停 · ←/→ 快退/快进 5 秒</div></div></div>' +
+    '<div id="vhint">空格 播放/暂停 · ←/→ 快退/快进 5 秒</div>' +
+    '<div id="vrate">2× 倍速播放中</div></div></div>' +
     '<div class="rsz"></div>';
   document.body.appendChild(openwin);
   const owframe = openwin.querySelector('#owframe');
@@ -1238,6 +1244,9 @@
   }
   function videoStop(){
     vTranscode = null; vSeekDragging = false;
+    vStopLongPress(true);
+    try { vvideo.playbackRate = 1; } catch (e) {}
+    if (vrate) vrate.classList.remove('on');
     stopHls();
     try { vvideo.pause(); } catch (e) {}
     vvideo.removeAttribute('src');
@@ -1346,6 +1355,8 @@
     openwin.querySelector('#owtitle').textContent = title || '视频';
     videoView.classList.add('on');
     videoView.classList.remove('loading');
+    try { vvideo.playbackRate = 1; } catch (e) {}
+    if (vrate) vrate.classList.remove('on');
     openwin.classList.add('on');
     videoStartDraw();
     applyOw();
@@ -1393,11 +1404,44 @@
     videoShowControls();
   }
   let vTapHadControls = false;
-  vvideo.addEventListener('pointerdown', () => {
+  let vLongTimer = 0, vLongActive = false, vLongConsumed = false, vLongX = 0, vLongY = 0;
+  let vLongRate = false;
+  const vrate = openwin.querySelector('#vrate');
+  function vStopLongPress(restore){
+    clearTimeout(vLongTimer); vLongTimer = 0;
+    if (vLongActive) {
+      vLongActive = false;
+      if (restore) {
+        try { vvideo.playbackRate = 1; } catch (e) {}
+        if (vrate) vrate.classList.remove('on');
+      }
+    }
+  }
+  vvideo.addEventListener('pointerdown', e => {
     /* 记录按下瞬间控件是否可见：触摸会先触发 mousemove 显示控件。 */
     vTapHadControls = videoView.classList.contains('ctrlon');
+    vLongX = e.clientX; vLongY = e.clientY; vLongConsumed = false;
+    vStopLongPress(false);
+    /* 只有控件已显示时长按才进入 2× 倍速。 */
+    if (!vTapHadControls) return;
+    vLongTimer = setTimeout(() => {
+      vLongTimer = 0; vLongActive = true; vLongConsumed = true;
+      try { vvideo.playbackRate = 2; } catch (err) {}
+      if (vrate) vrate.classList.add('on');
+    }, 520);
   });
+  vvideo.addEventListener('pointermove', e => {
+    if (!vLongTimer) return;
+    if (Math.abs(e.clientX - vLongX) > 10 || Math.abs(e.clientY - vLongY) > 10) {
+      clearTimeout(vLongTimer); vLongTimer = 0;
+    }
+  });
+  const vEndLong = () => { vStopLongPress(true); };
+  vvideo.addEventListener('pointerup', vEndLong);
+  vvideo.addEventListener('pointercancel', vEndLong);
+  vvideo.addEventListener('pointerleave', vEndLong);
   vvideo.addEventListener('click', () => {
+    if (vLongConsumed) { vLongConsumed = false; return; }
     /* 手机：控件隐藏时第一次点击只唤出控件，控件显示时点击才播放/暂停。 */
     if (!vTapHadControls) { videoShowControls(); return; }
     videoToggle();
