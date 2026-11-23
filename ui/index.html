@@ -450,6 +450,9 @@
   .gear svg{width:17px;height:17px;display:block}
   .gear:hover{color:#c9f2ea;border-color:rgba(90,200,190,.45);background:rgba(30,52,64,.7);
     transform:rotate(45deg)}
+  .gear.refresh:hover{transform:none}
+  .gear.refresh.spinning svg{animation:gearspin .9s linear infinite}
+  @keyframes gearspin{to{transform:rotate(360deg)}}
   .setmask{position:fixed;top:0;right:0;bottom:0;left:0;z-index:130;display:none;background:rgba(6,10,18,.72);backdrop-filter:blur(6px)}
   .setmask.on{display:block}
   .setbox{position:absolute;left:50%;top:56px;transform:translateX(-50%);width:min(780px,92vw);
@@ -849,6 +852,10 @@
            stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/></svg>
       <svg class="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
            stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    </button>
+    <button class="gear refresh" id="refresh" title="立即全盘扫描" aria-label="立即全盘扫描">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-13.7-5.3L4 8"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 13.7 5.3L20 16"/><path d="M20 20v-4h-4"/></svg>
     </button>
     <button class="gear" id="gear" title="设置" aria-label="设置">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
@@ -4522,6 +4529,47 @@
     else if (e.key === 'ArrowUp') { e.preventDefault(); sel = Math.max(0, sel-1); paintSel(); }
     else if (e.key === 'Enter' && sel >= 0) { copy(items[sel].path); }
   });
+
+  const refreshBtn = document.getElementById('refresh');
+  let refreshBusy = false, refreshPoll = null;
+  async function manualRefresh(){
+    if (refreshBusy || !refreshBtn) return;
+    refreshBusy = true;
+    refreshBtn.classList.add('spinning');
+    refreshBtn.disabled = true;
+    try {
+      const r = await fetch(API + 'rebuild', {
+        method: 'POST', headers: {'content-type': 'application/json'}, body: '{"scope":"all"}'
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || d.ok === false) throw new Error(d.error || ('HTTP ' + r.status));
+      say('已开始全盘扫描');
+      const started = Date.now();
+      let seenBuild = false;
+      const finish = (msg) => {
+        clearInterval(refreshPoll); refreshPoll = null;
+        refreshBusy = false; refreshBtn.classList.remove('spinning'); refreshBtn.disabled = false;
+        if (msg) say(msg);
+        try { search(); } catch (e) {}
+      };
+      const tick = async () => {
+        try {
+          const d = await fetch(API + 'status', {cache: 'no-store'}).then(x => x.json());
+          if (d.building) seenBuild = true;
+          if ((seenBuild && !d.building) || Date.now() - started > 120000) {
+            finish(seenBuild ? '全盘扫描完成' : '扫描请求已提交');
+          }
+        } catch (e) {}
+      };
+      clearInterval(refreshPoll);
+      refreshPoll = setInterval(tick, 2000);
+      setTimeout(tick, 1200);
+    } catch (e) {
+      refreshBusy = false; refreshBtn.classList.remove('spinning'); refreshBtn.disabled = false;
+      alert('扫描失败：' + (e && e.message || e));
+    }
+  }
+  if (refreshBtn) refreshBtn.addEventListener('click', manualRefresh);
 
   status();
   setInterval(status, (coarse || innerWidth <= 620) ? 5000 : 2000);
