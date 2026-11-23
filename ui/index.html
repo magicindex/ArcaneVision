@@ -4192,16 +4192,19 @@
         const m = sel.value;
         setmask.querySelector('#rbDaily').style.display = m === 'daily' ? '' : 'none';
         setmask.querySelector('#rbEvery').style.display = (m === 'interval' || m === 'idle') ? '' : 'none';
-        /* 夜间模式入口始终可见，但只有自定义周期可启用。 */
+        /* 夜间模式入口始终可操作；勾选时自动切到自定义周期。 */
         setmask.querySelector('#nightRow').style.display = '';
-        ncb.disabled = m !== 'interval';
+        ncb.disabled = false;
         setmask.querySelector('#nightFields').style.display = (m === 'interval' && ncb.checked) ? '' : 'none';
         const lab = setmask.querySelector('#rbEveryLabel');
         if (lab) lab.textContent = m === 'idle' ? '最小间隔' : '每';
         const ih = setmask.querySelector('#rbIdleHint');
         if (ih) ih.style.display = m === 'idle' ? '' : 'none';
       };
-      ncb.onchange = sync;
+      ncb.onchange = () => {
+        if (ncb.checked && sel.value !== 'interval') sel.value = 'interval';
+        sync();
+      };
       sync();
       sel.onchange = sync;
       const hint = setmask.querySelector('#rbHint');
