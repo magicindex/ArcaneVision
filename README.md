@@ -140,8 +140,8 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
 
 ## 现在是什么状态
 
-当前版本 **0.10.39（正式版）**，更新记录见 [CHANGELOG.md](CHANGELOG.md)，发布说明见
-[RELEASE_NOTES.md](RELEASE_NOTES.md)。0.10.39 全屏退出按钮移到画面右上角；0.10.11 固定背景层并补齐 ext4 镜像测试；0.10.10 优化多词候选选择与高亮边界；0.10.9 修复多词分隔符与多词高亮；0.10.8 增加搜索结果自动分页加载；0.10.7 增加多词搜索；0.10.6 将 0.10.x 的团队独立索引、远程协议标识、
+当前版本 **0.10.40（正式版）**，更新记录见 [CHANGELOG.md](CHANGELOG.md)，发布说明见
+[RELEASE_NOTES.md](RELEASE_NOTES.md)。0.10.40 全屏退出按钮贴近右上角；0.10.11 固定背景层并补齐 ext4 镜像测试；0.10.10 优化多词候选选择与高亮边界；0.10.9 修复多词分隔符与多词高亮；0.10.8 增加搜索结果自动分页加载；0.10.7 增加多词搜索；0.10.6 将 0.10.x 的团队独立索引、远程协议标识、
 HLS 转码、分区域扫描统计和板块级重建收敛为正式版；0.9.0 完成团队空间按权限索引；
 0.10.0 完成 fanotify ACL 自愈与修复退避。
 
@@ -156,6 +156,12 @@ HLS 转码、分区域扫描统计和板块级重建收敛为正式版；0.9.0 �
 4. **可运维**：单元索引有 epoch 原子切换、增量 delta、损坏检测/自动重建、容量告警、
    `.trash` 回收与一键回滚。
 5. **不牺牲检索性能**：共享索引仍是 mmap + trigram；单元索引只读 mmap，增量走 live + delta。
+
+### 0.10.40 正式版已完成
+
+- 退出按钮上移到 6px、右移到 8px；
+- 去掉多余 safe-area 顶部内边距；
+- 更贴近画面右上角。
 
 ### 0.10.39 正式版已完成
 
@@ -579,11 +585,11 @@ systemd xuanlan.service
 - [x] 编译 + `smoke` / `api` / `scanmode` / `route` / `unitbuild` / `epoch` /
       `unitdelta` / `group-intersection` / `units-admin` / `repair` / `ui` 回归
 - [x] docs/09 §8 标注为未来设计，与当前实现对齐
-- [x] 版本号 0.10.39、README / CHANGELOG / RELEASE_NOTES
+- [x] 版本号 0.10.40、README / CHANGELOG / RELEASE_NOTES
 - [x] 真机 fanotify → 队列 → 批量 delta → 重启恢复（docs/10）
-- [x] FPK 构建：`dist/xuanlan_0.10.39_amd64.fpk`
-- [x] Gitea 推送 + tag `v0.10.39` + Release
-- [x] GitHub 推送 + tag `v0.10.39` + Release
+- [x] FPK 构建：`dist/xuanlan_0.10.40_amd64.fpk`
+- [x] Gitea 推送 + tag `v0.10.40` + Release
+- [x] GitHub 推送 + tag `v0.10.40` + Release
 
 ### 0.8.9–0.8.17 更新内容（历史）
 
@@ -934,15 +940,15 @@ scripts/build-fpk.sh      打包装包
 
 ## 版本与安装包
 
-- 最新版本：**0.10.39（正式版）**（2026-11-23）
-- 源码 tag：`v0.10.39`
-- FPK：`dist/xuanlan_0.10.39_amd64.fpk`（1,988,636 字节）
-- SHA-256：`6b1976bdc9431d55b77d045359abca04a0521e71a0d9e311a5f86b063d4e5ee0`
-- 发布页：[GitHub Release](https://github.com/magicindex/ArcaneVision/releases/tag/v0.10.39) ·
-  [Gitea Release](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.10.39)
+- 最新版本：**0.10.40（正式版）**（2026-11-23）
+- 源码 tag：`v0.10.40`
+- FPK：`dist/xuanlan_0.10.40_amd64.fpk`（1,988,610 字节）
+- SHA-256：`b907466c06ca7afbf11bea938146d89f0df9d211ddc54b9f5f14e702c7c57eea`
+- 发布页：[GitHub Release](https://github.com/magicindex/ArcaneVision/releases/tag/v0.10.40) ·
+  [Gitea Release](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.10.40)
 - 安装包直链：
-  [GitHub](https://github.com/magicindex/ArcaneVision/releases/download/v0.10.39/xuanlan_0.10.39_amd64.fpk) ·
-  [Gitea](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/download/v0.10.39/xuanlan_0.10.39_amd64.fpk)
+  [GitHub](https://github.com/magicindex/ArcaneVision/releases/download/v0.10.40/xuanlan_0.10.40_amd64.fpk) ·
+  [Gitea](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/download/v0.10.40/xuanlan_0.10.40_amd64.fpk)
 
 > 0.10.6 为正式版；包含团队独立索引、HLS 视频、PDF 显示全部、分区域扫描统计、
 > 板块级重建隔离和本轮完整回归修复。
