@@ -241,10 +241,8 @@
   .openwin::-webkit-scrollbar,.openwin #videoview::-webkit-scrollbar,.openwin .vbar::-webkit-scrollbar{display:none;width:0;height:0}
   .openwin #videoview,.openwin .vbar{scrollbar-width:none}
   .openwin.on{display:flex}
-  .openwin .owbar{position:relative;display:flex;align-items:center;gap:8px;padding:8px 50px 8px 12px;font-size:12.5px;color:#9fb3d1;
+  .openwin .owbar{display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12.5px;color:#9fb3d1;
     border-bottom:1px solid rgba(120,160,220,.14);flex-wrap:nowrap}
-  .openwin .owbar #owclose.owx{position:absolute;right:8px;top:50%;transform:translateY(-50%);width:32px;height:30px;
-    padding:0;font-size:19px;line-height:1;border-radius:8px;display:flex;align-items:center;justify-content:center}
   .openwin .owbar #owtitle{max-width:42vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .openwin .owbar button{flex:none;white-space:nowrap}
   .openwin .owbar .sp{flex:1}
@@ -973,7 +971,7 @@
   openwin.innerHTML = '<div class="owbar"><span id="owtitle">打开</span>' +
     '<span id="owtag" style="display:none"></span><span class="sp"></span>' +
     '<button id="owfit">最大化</button><button id="owbrowser">在新标签打开</button>' +
-    '<button id="owclose" class="owx" type="button" aria-label="关闭播放器">×</button></div>' +
+    '<button id="owclose">关闭</button></div>' +
     '<iframe id="owframe" title="打开"></iframe>' +
     '<div id="pdfview"><div class="pbar"><button id="pgprev">‹</button>' +
     '<span id="pgcount">– / –</span><button id="pgnext">›</button><span class="sp"></span>' +
