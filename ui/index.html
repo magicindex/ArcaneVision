@@ -3396,6 +3396,11 @@
     '<span id="rbEvery"><span id="rbEveryLabel">每</span> <input type="number" id="rbHours" min="1" max="168" value="6"> 小时</span></div>' +
     '<div class="hint2" id="rbIdleHint" style="display:none">闲置扫描会检查 CPU 负载、可用内存和磁盘 IO；连续空闲 60 秒且 60 秒内无查询时才启动，降低对搜索的影响。默认关闭。</div>' +
     '<div class="hint" id="rbHint"></div>' +
+    '<label class="admrow" id="nightRow"><input type="checkbox" id="nightEnabled">启用夜间模式' +
+    '<span class="hint2">仅自定义周期生效；建议 00:00–08:00，夜间 0 小时=不扫描</span></label>' +
+    '<div class="rbline" id="nightFields"><span>夜间</span><input type="time" id="nightStart" value="00:00">' +
+    '—<input type="time" id="nightEnd" value="08:00"><span>每</span>' +
+    '<input type="number" id="nightHours" min="0" max="168" value="0"> 小时</div>' +
     '<div class="scanAreaStats" id="scanAreaStats"></div>' +
     '<label class="admrow" id="hiddenRow"><input type="checkbox" id="skipHidden" checked>忽略隐藏目录与系统杂项' +
     '<span class="hint2">默认开启；跳过 . / @ 开头目录，以及 Thumbs.db、desktop.ini、__MACOSX 等杂项；保存后自动重建索引</span></label></section>' +
@@ -4167,22 +4172,34 @@
       };
     }
     {
-      const rb = settings.rebuild || { mode: 'off', hour: 3, minute: 0, hours: 6 };
+      const rb = settings.rebuild || { mode: 'off', hour: 3, minute: 0, hours: 6,
+        nightEnabled: false, nightStart: '00:00', nightEnd: '08:00', nightHours: 0 };
       const sel = setmask.querySelector('#rbMode');
       const time = setmask.querySelector('#rbTime');
       const hrs = setmask.querySelector('#rbHours');
+      const ncb = setmask.querySelector('#nightEnabled');
+      const nstart = setmask.querySelector('#nightStart');
+      const nend = setmask.querySelector('#nightEnd');
+      const nhours = setmask.querySelector('#nightHours');
       sel.value = rb.mode || 'off';
       time.value = String(rb.hour ?? 3).padStart(2, '0') + ':' + String(rb.minute ?? 0).padStart(2, '0');
       hrs.value = rb.hours || 6;
+      ncb.checked = rb.nightEnabled === true;
+      nstart.value = rb.nightStart || '00:00';
+      nend.value = rb.nightEnd || '08:00';
+      nhours.value = rb.nightHours ?? 0;
       const sync = () => {
         const m = sel.value;
         setmask.querySelector('#rbDaily').style.display = m === 'daily' ? '' : 'none';
         setmask.querySelector('#rbEvery').style.display = (m === 'interval' || m === 'idle') ? '' : 'none';
+        setmask.querySelector('#nightRow').style.display = m === 'interval' ? '' : 'none';
+        setmask.querySelector('#nightFields').style.display = (m === 'interval' && ncb.checked) ? '' : 'none';
         const lab = setmask.querySelector('#rbEveryLabel');
         if (lab) lab.textContent = m === 'idle' ? '最小间隔' : '每';
         const ih = setmask.querySelector('#rbIdleHint');
         if (ih) ih.style.display = m === 'idle' ? '' : 'none';
       };
+      ncb.onchange = sync;
       sync();
       sel.onchange = sync;
       const hint = setmask.querySelector('#rbHint');
@@ -4238,7 +4255,11 @@
       mode: rbMode,
       hour: parseInt(tm[0] || '3', 10),
       minute: parseInt(tm[1] || '0', 10),
-      hours: parseInt(setmask.querySelector('#rbHours').value || '6', 10)
+      hours: parseInt(setmask.querySelector('#rbHours').value || '6', 10),
+      nightEnabled: !!setmask.querySelector('#nightEnabled').checked,
+      nightStart: setmask.querySelector('#nightStart').value || '00:00',
+      nightEnd: setmask.querySelector('#nightEnd').value || '08:00',
+      nightHours: Math.max(0, Math.min(168, parseInt(setmask.querySelector('#nightHours').value || '0', 10)))
     };
     const oi = setmask.querySelector('#openIn').value;
     const clickFolder = setmask.querySelector('#clickFolder').value === 'double' ? 'double' : 'single';

@@ -60,10 +60,15 @@ try:
     if d.get("rebuild", {}).get("mode") != "off":
         print("FAIL default rebuild mode", d.get("rebuild")); sys.exit(1)
     for mode in ("daily", "interval", "idle"):
-        req("/api/settings", {"rebuild": {"mode": mode, "hour": 3, "minute": 0, "hours": 6}})
+        cfg = {"mode": mode, "hour": 3, "minute": 0, "hours": 6,
+               "nightEnabled": True, "nightStart": "00:00", "nightEnd": "08:00", "nightHours": 0}
+        req("/api/settings", {"rebuild": cfg})
         d = req("/api/settings")
         if d.get("rebuild", {}).get("mode") != mode:
             print("FAIL mode", mode, d.get("rebuild")); sys.exit(1)
+        rb = d.get("rebuild", {})
+        if rb.get("nightEnabled") is not True or rb.get("nightStart") != "00:00" or rb.get("nightEnd") != "08:00" or rb.get("nightHours") != 0:
+            print("FAIL night fields", mode, rb); sys.exit(1)
         # 关键：重启后从 settings.json 重新读取，idle 不能退化成 off
         p.terminate()
         try: p.wait(timeout=5)
@@ -72,6 +77,9 @@ try:
         d = req("/api/settings")
         if d.get("rebuild", {}).get("mode") != mode:
             print("FAIL persisted mode", mode, d.get("rebuild")); sys.exit(1)
+        rb = d.get("rebuild", {})
+        if rb.get("nightEnabled") is not True or rb.get("nightHours") != 0:
+            print("FAIL persisted night fields", mode, rb); sys.exit(1)
     req("/api/settings", {"rebuild": {"mode": "off", "hour": 3, "minute": 0, "hours": 6}})
     d = req("/api/settings")
     if d.get("rebuild", {}).get("mode") != "off":

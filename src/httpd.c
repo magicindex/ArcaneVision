@@ -253,8 +253,11 @@ static int usb_path_blocked(int uid, const char *p) {
 }
 static volatile uint64_t g_last_rebuild;
 /* 自动全盘扫描计划：mode 0=关 1=每天 2=每 N 小时 */
-typedef struct { int mode; int hour; int minute; int hours; } rebuild_cfg;
-static rebuild_cfg g_rcfg = {0, 3, 0, 6};   /* 默认关闭；用户显式开启 */
+typedef struct {
+    int mode; int hour; int minute; int hours;       /* 普通间隔 */
+    int night_enabled; int night_start; int night_end; int night_hours; /* 夜间分钟/0=不扫 */
+} rebuild_cfg;
+static rebuild_cfg g_rcfg = {0, 3, 0, 6, 0, 0, 480, 0};   /* 默认关闭；用户显式开启 */
 static pthread_mutex_t g_rcfg_mu = PTHREAD_MUTEX_INITIALIZER;
 static int g_last_run_yday = -1;
 static uint64_t g_last_query_ms;
@@ -4479,6 +4482,19 @@ static void settings_prev_str(const char *key, const char *def, char *out, size_
     json_str(buf, key, out, cap, def);
 }
 
+static int json_bool_def(const char *s, const char *key, int def);
+
+static int parse_hhmm(const char *s, int def) {
+    int h = 0, m = 0;
+    if (!s || sscanf(s, "%d:%d", &h, &m) != 2) return def;
+    if (h < 0 || h > 23 || m < 0 || m > 59) return def;
+    return h * 60 + m;
+}
+static void fmt_hhmm(int v, char *out, size_t cap) {
+    if (v < 0 || v > 1439) v = 0;
+    snprintf(out, cap, "%02d:%02d", v / 60, v % 60);
+}
+
 static void rebuild_cfg_load(void) {
     char sp[1200];
     settings_path(sp, sizeof sp);
@@ -4504,12 +4520,23 @@ static void rebuild_cfg_load(void) {
     int hour = json_int(tmp, "\"hour\"", 3);
     int minute = json_int(tmp, "\"minute\"", 0);
     int hours = json_int(tmp, "\"hours\"", 6);
+    char ns[16], ne[16];
+    json_str(tmp, "\"nightStart\"", ns, sizeof ns, "00:00");
+    json_str(tmp, "\"nightEnd\"", ne, sizeof ne, "08:00");
+    int night_enabled = json_bool_def(tmp, "\"nightEnabled\"", 0);
+    int night_hours = json_int(tmp, "\"nightHours\"", 0);
     if (hour < 0 || hour > 23) hour = 3;
     if (minute < 0 || minute > 59) minute = 0;
     if (hours < 1) hours = 1;
     if (hours > 168) hours = 168;
+    if (night_hours < 0) night_hours = 0;
+    if (night_hours > 168) night_hours = 168;
     pthread_mutex_lock(&g_rcfg_mu);
     g_rcfg.mode = m; g_rcfg.hour = hour; g_rcfg.minute = minute; g_rcfg.hours = hours;
+    g_rcfg.night_enabled = night_enabled;
+    g_rcfg.night_start = parse_hhmm(ns, 0);
+    g_rcfg.night_end = parse_hhmm(ne, 480);
+    g_rcfg.night_hours = night_hours;
     pthread_mutex_unlock(&g_rcfg_mu);
 }
 
@@ -4601,8 +4628,22 @@ static int schedule_due(void) {
     if (c.mode == 0) return 0;
     if (c.mode == 3) return idle_due(&c);
     time_t now = time(NULL);
-    if (c.mode == 2)
-        return g_last_rebuild && now_ms() - g_last_rebuild > (uint64_t)c.hours * 3600000ull;
+    if (c.mode == 2) {
+        int hours = c.hours;
+        if (c.night_enabled) {
+            struct tm ntm;
+            localtime_r(&now, &ntm);
+            int mins = ntm.tm_hour * 60 + ntm.tm_min;
+            int in_night = (c.night_start <= c.night_end)
+                ? (mins >= c.night_start && mins < c.night_end)
+                : (mins >= c.night_start || mins < c.night_end);
+            if (in_night) {
+                if (c.night_hours <= 0) return 0;
+                hours = c.night_hours;
+            }
+        }
+        return g_last_rebuild && now_ms() - g_last_rebuild > (uint64_t)hours * 3600000ull;
+    }
     struct tm tm;
     localtime_r(&now, &tm);
     tm.tm_hour = c.hour; tm.tm_min = c.minute; tm.tm_sec = 0;
@@ -4968,9 +5009,14 @@ static void handle_settings_get(sbuf *out, int uid, int admin, int all) {
         c = g_rcfg;
         pthread_mutex_unlock(&g_rcfg_mu);
         const char *m = c.mode == 1 ? "daily" : (c.mode == 2 ? "interval" : (c.mode == 3 ? "idle" : "off"));
+        char ns[8], ne[8];
+        fmt_hhmm(c.night_start, ns, sizeof ns);
+        fmt_hhmm(c.night_end, ne, sizeof ne);
         sb_printf(out, ",\"rebuild\":{\"mode\":\"%s\",\"hour\":%d,\"minute\":%d,\"hours\":%d,"
+                       "\"nightEnabled\":%s,\"nightStart\":\"%s\",\"nightEnd\":\"%s\",\"nightHours\":%d,"
                        "\"last\":%llu,\"building\":%s}",
                   m, c.hour, c.minute, c.hours,
+                  c.night_enabled ? "true" : "false", ns, ne, c.night_hours,
                   (unsigned long long)(g_last_rebuild
                       ? time(NULL) - (now_ms() - g_last_rebuild) / 1000
                       : 0), g_building ? "true" : "false");
@@ -5102,6 +5148,7 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
 
     /* 自动扫描计划 */
     rebuild_cfg rc;
+    char ns[16], ne[16];
     pthread_mutex_lock(&g_rcfg_mu);
     rc = g_rcfg;
     pthread_mutex_unlock(&g_rcfg_mu);
@@ -5118,10 +5165,18 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
         rc.hour = json_int(tmp, "\"hour\"", rc.hour);
         rc.minute = json_int(tmp, "\"minute\"", rc.minute);
         rc.hours = json_int(tmp, "\"hours\"", rc.hours);
+        json_str(tmp, "\"nightStart\"", ns, sizeof ns, "00:00");
+        json_str(tmp, "\"nightEnd\"", ne, sizeof ne, "08:00");
+        rc.night_enabled = json_bool_def(tmp, "\"nightEnabled\"", 0);
+        rc.night_hours = json_int(tmp, "\"nightHours\"", 0);
         if (rc.hour < 0 || rc.hour > 23) rc.hour = 3;
         if (rc.minute < 0 || rc.minute > 59) rc.minute = 0;
         if (rc.hours < 1) rc.hours = 1;
         if (rc.hours > 168) rc.hours = 168;
+        if (rc.night_hours < 0) rc.night_hours = 0;
+        if (rc.night_hours > 168) rc.night_hours = 168;
+        rc.night_start = parse_hhmm(ns, 0);
+        rc.night_end = parse_hhmm(ne, 480);
         pthread_mutex_lock(&g_rcfg_mu);
         g_rcfg = rc;
         pthread_mutex_unlock(&g_rcfg_mu);
@@ -5162,7 +5217,8 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
                "\"strictHome\":%s,\"skipHidden\":%s,\"teamEnabled\":%s,\"localEnabled\":%s,"
                "\"searchMulti\":%s,\"searchMatchAll\":%s,\"searchCaseSensitive\":%s,"
                "\"searchOrdered\":%s,\"searchSeparator\":\"%s\",\"autoplay\":%s,"
-               "\"rebuild\":{\"mode\":\"%s\",\"hour\":%d,\"minute\":%d,\"hours\":%d}}",
+               "\"rebuild\":{\"mode\":\"%s\",\"hour\":%d,\"minute\":%d,\"hours\":%d,"
+               "\"nightEnabled\":%s,\"nightStart\":\"%s\",\"nightEnd\":\"%s\",\"nightHours\":%d}}",
             (int)len, b, open_in, click_folder, click_file,
             strict_home ? "true" : "false",
             skip_hidden ? "true" : "false",
@@ -5174,7 +5230,8 @@ static void handle_settings_post(sbuf *out, const char *body, int uid, int admin
             search_ordered ? "true" : "false",
             search_sep,
             autoplay ? "true" : "false",
-            m, rc.hour, rc.minute, rc.hours);
+            m, rc.hour, rc.minute, rc.hours,
+            rc.night_enabled ? "true" : "false", ns, ne, rc.night_hours);
     fflush(f);
     fsync(fileno(f));
     if (fclose(f) != 0 || rename(tmp, sp) != 0) {
