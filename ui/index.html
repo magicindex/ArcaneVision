@@ -175,7 +175,9 @@
     padding:3px 5px;background:rgba(255,255,255,.04);
   }
   .bar{display:flex;align-items:center;gap:10px;margin:16px 2px 10px;flex-wrap:wrap}
-  .chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center;flex:1 1 auto;min-width:0}
+  .chips{display:flex;gap:6px;flex-wrap:nowrap;align-items:center;flex:1 1 auto;min-width:0;
+    overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding-bottom:1px}
+  .chips::-webkit-scrollbar{display:none}
   .chips .chip{padding:5px 11px;font-size:12px}
   .chip{
     border:1px solid var(--line);background:transparent;color:var(--dim);
@@ -1261,6 +1263,26 @@
     applyOw();
     try { videoShowControls(); } catch (e) {}
   }
+  function videoLockOrientation(){
+    const w = vvideo.videoWidth || 0, h = vvideo.videoHeight || 0;
+    if (!w || !h) return;
+    const target = h > w ? 'portrait' : 'landscape';
+    try {
+      const so = screen.orientation || screen;
+      const lock = so && (so.lock || so.lockOrientation);
+      if (lock) {
+        const p = lock.call(so, target);
+        if (p && p.catch) p.catch(() => {});
+      }
+    } catch (e) {}
+  }
+  function videoUnlockOrientation(){
+    try {
+      const so = screen.orientation || screen;
+      const unlock = so && (so.unlock || so.unlockOrientation);
+      if (unlock) unlock.call(so);
+    } catch (e) {}
+  }
   function openVideo(url, title){
     if (openIn !== 'embed') { videoStop(); window.open(url, '_blank'); return; }
     if (url.indexOf('/api/transcode') < 0 && url.indexOf('/hls/') < 0) { setOwTag(''); vTranscode = null; }
@@ -1333,7 +1355,10 @@
   vvideo.addEventListener('pause', () => { videoSyncPlay(); videoShowControls(); });
   vvideo.addEventListener('ended', () => { videoSyncPlay(); videoShowControls(); });
   vvideo.addEventListener('timeupdate', videoSyncTime);
-  vvideo.addEventListener('loadedmetadata', () => { videoSyncTime(); videoShowControls(); });
+  vvideo.addEventListener('loadedmetadata', () => {
+    videoSyncTime(); videoShowControls();
+    if (document.fullscreenElement) videoLockOrientation();
+  });
   vseek.addEventListener('input', () => {
     const tc = vTranscode;
     const dur = tc && tc.duration > 0 ? tc.duration : vvideo.duration;
@@ -1413,9 +1438,21 @@
   });
   vfull.addEventListener('click', () => {
     const el = videoView;
-    if (document.fullscreenElement) { document.exitFullscreen && document.exitFullscreen(); return; }
+    if (document.fullscreenElement) {
+      document.exitFullscreen && document.exitFullscreen();
+      videoUnlockOrientation();
+      return;
+    }
     const fn = el.requestFullscreen || el.webkitRequestFullscreen;
-    if (fn) fn.call(el);
+    if (fn) {
+      const p = fn.call(el);
+      if (p && p.then) p.then(videoLockOrientation).catch(() => {});
+      else videoLockOrientation();
+    }
+  });
+  document.addEventListener('fullscreenchange', () => {
+    if (document.fullscreenElement) videoLockOrientation();
+    else videoUnlockOrientation();
   });
   vbarLoad();
   if (vcompact) vcompact.onclick = () => {

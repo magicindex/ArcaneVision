@@ -1,3 +1,10 @@
+## 0.10.29（正式版）
+
+- 分类标签固定单行横向滑动，不再换行
+- 全屏按视频尺寸锁定横屏/竖屏
+- 退出全屏自动解锁屏幕方向
+- 兼容 screen.orientation 与旧版 lockOrientation
+
 ## 0.10.28（正式版）
 
 - UI 预压缩：index.html 237KB → 62KB（gzip）
