@@ -4306,6 +4306,8 @@
         settings.searchMulti = searchMulti; settings.searchMatchAll = searchMatchAll;
         settings.searchSeparator = searchSeparator;
         settings.searchCaseSensitive = searchCaseSensitive; settings.searchOrdered = searchOrdered;
+        settings.autoplay = videoAutoplay;
+        settings.rebuild = rebuild;
         const adminScan = !!(settings.scopeAvailable && settings.scopeAvailable.admin);
         if (!adminScan) return;
         return fetch(API + 'scanmode', { method: 'POST', headers: { 'content-type': 'application/json' },
