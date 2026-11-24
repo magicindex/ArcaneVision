@@ -1046,8 +1046,8 @@ scripts/deploy-local.sh   本机 root 手工升级（停服务 → 解包 → �
 
 - 最新版本：**0.10.55（正式版）**（2026-11-24）
 - 源码 tag：`v0.10.55`
-- FPK：`dist/xuanlan_0.10.55_amd64.fpk`（2,187,936 字节）
-- SHA-256：`054269f353ccb47fb0e77b6db68ac17d75e3a8f9c17c5efdd669e0c21af45c34`
+- FPK：`dist/xuanlan_0.10.55_amd64.fpk`（2,187,963 字节）
+- SHA-256：`fb53b87010fc34037e68fa745dda2ecf13eb777e6aad9d1f4622387814d5de31`
 - 发布页：[GitHub Release](https://github.com/magicindex/ArcaneVision/releases/tag/v0.10.55) ·
   [Gitea Release](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.10.55)
 - 安装包直链：

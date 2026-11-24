@@ -4,8 +4,8 @@
 
 0.10.55 精简赞助入口，只保留顶栏咖啡杯。
 
-安装包：`xuanlan_0.10.55_amd64.fpk`（2,187,936 字节）。
-SHA-256：`054269f353ccb47fb0e77b6db68ac17d75e3a8f9c17c5efdd669e0c21af45c34`。
+安装包：`xuanlan_0.10.55_amd64.fpk`（2,187,963 字节）。
+SHA-256：`fb53b87010fc34037e68fa745dda2ecf13eb777e6aad9d1f4622387814d5de31`。
 
 ## 变更
 
@@ -23,4 +23,4 @@ SHA-256：`054269f353ccb47fb0e77b6db68ac17d75e3a8f9c17c5efdd669e0c21af45c34`。
 
 `xuanlan_0.10.55_amd64.fpk`
 
-SHA-256：`054269f353ccb47fb0e77b6db68ac17d75e3a8f9c17c5efdd669e0c21af45c34`。
+SHA-256：`fb53b87010fc34037e68fa745dda2ecf13eb777e6aad9d1f4622387814d5de31`。
