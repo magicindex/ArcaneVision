@@ -6075,6 +6075,7 @@ static const char *mime_for(const char *path) {
     if (!strcmp(dot, ".mjs") || !strcmp(dot, ".js")) return "text/javascript; charset=utf-8";
     if (!strcmp(dot, ".json")) return "application/json; charset=utf-8";
     if (!strcmp(dot, ".png")) return "image/png";
+    if (!strcmp(dot, ".jpg") || !strcmp(dot, ".jpeg")) return "image/jpeg";
     if (!strcmp(dot, ".svg")) return "image/svg+xml";
     if (!strcmp(dot, ".ico")) return "image/x-icon";
     return "application/octet-stream";
@@ -6681,6 +6682,15 @@ static void handle_client(int fd) {
             } else {
                 ctype = mime_for(pathonly);
             }
+        }
+    } else if (!strncmp(pathonly, "/assets/", 8)) {
+        /* 赞赏码等界面静态资源（jpeg/png/svg），按需加载，不参与 gzip */
+        if (!serve_file(&body, pathonly + 1, &code)) {
+            code = 404;
+            ctype = "text/plain; charset=utf-8";
+            sb_puts(&body, "not found");
+        } else {
+            ctype = mime_for(pathonly);
         }
     } else if (!strcmp(pathonly, "/favicon.ico")) {
         code = 204;

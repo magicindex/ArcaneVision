@@ -2,7 +2,7 @@
 # 打包 fnOS 应用：dist/xuanlan_<version>_amd64.fpk
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="${VERSION:-0.10.52}"
+VERSION="${VERSION:-0.10.53}"
 PORT="${PORT:-8971}"
 STAGE="$ROOT/build/fpk"
 PAYLOAD="$STAGE/payload"
@@ -13,7 +13,7 @@ printf '#ifndef XL_APP_VERSION\n#define XL_APP_VERSION "%s"\n#endif\n' "$VERSION
 make -C "$ROOT" >/dev/null
 
 rm -rf "$STAGE"
-mkdir -p "$PAYLOAD/bin" "$PAYLOAD/ui/images" "$PAYLOAD/ui/vendor" "$PAYLOAD/config" \
+mkdir -p "$PAYLOAD/bin" "$PAYLOAD/ui/images" "$PAYLOAD/ui/vendor" "$PAYLOAD/ui/assets" "$PAYLOAD/config" \
          "$FPKROOT/cmd" "$FPKROOT/config" "$DIST"
 
 # ---- payload（解到安装目录） ----
@@ -36,6 +36,8 @@ install -m 0644 "$ROOT/ui/vendor/LICENSE.pdfjs" "$PAYLOAD/ui/vendor/LICENSE.pdfj
 install -m 0644 "$ROOT/ui/vendor/LICENSE.fflate.txt" "$PAYLOAD/ui/vendor/LICENSE.fflate.txt"
 install -m 0644 "$ROOT/ui/vendor/LICENSE.hls.js" "$PAYLOAD/ui/vendor/LICENSE.hls.js"
 install -m 0644 "$ROOT/ui/vendor/LICENSE.feather-icons.txt" "$PAYLOAD/ui/vendor/LICENSE.feather-icons.txt"
+install -m 0644 "$ROOT/ui/assets/donation-wechat.jpg" "$PAYLOAD/ui/assets/donation-wechat.jpg"
+install -m 0644 "$ROOT/ui/assets/donation-alipay.jpg" "$PAYLOAD/ui/assets/donation-alipay.jpg"
 install -m 0644 "$ROOT/LICENSE" "$PAYLOAD/ui/LICENSE.txt"
 install -m 0644 "$ROOT/THIRD_PARTY.md" "$PAYLOAD/ui/THIRD_PARTY.md"
 install -m 0644 "$ROOT/NOTICE.md" "$PAYLOAD/ui/NOTICE.md"

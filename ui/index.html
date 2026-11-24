@@ -835,6 +835,102 @@
   html[data-theme="light"] .setbox button.act.primary{background:#e9eaec;color:#1d2024;border-color:#9aa0a6}
   html[data-theme="light"] .setbox .sclose{background:rgba(255,255,255,.72);border-color:#d1d3d6;color:#5f646a}
   html[data-theme="light"] .setbox .sclose:hover{background:#f0f1f2;border-color:#b9bdc2;color:#1d2024}
+
+  /* ---- 赞助：请作者喝杯咖啡（UI 沿用 RAID 阵列健康赞助页） ---- */
+  .gear.coffee{color:#fbbf24;border-color:rgba(251,191,36,.30);background:rgba(251,191,36,.08)}
+  .gear.coffee svg{width:18px;height:18px}
+  .gear.coffee:hover{color:#fde68a;border-color:rgba(251,191,36,.52);background:rgba(251,191,36,.15);
+    transform:translateY(-1px)}
+  html[data-theme="light"] .gear.coffee{color:#b45309;border-color:#fde68a;background:#fffbeb}
+  html[data-theme="light"] .gear.coffee:hover{color:#92400e;border-color:#fcd34d;background:#fef3c7}
+  footer .sponsor{margin-top:10px}
+  footer .sponsor button{
+    display:inline-flex;align-items:center;gap:6px;cursor:pointer;font:inherit;font-size:11px;
+    letter-spacing:.6px;color:#c9a227;background:rgba(251,191,36,.06);
+    border:1px solid rgba(251,191,36,.24);padding:5px 12px;border-radius:999px;transition:.16s}
+  footer .sponsor button:hover{color:#fde68a;border-color:rgba(251,191,36,.5);background:rgba(251,191,36,.12)}
+  html[data-theme="light"] footer .sponsor button{color:#b45309;background:#fffbeb;border-color:#fde68a}
+  html[data-theme="light"] footer .sponsor button:hover{color:#92400e;border-color:#fcd34d;background:#fef3c7}
+
+  .modal .cfbox{width:min(760px,94vw);max-height:calc(100vh - 120px);max-height:calc(100dvh - 120px)}
+  .modal .cfb{display:flex;flex-direction:column;gap:14px;padding:14px 16px 16px}
+  .cf-mh{display:inline-flex;align-items:center;gap:8px;color:#f0c25a;font-weight:600;letter-spacing:.4px}
+  .cf-mh svg{width:16px;height:16px;display:block}
+  .cf-hero{text-align:center;padding:4px 4px 0}
+  .cf-cup{
+    width:58px;height:58px;margin:0 auto 12px;border-radius:17px;display:grid;place-items:center;
+    color:#fbbf24;background:rgba(251,191,36,.10);border:1px solid rgba(251,191,36,.32);
+    box-shadow:0 0 34px rgba(251,191,36,.10)}
+  .cf-cup svg{width:29px;height:29px;display:block}
+  .cf-kicker{font-size:10px;letter-spacing:3.4px;color:#c9a227;text-transform:uppercase}
+  .cf-hero h2{margin:8px 0 8px;font-size:23px;font-weight:650;letter-spacing:.5px;color:#f2d98a}
+  .cf-hero > p{margin:0 auto;max-width:560px;font-size:12.5px;line-height:1.85;color:#9fb0c8}
+  .cf-pills{display:flex;justify-content:center;flex-wrap:wrap;gap:6px;margin-top:14px}
+  .cf-pills span{
+    font-size:10.5px;line-height:1;padding:5px 10px;border-radius:999px;
+    color:#d7b24a;border:1px solid rgba(251,191,36,.26);background:rgba(251,191,36,.06)}
+  .cf-methods{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  .cf-card{
+    min-width:0;display:flex;flex-direction:column;padding:12px;border-radius:12px;
+    border:1px solid rgba(120,160,220,.18);background:rgba(255,255,255,.025)}
+  .cf-card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
+  .cf-card-head h3{margin:0;font-size:13px;font-weight:600;color:#dfe8f6}
+  .cf-chip{font-size:9.5px;line-height:1;padding:3px 7px;border-radius:5px;letter-spacing:.4px;white-space:nowrap}
+  .cf-chip.wechat{color:#6ee7b7;background:rgba(52,211,153,.10);border:1px solid rgba(52,211,153,.24)}
+  .cf-chip.alipay{color:#7dd3fc;background:rgba(56,189,248,.10);border:1px solid rgba(56,189,248,.24)}
+  .cf-qr{
+    width:100%;max-width:230px;margin:0 auto;border-radius:10px;overflow:hidden;
+    border:1px solid rgba(120,160,220,.18);background:#fff}
+  .cf-qr img{display:block;width:100%;height:auto}
+  .cf-scan{margin:10px 0 2px;text-align:center;font-size:12px;font-weight:600;color:#dfe8f6}
+  .cf-side{border:1px solid rgba(120,160,220,.18);border-radius:12px;padding:14px;background:rgba(255,255,255,.02)}
+  .cf-side h3{margin:0 0 8px;font-size:13.5px;font-weight:600;color:#dfe8f6}
+  .cf-side > p{margin:0;font-size:12px;line-height:1.8;color:#9fb0c8}
+  .cf-points{list-style:none;padding:0;margin:12px 0;display:grid;gap:7px}
+  .cf-points li{position:relative;padding-left:20px;font-size:11.5px;line-height:1.6;color:#9fb0c8}
+  .cf-points li::before{content:"✓";position:absolute;left:0;top:0;color:#5eead4;font-weight:700}
+  .cf-note{margin-top:2px;padding:11px 12px;border-radius:10px;border:1px solid rgba(251,191,36,.20);background:rgba(251,191,36,.05)}
+  .cf-note b{display:block;font-size:11.5px;color:#f0c25a;margin-bottom:3px}
+  .cf-note p{margin:0;font-size:11px;line-height:1.7;color:#9fb0c8}
+  .cf-contact{margin-top:10px;font-size:10.5px;color:#7d8db0}
+  .cf-contact strong{color:#dfe8f6;font-weight:600}
+  .cf-legal{padding-top:11px;border-top:1px solid rgba(120,160,220,.14);font-size:11px;line-height:1.75;color:#8b94ab}
+  .cf-legal p{margin:4px 0}
+  .cf-legal strong{color:#dfe8f6;font-weight:600}
+  .cf-legal a{color:#5eead4;text-decoration:none}
+  .cf-legal a:hover{text-decoration:underline}
+  .cf-links{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .cf-links span{color:#5a6880}
+  html[data-theme="light"] .cf-mh{color:#92400e}
+  html[data-theme="light"] .cf-cup{color:#b45309;background:#fffbeb;border-color:#fde68a;box-shadow:0 0 30px rgba(180,83,9,.08)}
+  html[data-theme="light"] .cf-kicker{color:#a16207}
+  html[data-theme="light"] .cf-hero h2{color:#92400e}
+  html[data-theme="light"] .cf-hero > p{color:#5a6880}
+  html[data-theme="light"] .cf-pills span{color:#92400e;border-color:#fde68a;background:#fffbeb}
+  html[data-theme="light"] .cf-card{background:#fff;border-color:rgba(15,23,42,.12)}
+  html[data-theme="light"] .cf-card-head h3{color:#16233a}
+  html[data-theme="light"] .cf-chip.wechat{color:#047857;background:#ecfdf5;border-color:#a7f3d0}
+  html[data-theme="light"] .cf-chip.alipay{color:#0369a1;background:#eff8ff;border-color:#bae6fd}
+  html[data-theme="light"] .cf-qr{background:#fff;border-color:rgba(15,23,42,.12)}
+  html[data-theme="light"] .cf-scan{color:#16233a}
+  html[data-theme="light"] .cf-side{background:#fbfbfc;border-color:rgba(15,23,42,.12)}
+  html[data-theme="light"] .cf-side h3{color:#16233a}
+  html[data-theme="light"] .cf-side > p{color:#5a6880}
+  html[data-theme="light"] .cf-points li{color:#5a6880}
+  html[data-theme="light"] .cf-note{background:#fffbeb;border-color:#fde68a}
+  html[data-theme="light"] .cf-note b{color:#92400e}
+  html[data-theme="light"] .cf-note p{color:#6b7a90}
+  html[data-theme="light"] .cf-contact{color:#7b8aa0}
+  html[data-theme="light"] .cf-contact strong{color:#16233a}
+  html[data-theme="light"] .cf-legal{color:#6b7a90;border-top-color:rgba(15,23,42,.10)}
+  html[data-theme="light"] .cf-legal strong{color:#16233a}
+  html[data-theme="light"] .cf-legal a{color:#0f9c8c}
+  @media(max-width:720px){ .cf-methods{grid-template-columns:1fr} .cf-qr{max-width:200px} }
+  @media(max-width:620px),(pointer:coarse){
+    .modal .cfbox{max-height:calc(100vh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom))}
+    .modal .cfb{padding:12px 12px calc(12px + env(safe-area-inset-bottom))}
+    .cf-hero h2{font-size:20px}
+  }
 </style>
 </head>
 <body>
@@ -861,6 +957,10 @@
     <button class="gear refresh" id="refresh" title="立即全盘扫描" aria-label="立即全盘扫描">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
            stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-13.7-5.3L4 8"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 13.7 5.3L20 16"/><path d="M20 20v-4h-4"/></svg>
+    </button>
+    <button class="gear coffee" id="coffee" title="请作者喝杯咖啡" aria-label="请作者喝杯咖啡">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+           stroke-linecap="round" stroke-linejoin="round"><path d="M4 9h12v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V9z"/><path d="M16 10h2a3 3 0 0 1 0 6h-2"/><path d="M7 3c0 1 1 1 1 2M11 3c0 1 1 1 1 2"/></svg>
     </button>
     <button class="gear" id="gear" title="设置" aria-label="设置">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
@@ -908,6 +1008,7 @@
   <footer>
     玄览 · 本地文件索引 · <span id="foot"></span>
     <div class="motto">神念所至，万象玄览<i>Spiritual Sense, All Things Revealed</i></div>
+    <div class="sponsor"><button type="button" id="coffeeFoot">☕ 请作者喝杯咖啡</button></div>
     <div class="legal">© 2026 cyberzero · <span id="ver">v—</span> · GPL-3.0 · 独立实现，未使用第三方源代码</div>
   </footer>
 </div>
@@ -4366,6 +4467,73 @@
   document.getElementById('gear').onclick = openSettings;
   const usbIndBtn = document.getElementById('usbInd');
   if (usbIndBtn) usbIndBtn.onclick = openSettings;
+
+  // ---- 赞助：请作者喝杯咖啡（UI 沿用 RAID 阵列健康赞助页） ----
+  const CUP_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M4 9h12v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V9z"/><path d="M16 10h2a3 3 0 0 1 0 6h-2"/><path d="M7 3c0 1 1 1 1 2M11 3c0 1 1 1 1 2"/></svg>';
+  const coffeeModal = document.createElement('div');
+  coffeeModal.className = 'modal';
+  coffeeModal.id = 'coffeeModal';
+  coffeeModal.setAttribute('role', 'dialog');
+  coffeeModal.setAttribute('aria-modal', 'true');
+  coffeeModal.setAttribute('aria-label', '请作者喝杯咖啡');
+  coffeeModal.innerHTML = '<div class="box cfbox">' +
+    '<div class="mh"><span class="cf-mh">' + CUP_SVG + '<span>请作者喝杯咖啡</span></span>' +
+    '<span class="sp"></span><button class="plain" id="cfClose" type="button">关闭</button></div>' +
+    '<div class="mb cfb">' +
+      '<section class="cf-hero">' +
+        '<div class="cf-cup">' + CUP_SVG + '</div>' +
+        '<div class="cf-kicker">BUY ME A COFFEE</div>' +
+        '<h2>请作者喝杯咖啡</h2>' +
+        '<p>玄览会一直开源免费，遵循 GPL-3.0。如果您觉得好用，可以请我喝杯咖啡；' +
+        '微信或支付宝任选一种，付不付费都不影响您开心使用。</p>' +
+        '<div class="cf-pills"><span>永久免费</span><span>GPL-3.0 开源</span><span>赞赏完全自愿</span></div>' +
+      '</section>' +
+      '<section class="cf-methods" aria-label="微信与支付宝赞赏入口">' +
+        '<article class="cf-card">' +
+          '<div class="cf-card-head"><h3>微信赞赏</h3><span class="cf-chip wechat">微信支付</span></div>' +
+          '<div class="cf-qr"><img src="assets/donation-wechat.jpg" alt="微信赞赏码" loading="lazy"></div>' +
+          '<p class="cf-scan">打开微信「扫一扫」，金额随意</p>' +
+        '</article>' +
+        '<article class="cf-card">' +
+          '<div class="cf-card-head"><h3>支付宝赞赏</h3><span class="cf-chip alipay">支付宝</span></div>' +
+          '<div class="cf-qr"><img src="assets/donation-alipay.jpg" alt="支付宝赞赏码" loading="lazy"></div>' +
+          '<p class="cf-scan">打开支付宝「扫一扫」，金额随意</p>' +
+        '</article>' +
+      '</section>' +
+      '<section class="cf-side">' +
+        '<h3>一杯咖啡，一点支持</h3>' +
+        '<p>写这个项目占用了不少晚上的时间：本地索引、团队 ACL、远程挂载、双窗口预览、' +
+        '内置阅读器与主题适配，都是一点点磨出来的。</p>' +
+        '<ul class="cf-points">' +
+          '<li>软件始终开源免费，不设付费墙</li>' +
+          '<li>付不付费都不影响全部功能和更新</li>' +
+          '<li>微信 / 支付宝任选一种，金额随意</li>' +
+          '<li>赞赏仅用于支持项目持续维护，遵循 GPL-3.0</li>' +
+        '</ul>' +
+        '<div class="cf-note"><b>感谢每一位支持者</b><p>赞赏完全自愿。即使不赞赏，' +
+        '也欢迎继续使用、反馈问题、分享给需要的朋友。</p></div>' +
+        '<div class="cf-contact">联系作者：<strong>cyberzero</strong> · 飞牛论坛</div>' +
+      '</section>' +
+      '<section class="cf-legal">' +
+        '<p>本软件代码依据 <strong>GNU General Public License v3.0</strong> 发布，' +
+        '您可以自由使用、修改和再分发。赞赏是自愿支持，不是授权费，' +
+        '也不会改变 GPL-3.0 赋予您的权利。</p>' +
+        '<p class="cf-links"><a href="https://www.gnu.org/licenses/gpl-3.0.html" target="_blank" rel="noopener">GPL-3.0 许可证</a>' +
+        '<span>·</span><a href="#" id="cfBack">返回检索</a></p>' +
+      '</section>' +
+    '</div></div>';
+  document.body.appendChild(coffeeModal);
+  const openCoffee = () => coffeeModal.classList.add('on');
+  const closeCoffee = () => coffeeModal.classList.remove('on');
+  coffeeModal.addEventListener('click', e => { if (e.target === coffeeModal) closeCoffee(); });
+  coffeeModal.querySelector('#cfClose').onclick = closeCoffee;
+  coffeeModal.querySelector('#cfBack').onclick = e => { e.preventDefault(); closeCoffee(); };
+  document.getElementById('coffee').onclick = openCoffee;
+  document.getElementById('coffeeFoot').onclick = openCoffee;
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && coffeeModal.classList.contains('on')) closeCoffee();
+  });
 
   // 一次性迁移旧默认值到 0.8.8 默认值：
   //   旧「文本」关联（preview）→ 富文本内置；代码/图片/音频/视频 preview → 在线预览。
