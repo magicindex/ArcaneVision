@@ -282,7 +282,7 @@
   .openwin #vvideo::-webkit-media-controls-enclosure,
   .openwin #vvideo::-webkit-media-controls-panel,
   .openwin #vvideo::-webkit-media-controls-start-playback-button{display:none!important;opacity:0!important}
-  .openwin .vbar{position:absolute;left:0;right:0;bottom:0;z-index:2;display:flex;align-items:center;gap:8px;overflow:hidden;
+  .openwin .vbar{position:absolute;left:0;right:0;bottom:0;z-index:2;display:flex;align-items:center;gap:8px;overflow:visible;
     padding:22px 12px 11px;background:linear-gradient(180deg,rgba(0,0,0,0),rgba(0,0,0,.82));
     opacity:0;transform:translateY(8px);pointer-events:none;transition:opacity .16s,transform .16s}
   .openwin #videoview.ctrlon .vbar{opacity:1;transform:none;pointer-events:auto}
@@ -319,6 +319,7 @@
   .openwin #videoview.ctrlon .vbar.compact{transform:translateX(-50%)}
   .openwin .vbar.compact #vfull{display:none}
   .openwin .vbar.compact #vvol{display:none}
+  .openwin .vbar.compact #vmute[data-tip]::after{left:auto;right:0;transform:none}
   .openwin .vbar.compact #vtime{font-size:10.5px}
   .openwin .vbar.compact #vseek{min-width:70px;width:min(32vw,220px);flex:none}
   .openwin .vbar.dragging{cursor:grabbing;user-select:none;transition:none}
@@ -1258,12 +1259,12 @@
   const vorient = openwin.querySelector('#vorient');
   const vexitfull = openwin.querySelector('#vexitfull');
   const ICON_ROTATE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="3" width="10" height="18" rx="2"/><path d="M10 18h4M4 7a8 8 0 0 0 0 10M20 7a8 8 0 0 1 0 10"/></svg>';
-  if (vorient) { vorient.innerHTML = ICON_ROTATE; vorient.title = '切换横屏'; }
+  if (vorient) { vorient.innerHTML = ICON_ROTATE; vorient.setAttribute('data-tip', '切换横屏'); }
   let vHideTimer = 0, vHover = false;
   const vbar = openwin.querySelector('.vbar');
   const vcompact = openwin.querySelector('#vcompact');
-  if (vcompact) { vcompact.innerHTML = ICON_CAPSULE; vcompact.title = '切换胶囊控制条'; }
-  if (vmute) { vmute.innerHTML = ICON_VOL_ON; vmute.title = '静音'; }
+  if (vcompact) { vcompact.innerHTML = ICON_CAPSULE; vcompact.setAttribute('data-tip', '切换胶囊控制条'); }
+  if (vmute) { vmute.innerHTML = ICON_VOL_ON; vmute.setAttribute('data-tip', '静音'); }
   let vbarDrag = null;
   function vbarSave(){
     try {
@@ -1463,7 +1464,7 @@
       if (vstage) vstage.classList.toggle('force-landscape', target === 'landscape');
       if (vorient) {
         const tip = target === 'landscape' ? '切换竖屏' : '切换横屏';
-        vorient.title = tip; vorient.setAttribute('data-tip', tip); vorient.setAttribute('aria-label', tip);
+        vorient.setAttribute('data-tip', tip); vorient.setAttribute('aria-label', tip);
       }
     };
     const target = (vstage && vstage.classList.contains('force-landscape')) ? 'portrait' : 'landscape';
@@ -1639,8 +1640,7 @@
   function videoSyncVolume(){
     if (!vvideo.muted) vSavedVolume = vvideo.volume;
     vmute.innerHTML = vvideo.muted ? ICON_VOL_OFF : ICON_VOL_ON;
-    vmute.title = vvideo.muted ? '取消静音并恢复音量' : '静音';
-    vmute.setAttribute('data-tip', vmute.title);
+    vmute.setAttribute('data-tip', vvideo.muted ? '取消静音并恢复音量' : '静音');
     vmute.setAttribute('aria-label', vvideo.muted ? '取消静音并恢复音量' : '静音');
     vmute.setAttribute('aria-pressed', vvideo.muted ? 'true' : 'false');
     vvol.disabled = !!vvideo.muted;
@@ -1689,7 +1689,7 @@
     if (vstage && vstage.classList.contains('force-landscape') && innerWidth > innerHeight) {
       vstage.classList.remove('force-landscape');
       if (vorient) {
-        vorient.title = '切换横屏'; vorient.setAttribute('data-tip', '切换横屏');
+        vorient.setAttribute('data-tip', '切换横屏');
       }
     }
   }, {passive:true});
@@ -1699,7 +1699,6 @@
       if (vstage) vstage.classList.remove('force-landscape');
       videoUnlockOrientation();
       if (vorient) {
-        vorient.title = '切换横屏';
         vorient.setAttribute('data-tip', '切换横屏');
         vorient.setAttribute('aria-label', '切换横屏');
       }
@@ -1720,7 +1719,6 @@
     vbar.style.left = ''; vbar.style.top = ''; vbar.style.bottom = ''; vbar.style.transform = '';
     const compact = vbar.classList.contains('compact');
     const tip = compact ? '切换完整控制条' : '切换胶囊控制条';
-    vcompact.title = tip;
     vcompact.setAttribute('data-tip', tip);
     vcompact.setAttribute('aria-label', tip);
     vcompact.setAttribute('aria-pressed', compact ? 'true' : 'false');
