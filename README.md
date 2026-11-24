@@ -144,8 +144,8 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
 
 ## 现在是什么状态
 
-当前版本 **0.10.55（正式版）**，更新记录见 [CHANGELOG.md](CHANGELOG.md)，发布说明见
-[RELEASE_NOTES.md](RELEASE_NOTES.md)。0.10.55 仅保留顶栏咖啡杯赞助入口；0.10.54 修复网关路径下赞赏码图片 404；0.10.53 增加「请作者喝杯咖啡」赞助入口与弹窗；0.10.52 播放关闭后恢复列表滚动位置；0.10.11 固定背景层并补齐 ext4 镜像测试；0.10.10 优化多词候选选择与高亮边界；0.10.9 修复多词分隔符与多词高亮；0.10.8 增加搜索结果自动分页加载；0.10.7 增加多词搜索；0.10.6 将 0.10.x 的团队独立索引、远程协议标识、
+当前版本 **0.10.56（正式版）**，更新记录见 [CHANGELOG.md](CHANGELOG.md)，发布说明见
+[RELEASE_NOTES.md](RELEASE_NOTES.md)。0.10.56 修复播放器悬停提示被裁剪；0.10.55 仅保留顶栏咖啡杯赞助入口；0.10.54 修复网关路径下赞赏码图片 404；0.10.53 增加「请作者喝杯咖啡」赞助入口与弹窗；0.10.52 播放关闭后恢复列表滚动位置；0.10.11 固定背景层并补齐 ext4 镜像测试；0.10.10 优化多词候选选择与高亮边界；0.10.9 修复多词分隔符与多词高亮；0.10.8 增加搜索结果自动分页加载；0.10.7 增加多词搜索；0.10.6 将 0.10.x 的团队独立索引、远程协议标识、
 HLS 转码、分区域扫描统计和板块级重建收敛为正式版；0.9.0 完成团队空间按权限索引；
 0.10.0 完成 fanotify ACL 自愈与修复退避。
 
@@ -160,6 +160,11 @@ HLS 转码、分区域扫描统计和板块级重建收敛为正式版；0.9.0 �
 4. **可运维**：单元索引有 epoch 原子切换、增量 delta、损坏检测/自动重建、容量告警、
    `.trash` 回收与一键回滚。
 5. **不牺牲检索性能**：共享索引仍是 mmap + trigram；单元索引只读 mmap，增量走 live + delta。
+
+### 0.10.56 正式版已完成
+
+- 播放器音量/胶囊/横竖屏提示不再被控制条裁剪；
+- 提示右对齐并去除原生 title 重复。
 
 ### 0.10.55 正式版已完成
 
@@ -1044,15 +1049,15 @@ scripts/deploy-local.sh   本机 root 手工升级（停服务 → 解包 → �
 
 ## 版本与安装包
 
-- 最新版本：**0.10.55（正式版）**（2026-11-24）
-- 源码 tag：`v0.10.55`
-- FPK：`dist/xuanlan_0.10.55_amd64.fpk`（2,187,963 字节）
-- SHA-256：`fb53b87010fc34037e68fa745dda2ecf13eb777e6aad9d1f4622387814d5de31`
-- 发布页：[GitHub Release](https://github.com/magicindex/ArcaneVision/releases/tag/v0.10.55) ·
-  [Gitea Release](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.10.55)
+- 最新版本：**0.10.56（正式版）**（2026-11-24）
+- 源码 tag：`v0.10.56`
+- FPK：`dist/xuanlan_0.10.56_amd64.fpk`（2,187,931 字节）
+- SHA-256：`f5a558679ce4747ae38fcf855c9be1786b0e5f44a6ac5118af67a7da915bacb5`
+- 发布页：[GitHub Release](https://github.com/magicindex/ArcaneVision/releases/tag/v0.10.56) ·
+  [Gitea Release](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.10.56)
 - 安装包直链：
-  [GitHub](https://github.com/magicindex/ArcaneVision/releases/download/v0.10.55/xuanlan_0.10.55_amd64.fpk) ·
-  [Gitea](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/download/v0.10.55/xuanlan_0.10.55_amd64.fpk)
+  [GitHub](https://github.com/magicindex/ArcaneVision/releases/download/v0.10.56/xuanlan_0.10.56_amd64.fpk) ·
+  [Gitea](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/download/v0.10.56/xuanlan_0.10.56_amd64.fpk)
 
 > 0.10.6 为正式版；包含团队独立索引、HLS 视频、PDF 显示全部、分区域扫描统计、
 > 板块级重建隔离和本轮完整回归修复。
