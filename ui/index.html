@@ -843,14 +843,6 @@
     transform:translateY(-1px)}
   html[data-theme="light"] .gear.coffee{color:#b45309;border-color:#fde68a;background:#fffbeb}
   html[data-theme="light"] .gear.coffee:hover{color:#92400e;border-color:#fcd34d;background:#fef3c7}
-  footer .sponsor{margin-top:10px}
-  footer .sponsor button{
-    display:inline-flex;align-items:center;gap:6px;cursor:pointer;font:inherit;font-size:11px;
-    letter-spacing:.6px;color:#c9a227;background:rgba(251,191,36,.06);
-    border:1px solid rgba(251,191,36,.24);padding:5px 12px;border-radius:999px;transition:.16s}
-  footer .sponsor button:hover{color:#fde68a;border-color:rgba(251,191,36,.5);background:rgba(251,191,36,.12)}
-  html[data-theme="light"] footer .sponsor button{color:#b45309;background:#fffbeb;border-color:#fde68a}
-  html[data-theme="light"] footer .sponsor button:hover{color:#92400e;border-color:#fcd34d;background:#fef3c7}
 
   .modal .cfbox{width:min(760px,94vw);max-height:calc(100vh - 120px);max-height:calc(100dvh - 120px)}
   .modal .cfb{display:flex;flex-direction:column;gap:14px;padding:14px 16px 16px}
@@ -1008,7 +1000,6 @@
   <footer>
     玄览 · 本地文件索引 · <span id="foot"></span>
     <div class="motto">神念所至，万象玄览<i>Spiritual Sense, All Things Revealed</i></div>
-    <div class="sponsor"><button type="button" id="coffeeFoot">☕ 请作者喝杯咖啡</button></div>
     <div class="legal">© 2026 cyberzero · <span id="ver">v—</span> · GPL-3.0 · 独立实现，未使用第三方源代码</div>
   </footer>
 </div>
@@ -4530,7 +4521,6 @@
   coffeeModal.querySelector('#cfClose').onclick = closeCoffee;
   coffeeModal.querySelector('#cfBack').onclick = e => { e.preventDefault(); closeCoffee(); };
   document.getElementById('coffee').onclick = openCoffee;
-  document.getElementById('coffeeFoot').onclick = openCoffee;
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && coffeeModal.classList.contains('on')) closeCoffee();
   });
