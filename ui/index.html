@@ -1227,7 +1227,8 @@
   let vdrawRaf = 0;
   let vTranscode = null, vSeekDragging = false, vHls = null, vTranscodeSeekTarget = 0;
   let vHlsSid = '', vHlsGuard = 0, vHlsPlayed = false, vHlsFalling = false, vHlsProgress = false;
-  let vStallTimer = 0, vStallRetry = 0, vStallActive = false;
+  let vStallTimer = 0, vStallRetry = 0, vStallActive = false, vPlaybackStarted = false;
+  let vLastDowngradeAt = 0;
   const VQ_KEY = 'xl_vquality', VQ_LEVELS = ['1080', '720', '480', '360'];
   let vQuality = 'auto';
   try {
@@ -1401,17 +1402,19 @@
   function videoStallBegin(){
     if (vStallActive) return;
     if (!videoView.classList.contains('on') || vvideo.paused || vvideo.ended) return;
+    /* 首次起播阶段交给 hls.js / 浏览器自己加载，避免预缓冲还没到就重连 */
+    if (!vPlaybackStarted) return;
     vStallActive = true;
     clearTimeout(vStallTimer);
     vStallTimer = setTimeout(() => {
       vStallTimer = 0;
       if (vvideo.paused || vvideo.ended || !vStallActive) return;
       videoStallRecover();
-    }, 2600);
+    }, 4000);
     videoSyncBuffer();
   }
   function videoStallRecover(){
-    if (!vStallActive) return;
+    if (!vStallActive || !vPlaybackStarted) return;
     const tc = vTranscode;
     const at = vvideo.currentTime || 0;
     vStallRetry++;
@@ -1453,6 +1456,10 @@
   function tryAutoDowngrade(reason){
     if (!vTranscode) return false;
     if (vQuality !== 'auto') return false;
+    /* 避免转码首段较慢时在几秒内反复重建会话 */
+    const now = Date.now();
+    if (now - vLastDowngradeAt < 20000) return false;
+    vLastDowngradeAt = now;
     const cur = String(vTranscode.q || '1080');
     const idx = VQ_LEVELS.indexOf(cur);
     if (idx < 0 || idx >= VQ_LEVELS.length - 1) return false;
@@ -1543,6 +1550,7 @@
   function videoStop(){
     vTranscode = null; vSeekDragging = false;
     vStallActive = false; vStallRetry = 0; clearTimeout(vStallTimer); vStallTimer = 0;
+    vPlaybackStarted = false; vLastDowngradeAt = 0;
     vStopLongPress(true);
     try { vvideo.playbackRate = 1; } catch (e) {}
     if (vrate) vrate.classList.remove('on');
@@ -1655,6 +1663,8 @@
     openwin.querySelector('#owtitle').textContent = title || '视频';
     videoView.classList.add('on');
     videoView.classList.remove('loading');
+    vPlaybackStarted = false;
+    vStallActive = false; vStallRetry = 0; clearTimeout(vStallTimer); vStallTimer = 0;
     try { vvideo.playbackRate = 1; } catch (e) {}
     if (vrate) vrate.classList.remove('on');
     openwin.classList.add('on');
@@ -1684,7 +1694,7 @@
         if (!vHlsPlayed || !vHlsProgress || !vvideo.videoWidth) {
           videoFallbackHls('HLS 无有效画面，已回退直出转码');
         }
-      }, 8000);
+      }, 12000);
       vHls.on(Hls.Events.ERROR, (evt, data) => {
         if (!data || !data.fatal) return;
         /* 网络抖动先原地重连；仍失败再自动降档，最后才回退直出 */
@@ -1764,7 +1774,7 @@
   vvideo.addEventListener('waiting', () => { videoSyncBuffer(); videoStallBegin(); });
   vvideo.addEventListener('stalled', () => { videoSyncBuffer(); videoStallBegin(); });
   vvideo.addEventListener('progress', videoSyncBuffer);
-  vvideo.addEventListener('playing', () => { vStallActive = false; clearTimeout(vStallTimer); vStallTimer = 0; vStallRetry = 0; videoSyncBuffer(); });
+  vvideo.addEventListener('playing', () => { vPlaybackStarted = true; vStallActive = false; clearTimeout(vStallTimer); vStallTimer = 0; vStallRetry = 0; videoSyncBuffer(); });
   vvideo.addEventListener('pause', videoStallEnd);
   vvideo.addEventListener('emptied', () => { vStallActive = false; clearTimeout(vStallTimer); vStallTimer = 0; });
   vvideo.addEventListener('playing', () => { vHlsPlayed = true; });

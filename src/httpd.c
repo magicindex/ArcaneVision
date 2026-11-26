@@ -6928,10 +6928,10 @@ static void handle_hls_start(int fd, const char *qs, int uid) {
     }
     if (!g_have_ffmpeg) { send_simple(fd, 503, "{\"ok\":false,\"error\":\"ffmpeg not available\"}"); return; }
     if (!param(qs, "q", qbuf, sizeof qbuf)) snprintf(qbuf, sizeof qbuf, "1080");
-    int W = 1920, H = 1080, br = 4;
-    if (!strcmp(qbuf, "720")) { W = 1280; H = 720; br = 3; }
-    else if (!strcmp(qbuf, "480")) { W = 854; H = 480; br = 2; }
-    else if (!strcmp(qbuf, "360")) { W = 640; H = 360; br = 1; }
+    int W = 1920, H = 1080, brk = 3000;
+    if (!strcmp(qbuf, "720")) { W = 1280; H = 720; brk = 2000; }
+    else if (!strcmp(qbuf, "480")) { W = 854; H = 480; brk = 1100; }
+    else if (!strcmp(qbuf, "360")) { W = 640; H = 360; brk = 700; }
 
     char sid[32], dir[300];
     pthread_mutex_lock(&g_hls_mu);
@@ -6950,8 +6950,10 @@ static void handle_hls_start(int fd, const char *qs, int uid) {
     snprintf(pl, sizeof pl, "%s/index.m3u8", dir);
     char vf[256];
     snprintf(vf, sizeof vf, "scale=%d:%d:force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuv420p", W, H);
-    char vb[16];
-    snprintf(vb, sizeof vb, "%dM", br);
+    char vb[16], vmax[16], vbuf[16];
+    snprintf(vb, sizeof vb, "%dk", brk);
+    snprintf(vmax, sizeof vmax, "%dk", brk * 14 / 10);
+    snprintf(vbuf, sizeof vbuf, "%dk", brk * 2);
     char *argv[80];
     int n = 0;
     argv[n++] = (char *)ffmpeg_path();
@@ -6965,9 +6967,11 @@ static void handle_hls_start(int fd, const char *qs, int uid) {
     if (g_have_nvenc) {
         argv[n++] = "-c:v"; argv[n++] = "h264_nvenc"; argv[n++] = "-preset"; argv[n++] = "p1";
         argv[n++] = "-rc"; argv[n++] = "vbr"; argv[n++] = "-b:v"; argv[n++] = vb;
+        argv[n++] = "-maxrate"; argv[n++] = vmax; argv[n++] = "-bufsize"; argv[n++] = vbuf;
     } else {
         argv[n++] = "-c:v"; argv[n++] = "libx264"; argv[n++] = "-preset"; argv[n++] = "veryfast";
         argv[n++] = "-b:v"; argv[n++] = vb;
+        argv[n++] = "-maxrate"; argv[n++] = vmax; argv[n++] = "-bufsize"; argv[n++] = vbuf;
     }
     argv[n++] = "-c:a"; argv[n++] = "aac"; argv[n++] = "-b:a"; argv[n++] = "128k"; argv[n++] = "-ac"; argv[n++] = "2";
     argv[n++] = "-force_key_frames"; argv[n++] = "expr:gte(t,n_forced*1)";
@@ -7089,10 +7093,10 @@ static void handle_transcode(int fd, const char *qs, int uid) {
     pthread_mutex_unlock(&g_tc_mu);
 
     if (!param(qs, "q", qbuf, sizeof qbuf)) snprintf(qbuf, sizeof qbuf, "1080");
-    int W = 1920, H = 1080, br = 4;
-    if (!strcmp(qbuf, "720")) { W = 1280; H = 720; br = 3; }
-    else if (!strcmp(qbuf, "480")) { W = 854; H = 480; br = 2; }
-    else if (!strcmp(qbuf, "360")) { W = 640; H = 360; br = 1; }
+    int W = 1920, H = 1080, brk = 3000;
+    if (!strcmp(qbuf, "720")) { W = 1280; H = 720; brk = 2000; }
+    else if (!strcmp(qbuf, "480")) { W = 854; H = 480; brk = 1100; }
+    else if (!strcmp(qbuf, "360")) { W = 640; H = 360; brk = 700; }
 
     double start = 0;
     if (param(qs, "t", tbuf, sizeof tbuf)) start = atof(tbuf);
@@ -7119,9 +7123,9 @@ static void handle_transcode(int fd, const char *qs, int uid) {
         vf[0] = 0;
 
     char vb[16], vmax[16], vbuf[16];
-    snprintf(vb, sizeof vb, "%dM", br);
-    snprintf(vmax, sizeof vmax, "%dM", br * 3 / 2);
-    snprintf(vbuf, sizeof vbuf, "%dM", br * 2);
+    snprintf(vb, sizeof vb, "%dk", brk);
+    snprintf(vmax, sizeof vmax, "%dk", brk * 14 / 10);
+    snprintf(vbuf, sizeof vbuf, "%dk", brk * 2);
     char *argv[48];
     int n = 0;
     argv[n++] = (char *)ffmpeg_path();
