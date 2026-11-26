@@ -373,8 +373,11 @@
     .openwin .vbar #vseek{min-width:50px}
     .openwin .vbar #vquality{font-size:10.5px;min-width:0;padding:3px 7px}
     .openwin .vbar{padding-bottom:max(11px,env(safe-area-inset-bottom))}
-    .card,.setbox,.finder .panel,.openwin .vbar.compact{backdrop-filter:none}
+    .card,.setbox,.finder .panel,.openwin .vbar.compact,.setmask,.finder,.modal{backdrop-filter:none}
     .openwin{box-shadow:none}
+    /* 荣耀等 WebView 在毛玻璃遮罩下会吞掉内部滚动事件，这里显式开启触摸滚动 */
+    .setbox .setbody,.finder .list{-webkit-overflow-scrolling:touch;touch-action:pan-y;overscroll-behavior:contain}
+    .setmask,.finder,.modal{touch-action:pan-y}
   }
   /* 图片预览：全屏查看、左右切换、键盘操作；列表来自当前搜索 items，不重新请求 */
   .imgview{position:fixed;top:0;right:0;bottom:0;left:0;z-index:260;display:none;
@@ -496,7 +499,8 @@
     display:flex;flex-direction:column;
     background:linear-gradient(180deg,rgba(22,31,48,.98),rgba(13,19,31,.98));
     border:1px solid rgba(120,180,200,.22);box-shadow:0 24px 70px rgba(0,0,0,.55)}
-  .setbox .setbody{flex:1 1 auto;min-height:0;overflow-y:auto;margin:8px 7px 8px 8px;padding:14px 15px 12px;border-radius:12px;
+  .setbox .setbody{flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y;
+    margin:8px 7px 8px 8px;padding:14px 15px 12px;border-radius:12px;
     scrollbar-width:thin;scrollbar-color:rgba(120,160,220,.30) transparent}
   .setbox .setbody::-webkit-scrollbar{width:10px;background:transparent}
   .setbox .setbody::-webkit-scrollbar-track{background:transparent}

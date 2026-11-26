@@ -1,37 +1,34 @@
-# 玄览 0.10.63 发布说明
+# 玄览 0.10.64 发布说明
 
 > 发布：2026-11-27 · 适用于飞牛 fnOS（amd64）· 正式版
 
-0.10.63 为手机标题栏增加状态头像，并精简标题文字。
+0.10.64 修复部分机型设置面板无法上下滑动。
 
-安装包：`xuanlan_0.10.63_amd64.fpk`（2,197,530 字节）。
-SHA-256：`fd95a393e3f6c18dbde1f3e22c9dc14cd220dcb8f9a7556d5d872eb90f2a8c93`。
+安装包：`xuanlan_0.10.64_amd64.fpk`（2,197,786 字节）。
+SHA-256：`c8dec30fbca55309cba748f7ed2afc9960e9cc8aaf7dcab36b4c8d999b3980f5`。
 
-## 新增
+## 问题
 
-- 手机标题栏在「玄」图标右侧新增**用户头像**（取用户名首字，未登录显示「玄」）；
-- 头像外圈跑马灯随服务状态变色：
-  - **绿色** 就绪（正常检索）
-  - **橙色** 正在建索引（本地或 USB）
-  - **红色** 未就绪 / 部分卷不可用 / 未连接
-- 状态与右下角状态点、`/api/status` 实时同步；
-- 手机端标题栏**只保留「玄」图标**，隐藏「玄览」文字（桌面端不变）。
+- 荣耀 Play 5 Pro 等机型在飞牛 App 内打开「设置」时面板能显示，但内容无法上下滑动；
+- 原因：全屏遮罩 `.setmask` 使用 `backdrop-filter: blur(6px)` 毛玻璃，
+  部分 Android WebView 在毛玻璃合成层下会吞掉内部 `overflow` 的触摸滚动事件；
+- 小米等设备毛玻璃实现正常，因此不易复现。
 
-## 细节
+## 修复
 
-- 头像 30px（≤380px 时 28px），跑马灯 1.6 秒一圈；红色状态加快到 0.9 秒；
-- 支持 `prefers-reduced-motion`（减少动画用户不旋转）；
-- 头像与文字均为浅色主题适配；
-- 头像标题悬停显示完整用户名。
+- 手机 / 触屏下禁用设置、目录查找、弹窗遮罩的 `backdrop-filter`（背景色保留，视觉基本一致）；
+- 设置面板 `.setbody`、目录列表补齐 `-webkit-overflow-scrolling: touch` 与 `touch-action: pan-y`；
+- 遮罩与滚动容器增加 `overscroll-behavior: contain`，避免滚动穿透到页面；
+- 桌面端仍保留毛玻璃效果。
 
 ## 验证
 
-- 390px 手机视口：头像显示 30px、状态类 `avatar ok`、品牌文字隐藏；
-- 状态切换（就绪/索引中/未就绪）对应的类切换正确；
-- `tests/ui_behavior_test.py` 与 JS 语法检查通过。
+- 手机媒体查询下 `.setmask`/`.finder`/`.modal` 的 `backdrop-filter` 为 `none`；
+- `.setbody` 计算样式包含 `touch-action: pan-y`、`overflow-y: auto`；
+- `tests/ui_behavior_test.py` 通过。
 
 ## 安装包
 
-`xuanlan_0.10.63_amd64.fpk`
+`xuanlan_0.10.64_amd64.fpk`
 
-SHA-256：`fd95a393e3f6c18dbde1f3e22c9dc14cd220dcb8f9a7556d5d872eb90f2a8c93`。
+SHA-256：`c8dec30fbca55309cba748f7ed2afc9960e9cc8aaf7dcab36b4c8d999b3980f5`。
