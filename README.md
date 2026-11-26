@@ -1063,15 +1063,15 @@ scripts/deploy-local.sh   本机 root 手工升级（停服务 → 解包 → �
 
 ## 版本与安装包
 
-- 最新版本：**0.10.57（正式版）**（2026-11-26）
-- 源码 tag：`v0.10.57`
-- FPK：`dist/xuanlan_0.10.57_amd64.fpk`（2,192,967 字节）
-- SHA-256：`43f2146c26e317f874527318eb37707bebd4dc90b30346f2fb950e595b860480`
-- 发布页：[GitHub Release](https://github.com/magicindex/ArcaneVision/releases/tag/v0.10.57) ·
-  [Gitea Release](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.10.57)
+- 最新版本：**0.10.58（正式版）**（2026-11-26）
+- 源码 tag：`v0.10.58`
+- FPK：`dist/xuanlan_0.10.58_amd64.fpk`（2,194,394 字节）
+- SHA-256：`96d3f2be1ca8264c59c0b453ee058b12006dca7dd16d30d6ab723de357a1a414`
+- 发布页：[GitHub Release](https://github.com/magicindex/ArcaneVision/releases/tag/v0.10.58) ·
+  [Gitea Release](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.10.58)
 - 安装包直链：
-  [GitHub](https://github.com/magicindex/ArcaneVision/releases/download/v0.10.57/xuanlan_0.10.57_amd64.fpk) ·
-  [Gitea](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/download/v0.10.57/xuanlan_0.10.57_amd64.fpk)
+  [GitHub](https://github.com/magicindex/ArcaneVision/releases/download/v0.10.58/xuanlan_0.10.58_amd64.fpk) ·
+  [Gitea](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/download/v0.10.58/xuanlan_0.10.58_amd64.fpk)
 
 > 0.10.6 为正式版；包含团队独立索引、HLS 视频、PDF 显示全部、分区域扫描统计、
 > 板块级重建隔离和本轮完整回归修复。
