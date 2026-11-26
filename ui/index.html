@@ -297,6 +297,10 @@
     opacity:0;visibility:hidden;pointer-events:none;transition:opacity .12s;z-index:5}
   .openwin .vbar button[data-tip]:hover::after{opacity:1;visibility:visible}
   .openwin .vbar #vtime{font-size:11.5px;color:#dbe8f8;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .openwin .vbar #vbuf{font-size:10.5px;color:#8fd8d0;white-space:nowrap;opacity:.85}
+  .openwin .vbar #vbuf:empty{display:none}
+  .openwin .vbar #vquality{font-size:11px;padding:4px 8px;min-width:46px;white-space:nowrap;font-variant-numeric:tabular-nums}
+  html[data-theme="light"] .openwin .vbar #vbuf{color:#0f766e}
   .openwin .vbar input[type=range]{accent-color:#59d3c8;height:16px;min-width:60px}
   .openwin .vbar #vseek{flex:1}
   .openwin .vbar #vvol{width:68px;flex:none}
@@ -321,7 +325,9 @@
   .openwin .vbar.compact #vvol{display:none}
   .openwin .vbar.compact #vmute[data-tip]::after{left:auto;right:0;transform:none}
   .openwin .vbar.compact #vtime{font-size:10.5px}
-  .openwin .vbar.compact #vseek{min-width:70px;width:min(32vw,220px);flex:none}
+  .openwin .vbar.compact #vbuf{display:none}
+  .openwin .vbar.compact #vquality{font-size:10.5px;min-width:0;padding:3px 7px}
+  .openwin .vbar.compact #vseek{min-width:56px;width:min(22vw,140px);flex:none}
   .openwin .vbar.dragging{cursor:grabbing;user-select:none;transition:none}
   .openwin #vhint{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:2;
     font-size:11px;color:#dbe8f8;background:rgba(8,14,24,.62);border:1px solid rgba(160,190,230,.2);
@@ -340,6 +346,11 @@
   .openwin #videoview.fs.ctrlon #vexitfull{display:flex}
   @media(max-width:620px),(pointer:coarse){
     .openwin .vbar #vvol{display:none}
+    .openwin .vbar #vbuf{display:none}
+    .openwin .vbar #vfull{display:none}
+    .openwin .vbar{gap:6px}
+    .openwin .vbar #vseek{min-width:50px}
+    .openwin .vbar #vquality{font-size:10.5px;min-width:0;padding:3px 7px}
     .openwin .vbar{padding-bottom:max(11px,env(safe-area-inset-bottom))}
     .card,.setbox,.finder .panel,.openwin .vbar.compact{backdrop-filter:none}
     .openwin{box-shadow:none}
@@ -1084,9 +1095,10 @@
     '<button id="pgin">+</button></div><div class="ppages" id="ppages"></div></div>' +
     '<div id="videoview"><div id="vstage"><video id="vvideo" playsinline webkit-playsinline preload="metadata" tabindex="0" disablepictureinpicture></video><canvas id="vcanvas"></canvas>' +
     '<div class="vbar"><button id="vplay" type="button" aria-label="播放或暂停">▶</button>' +
-    '<span id="vtime">0:00 / 0:00</span>' +
+    '<span id="vtime">0:00 / 0:00</span><span id="vbuf" aria-live="polite"></span>' +
     '<input id="vseek" type="range" min="0" max="1000" value="0" step="1" aria-label="播放进度">' +
     '<button id="vcompact" type="button" aria-label="切换胶囊控制条" data-tip="切换胶囊控制条"></button>' +
+    '<button id="vquality" type="button" aria-label="画质" data-tip="画质：自动（点击切换）">自动</button>' +
     '<button id="vmute" type="button" aria-label="静音" data-tip="静音"></button>' +
     '<input id="vvol" type="range" min="0" max="100" value="100" step="1" aria-label="音量">' +
     '<button id="vfull" type="button" aria-label="全屏">全屏</button></div>' +
@@ -1215,6 +1227,13 @@
   let vdrawRaf = 0;
   let vTranscode = null, vSeekDragging = false, vHls = null, vTranscodeSeekTarget = 0;
   let vHlsSid = '', vHlsGuard = 0, vHlsPlayed = false, vHlsFalling = false, vHlsProgress = false;
+  let vStallTimer = 0, vStallRetry = 0, vStallActive = false;
+  const VQ_KEY = 'xl_vquality', VQ_LEVELS = ['1080', '720', '480', '360'];
+  let vQuality = 'auto';
+  try {
+    const qv = localStorage.getItem(VQ_KEY);
+    if (qv === 'auto' || VQ_LEVELS.includes(qv)) vQuality = qv;
+  } catch (e) {}
   const VOL_KEY = 'xl_video_volume', MUTE_KEY = 'xl_video_muted';
   let vSavedVolume = 1, vSavedMuted = false;
   try {
@@ -1256,6 +1275,8 @@
   const ICON_VOL_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="m17 9 4 6M21 9l-4 6"/></svg>';
   const ICON_CAPSULE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.2" y="7.2" width="17.6" height="9.6" rx="4.8"/><rect x="6.2" y="9.6" width="4.2" height="4.8" rx="2.1"/></svg>';
   const vfull = openwin.querySelector('#vfull');
+  const vquality = openwin.querySelector('#vquality');
+  const vbuf = openwin.querySelector('#vbuf');
   const vorient = openwin.querySelector('#vorient');
   const vexitfull = openwin.querySelector('#vexitfull');
   const ICON_ROTATE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="3" width="10" height="18" rx="2"/><path d="M10 18h4M4 7a8 8 0 0 0 0 10M20 7a8 8 0 0 1 0 10"/></svg>';
@@ -1317,6 +1338,147 @@
   function videoSyncPlay(){
     vplay.textContent = vvideo.paused ? '▶' : '❚❚';
     vplay.setAttribute('aria-label', vvideo.paused ? '播放' : '暂停');
+  }
+  // ---- 画质档位、预缓冲与卡顿重连 ----
+  function hlsConfigFor(q){
+    /* 低档位加大预缓冲：360p 90s / 480p 60s / 720p 40s / 1080p 30s */
+    const pre = q === '360' ? 90 : q === '480' ? 60 : q === '720' ? 40 : 30;
+    return {
+      enableWorker: true,
+      lowLatencyMode: false,
+      startFragPrefetch: true,
+      backBufferLength: 30,
+      maxBufferLength: pre,
+      maxMaxBufferLength: pre * 2,
+      maxBufferSize: 96 * 1024 * 1024,
+      manifestLoadingMaxRetry: 4,
+      manifestLoadingRetryDelay: 800,
+      levelLoadingMaxRetry: 4,
+      fragLoadingMaxRetry: 5,
+      fragLoadingRetryDelay: 1000,
+      nudgeMaxRetry: 10
+    };
+  }
+  function vqLabel(q){
+    return q === 'auto' ? '自动' : q + 'p';
+  }
+  function vqStartQ(){
+    /* 手动档直接用；自动档从 1080 起步，弱网卡顿后逐级降档 */
+    return vQuality === 'auto' ? '1080' : vQuality;
+  }
+  function videoSyncQuality(){
+    if (!vquality) return;
+    const label = vqLabel(vQuality);
+    let tip = '画质：' + label + '（点击切换）';
+    if (vQuality === 'auto' && vTranscode && vTranscode.q) tip = '画质：自动（当前 ' + vTranscode.q + 'p，点击切换）';
+    vquality.textContent = label;
+    vquality.setAttribute('data-tip', tip);
+    vquality.setAttribute('aria-label', tip);
+  }
+  function videoBufferAhead(){
+    try {
+      const b = vvideo.buffered, t = vvideo.currentTime || 0;
+      for (let i = 0; i < b.length; i++) {
+        if (t >= b.start(i) - 0.75 && t <= b.end(i) + 0.75) return Math.max(0, b.end(i) - t);
+      }
+    } catch (e) {}
+    return 0;
+  }
+  function videoSyncBuffer(){
+    if (!vbuf) return;
+    if (!videoView.classList.contains('on') || vvideo.paused || vvideo.ended) { vbuf.textContent = ''; return; }
+    const ahead = videoBufferAhead();
+    if (ahead >= 1) vbuf.textContent = '缓冲 ' + Math.round(ahead) + 's';
+    else if (vvideo.readyState < 3) vbuf.textContent = '缓冲中…';
+    else vbuf.textContent = '';
+  }
+  function videoStallEnd(){
+    clearTimeout(vStallTimer); vStallTimer = 0;
+    vStallActive = false;
+    vStallRetry = 0;
+    videoSyncBuffer();
+  }
+  function videoStallBegin(){
+    if (vStallActive) return;
+    if (!videoView.classList.contains('on') || vvideo.paused || vvideo.ended) return;
+    vStallActive = true;
+    clearTimeout(vStallTimer);
+    vStallTimer = setTimeout(() => {
+      vStallTimer = 0;
+      if (vvideo.paused || vvideo.ended || !vStallActive) return;
+      videoStallRecover();
+    }, 2600);
+    videoSyncBuffer();
+  }
+  function videoStallRecover(){
+    if (!vStallActive) return;
+    const tc = vTranscode;
+    const at = vvideo.currentTime || 0;
+    vStallRetry++;
+    if (vHls) {
+      try { vHls.startLoad(at); } catch (e) {}
+    } else if (tc) {
+      /* 分段直出转码：从当前位置重新请求，断流后不会一直等 */
+      tc.start = at;
+      owUrl = API + 'transcode?path=' + encodeURIComponent(tc.path) + '&q=' + encodeURIComponent(tc.q || '1080') +
+        (at > 0 ? '&t=' + at.toFixed(3) : '');
+      vvideo.src = owUrl;
+      vvideo.load();
+    } else {
+      /* 原画直出：重新加载同一地址并回到原位置 */
+      const src = vvideo.currentSrc || vvideo.src;
+      if (src) {
+        let restored = false;
+        const restore = () => {
+          if (restored) return;
+          restored = true;
+          try { vvideo.currentTime = at; } catch (e) {}
+        };
+        vvideo.addEventListener('loadedmetadata', restore, {once: true});
+        vvideo.load();
+        setTimeout(restore, 800);
+      }
+    }
+    try { const pl = vvideo.play(); if (pl && pl.catch) pl.catch(() => {}); } catch (e) {}
+    if (vStallRetry >= 2) {
+      if (tryAutoDowngrade('网络持续卡顿')) return;
+      vStallRetry = 0;
+    }
+    /* 继续观察：仍无进展则 3 秒后再试，恢复后 playing 会停止重连 */
+    vStallTimer = setTimeout(() => {
+      vStallTimer = 0;
+      if (vStallActive && !vvideo.paused && videoBufferAhead() < 0.5) videoStallRecover();
+    }, 3000);
+  }
+  function tryAutoDowngrade(reason){
+    if (!vTranscode) return false;
+    if (vQuality !== 'auto') return false;
+    const cur = String(vTranscode.q || '1080');
+    const idx = VQ_LEVELS.indexOf(cur);
+    if (idx < 0 || idx >= VQ_LEVELS.length - 1) return false;
+    const next = VQ_LEVELS[idx + 1];
+    const at = vvideo.currentTime || 0;
+    vStallActive = false; vStallRetry = 0;
+    clearTimeout(vStallTimer); vStallTimer = 0;
+    say('网络不稳定，已自动降为 ' + next + 'p 并加大预缓冲');
+    if (vTranscode.hls) openTranscode(vTranscode.path, vTranscode.why, at, next);
+    else { vTranscode.q = next; videoTranscodeSeek(at); }
+    return true;
+  }
+  function vqCycle(){
+    if (!vTranscode) {
+      say('当前为原画直出，转码播放时才可切换画质');
+      return;
+    }
+    const order = ['auto'].concat(VQ_LEVELS);
+    const i = order.indexOf(vQuality);
+    vQuality = order[(i + 1) % order.length];
+    try { localStorage.setItem(VQ_KEY, vQuality); } catch (e) {}
+    if (vquality) videoSyncQuality();
+    const at = vvideo.currentTime || 0;
+    const target = vqStartQ();
+    if (vTranscode.hls) openTranscode(vTranscode.path, vTranscode.why, at, target);
+    else { vTranscode.q = target; videoTranscodeSeek(at); }
   }
   function videoShowControls(){
     if (!videoView.classList.contains('on')) return;
@@ -1380,6 +1542,7 @@
   }
   function videoStop(){
     vTranscode = null; vSeekDragging = false;
+    vStallActive = false; vStallRetry = 0; clearTimeout(vStallTimer); vStallTimer = 0;
     vStopLongPress(true);
     try { vvideo.playbackRate = 1; } catch (e) {}
     if (vrate) vrate.classList.remove('on');
@@ -1409,7 +1572,7 @@
     if (!tc) { vHlsFalling = false; return; }
     tc.hls = false;
     tc.start = Math.max(0, at);
-    setOwTag('1080p 兼容');
+    setOwTag((tc.q || '1080') + 'p 兼容');
     say(reason || 'HLS 播放失败，已回退直出转码');
     openVideo(API + 'transcode?path=' + encodeURIComponent(tc.path) + '&q=' + encodeURIComponent(tc.q || '1080') +
       (tc.start > 0 ? '&t=' + tc.start.toFixed(3) : ''), baseName(tc.path));
@@ -1500,12 +1663,14 @@
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     vvideo.controls = false;
     vvideo.removeAttribute('controls');
+    videoSyncQuality();
+    videoSyncBuffer();
     if (vHls) { try { vHls.destroy(); } catch (e) {} vHls = null; }
     if (vTranscode && vTranscode.hls && /\.m3u8(?:$|\?)/.test(url) && window.Hls && window.Hls.isSupported()) {
       const sm = url.match(/\/hls\/([^/]+)\//);
       vHlsSid = sm ? sm[1] : '';
       vHlsPlayed = false;
-      vHls = new Hls({ enableWorker: true, lowLatencyMode: false });
+      vHls = new Hls(hlsConfigFor(vTranscode.q));
       vHls.loadSource(url);
       vHls.attachMedia(vvideo);
       vHls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -1522,9 +1687,22 @@
       }, 8000);
       vHls.on(Hls.Events.ERROR, (evt, data) => {
         if (!data || !data.fatal) return;
+        /* 网络抖动先原地重连；仍失败再自动降档，最后才回退直出 */
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR && vStallRetry < 3) {
+          vStallRetry++;
+          try { vHls.startLoad(vvideo.currentTime || 0); } catch (e) {}
+          return;
+        }
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR && vStallRetry < 2) {
+          vStallRetry++;
+          try { vHls.recoverMediaError(); } catch (e) {}
+          return;
+        }
+        if (tryAutoDowngrade('HLS 加载失败')) return;
         videoFallbackHls('HLS 播放失败，已回退直出转码');
       });
     } else {
+      vvideo.preload = 'auto';
       vvideo.src = url;
       vvideo.load();
     }
@@ -1583,6 +1761,12 @@
     videoToggle();
   });
   vplay.addEventListener('click', videoToggle);
+  vvideo.addEventListener('waiting', () => { videoSyncBuffer(); videoStallBegin(); });
+  vvideo.addEventListener('stalled', () => { videoSyncBuffer(); videoStallBegin(); });
+  vvideo.addEventListener('progress', videoSyncBuffer);
+  vvideo.addEventListener('playing', () => { vStallActive = false; clearTimeout(vStallTimer); vStallTimer = 0; vStallRetry = 0; videoSyncBuffer(); });
+  vvideo.addEventListener('pause', videoStallEnd);
+  vvideo.addEventListener('emptied', () => { vStallActive = false; clearTimeout(vStallTimer); vStallTimer = 0; });
   vvideo.addEventListener('playing', () => { vHlsPlayed = true; });
   vvideo.addEventListener('timeupdate', () => {
     if (!vHlsSid) return;
@@ -1595,6 +1779,7 @@
   vvideo.addEventListener('pause', () => { videoSyncPlay(); videoShowControls(); });
   vvideo.addEventListener('ended', () => { videoSyncPlay(); videoShowControls(); });
   vvideo.addEventListener('timeupdate', videoSyncTime);
+  vvideo.addEventListener('timeupdate', videoSyncBuffer);
   vvideo.addEventListener('loadedmetadata', () => { videoSyncTime(); videoShowControls(); });
   vseek.addEventListener('input', () => {
     const tc = vTranscode;
@@ -1646,6 +1831,7 @@
     vvol.disabled = !!vvideo.muted;
     vvol.value = String(Math.round((vvideo.muted ? vSavedVolume : vvideo.volume) * 100));
   }
+  if (vquality) vquality.addEventListener('click', vqCycle);
   if (vmute) vmute.addEventListener('click', () => {
     vvideo.muted = !vvideo.muted;
     vSavedMuted = vvideo.muted;
@@ -1980,8 +2166,10 @@
         }
       }).catch(() => {});
   }
-  async function openTranscode(p, why, start){
+  async function openTranscode(p, why, start, q){
     videoPending(baseName(p));
+    const at = Math.max(0, Number(start) || 0);
+    const Q = (q && VQ_LEVELS.includes(String(q))) ? String(q) : vqStartQ();
     let hlsOk = false;
     try {
       await ensureHls();
@@ -1991,22 +2179,37 @@
     let info = null;
     if (hlsOk) {
       try {
-        const r = await fetch(API + 'hls?path=' + encodeURIComponent(p) + '&q=1080', {cache: 'no-store'});
+        const r = await fetch(API + 'hls?path=' + encodeURIComponent(p) + '&q=' + encodeURIComponent(Q), {cache: 'no-store'});
         info = await r.json();
       } catch (e) {}
     }
     if (!info || info.ok === false || !info.url) {
       /* HLS 启动失败时回退旧的分段直出转码；时长异步补齐，不阻塞打开。 */
-      vTranscode = { path:p, why:why||'', q:'1080', duration:0, start:Math.max(0, Number(start)||0) };
-      setOwTag('1080p 直出');
-      openVideo(API + 'transcode?path=' + encodeURIComponent(p) + '&q=1080' + (vTranscode.start > 0 ? '&t=' + vTranscode.start.toFixed(3) : ''), baseName(p));
+      vTranscode = { path:p, why:why||'', q:Q, duration:0, start:at };
+      setOwTag(Q + 'p 直出');
+      openVideo(API + 'transcode?path=' + encodeURIComponent(p) + '&q=' + encodeURIComponent(Q) +
+        (at > 0 ? '&t=' + at.toFixed(3) : ''), baseName(p));
+      videoSyncQuality();
       refreshTranscodeDuration(p);
       return;
     }
-    vTranscode = { path:p, why:why||'', q:'1080', duration:0, start:0, hls:true };
-    setOwTag('1080p HLS');
-    say('正在转码播放（1080p HLS，可拖动）');
+    vTranscode = { path:p, why:why||'', q:Q, duration:0, start:0, hls:true };
+    setOwTag(Q + 'p HLS');
+    say('正在转码播放（' + Q + 'p HLS，已开启预缓冲）');
     openVideo(API + info.url, baseName(p));
+    /* 切档/降档后保持播放位置：HLS 从 0 起播，metadata 就绪后跳回原时间 */
+    if (at > 0) {
+      let seekDone = false;
+      const seekTo = () => {
+        if (seekDone) return;
+        seekDone = true;
+        try { vvideo.currentTime = Math.max(0, Math.min(at, vvideo.duration || at)); } catch (e) {}
+        try { const pl = vvideo.play(); if (pl && pl.catch) pl.catch(() => {}); } catch (e) {}
+      };
+      vvideo.addEventListener('loadedmetadata', seekTo, {once: true});
+      setTimeout(seekTo, 1500);
+    }
+    videoSyncQuality();
     refreshTranscodeDuration(p);
   }
 

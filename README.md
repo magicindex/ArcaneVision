@@ -23,6 +23,8 @@
   单击/双击，触屏始终单击打开
 - **视频预览**：内置播放器（浏览器直接打开/转码播放）控制条悬浮在画面底部，鼠标离开播放窗口即隐藏；空格暂停/播放，
   ←/→ 快退/快进 5 秒；在线转码流同样适用
+- **预缓冲与弱网**：HLS 按画质预缓冲 30–90 秒，控制条显示缓冲秒数；waiting/stalled 2.6 秒无进展自动重连；
+  自动画质下连续卡顿会降档（1080→720→480→360）并加大预缓冲，手动可选自动/1080/720/480/360
 - **团队空间隔离**：管理员可选共享 / 隔离 / 混合；混合模式默认共享，按组独立扫描，
   未分类组回退共享；隔离用户按单元索引检索，单元缺失不回退
 - **即时预览**：内置 PDF 阅读器（按页宽适配）、EPUB 阅读器（章节/目录/图片）、
@@ -144,8 +146,8 @@ API、PDF worker、预览与下载地址，不依赖 `127.0.0.1:8971`。触屏�
 
 ## 现在是什么状态
 
-当前版本 **0.10.56（正式版）**，更新记录见 [CHANGELOG.md](CHANGELOG.md)，发布说明见
-[RELEASE_NOTES.md](RELEASE_NOTES.md)。0.10.56 修复播放器悬停提示被裁剪；0.10.55 仅保留顶栏咖啡杯赞助入口；0.10.54 修复网关路径下赞赏码图片 404；0.10.53 增加「请作者喝杯咖啡」赞助入口与弹窗；0.10.52 播放关闭后恢复列表滚动位置；0.10.11 固定背景层并补齐 ext4 镜像测试；0.10.10 优化多词候选选择与高亮边界；0.10.9 修复多词分隔符与多词高亮；0.10.8 增加搜索结果自动分页加载；0.10.7 增加多词搜索；0.10.6 将 0.10.x 的团队独立索引、远程协议标识、
+当前版本 **0.10.57（正式版）**，更新记录见 [CHANGELOG.md](CHANGELOG.md)，发布说明见
+[RELEASE_NOTES.md](RELEASE_NOTES.md)。0.10.57 增加视频预缓冲、卡顿重连与 360p 自动降档；0.10.56 修复播放器悬停提示被裁剪；0.10.55 仅保留顶栏咖啡杯赞助入口；0.10.54 修复网关路径下赞赏码图片 404；0.10.53 增加「请作者喝杯咖啡」赞助入口与弹窗；0.10.52 播放关闭后恢复列表滚动位置；0.10.11 固定背景层并补齐 ext4 镜像测试；0.10.10 优化多词候选选择与高亮边界；0.10.9 修复多词分隔符与多词高亮；0.10.8 增加搜索结果自动分页加载；0.10.7 增加多词搜索；0.10.6 将 0.10.x 的团队独立索引、远程协议标识、
 HLS 转码、分区域扫描统计和板块级重建收敛为正式版；0.9.0 完成团队空间按权限索引；
 0.10.0 完成 fanotify ACL 自愈与修复退避。
 
@@ -160,6 +162,13 @@ HLS 转码、分区域扫描统计和板块级重建收敛为正式版；0.9.0 �
 4. **可运维**：单元索引有 epoch 原子切换、增量 delta、损坏检测/自动重建、容量告警、
    `.trash` 回收与一键回滚。
 5. **不牺牲检索性能**：共享索引仍是 mmap + trigram；单元索引只读 mmap，增量走 live + delta。
+
+### 0.10.57 正式版已完成
+
+- HLS 按档位预缓冲 30–90 秒，直出视频 preload=auto；
+- waiting/stalled 自动重连，弱网连续卡顿自动降档；
+- 新增画质档位 自动/1080/720/480/360，后端支持 360p；
+- HLS 分段 temp_file 原子写。
 
 ### 0.10.56 正式版已完成
 
@@ -1049,15 +1058,15 @@ scripts/deploy-local.sh   本机 root 手工升级（停服务 → 解包 → �
 
 ## 版本与安装包
 
-- 最新版本：**0.10.56（正式版）**（2026-11-24）
-- 源码 tag：`v0.10.56`
-- FPK：`dist/xuanlan_0.10.56_amd64.fpk`（2,187,931 字节）
-- SHA-256：`f5a558679ce4747ae38fcf855c9be1786b0e5f44a6ac5118af67a7da915bacb5`
-- 发布页：[GitHub Release](https://github.com/magicindex/ArcaneVision/releases/tag/v0.10.56) ·
-  [Gitea Release](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.10.56)
+- 最新版本：**0.10.57（正式版）**（2026-11-26）
+- 源码 tag：`v0.10.57`
+- FPK：`dist/xuanlan_0.10.57_amd64.fpk`（2,192,967 字节）
+- SHA-256：`43f2146c26e317f874527318eb37707bebd4dc90b30346f2fb950e595b860480`
+- 发布页：[GitHub Release](https://github.com/magicindex/ArcaneVision/releases/tag/v0.10.57) ·
+  [Gitea Release](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/tag/v0.10.57)
 - 安装包直链：
-  [GitHub](https://github.com/magicindex/ArcaneVision/releases/download/v0.10.56/xuanlan_0.10.56_amd64.fpk) ·
-  [Gitea](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/download/v0.10.56/xuanlan_0.10.56_amd64.fpk)
+  [GitHub](https://github.com/magicindex/ArcaneVision/releases/download/v0.10.57/xuanlan_0.10.57_amd64.fpk) ·
+  [Gitea](http://192.168.3.200:3000/cyberzero/ArcaneVision/releases/download/v0.10.57/xuanlan_0.10.57_amd64.fpk)
 
 > 0.10.6 为正式版；包含团队独立索引、HLS 视频、PDF 显示全部、分区域扫描统计、
 > 板块级重建隔离和本轮完整回归修复。

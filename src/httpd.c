@@ -6931,6 +6931,7 @@ static void handle_hls_start(int fd, const char *qs, int uid) {
     int W = 1920, H = 1080, br = 4;
     if (!strcmp(qbuf, "720")) { W = 1280; H = 720; br = 3; }
     else if (!strcmp(qbuf, "480")) { W = 854; H = 480; br = 2; }
+    else if (!strcmp(qbuf, "360")) { W = 640; H = 360; br = 1; }
 
     char sid[32], dir[300];
     pthread_mutex_lock(&g_hls_mu);
@@ -6974,7 +6975,7 @@ static void handle_hls_start(int fd, const char *qs, int uid) {
     argv[n++] = "-hls_time"; argv[n++] = "1";
     argv[n++] = "-hls_list_size"; argv[n++] = "0";
     argv[n++] = "-hls_playlist_type"; argv[n++] = "event";
-    argv[n++] = "-hls_flags"; argv[n++] = "independent_segments";
+    argv[n++] = "-hls_flags"; argv[n++] = "independent_segments+temp_file";
     argv[n++] = "-hls_segment_filename"; argv[n++] = seg;
     argv[n++] = pl;
     argv[n] = NULL;
@@ -7091,6 +7092,7 @@ static void handle_transcode(int fd, const char *qs, int uid) {
     int W = 1920, H = 1080, br = 4;
     if (!strcmp(qbuf, "720")) { W = 1280; H = 720; br = 3; }
     else if (!strcmp(qbuf, "480")) { W = 854; H = 480; br = 2; }
+    else if (!strcmp(qbuf, "360")) { W = 640; H = 360; br = 1; }
 
     double start = 0;
     if (param(qs, "t", tbuf, sizeof tbuf)) start = atof(tbuf);
