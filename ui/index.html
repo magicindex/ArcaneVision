@@ -1265,6 +1265,50 @@
     if (vdrawRaf) cancelAnimationFrame(vdrawRaf);
     vdrawRaf = 0;
   }
+  /* 部分设备（如荣耀 Play 5 Pro）drawImage(video) 输出黑屏：采样检测后回退为直接显示 video */
+  let vCanvasProbeTimer = 0, vCanvasProbeMiss = 0, vCanvasProbeOk = 0, vCanvasFail = false;
+  function videoCanvasProbe(){
+    if (vCanvasFail || !videoView.classList.contains('on') || !vctx || !vcanvas) return;
+    if (!vvideo.videoWidth || vvideo.paused || vvideo.ended) return;
+    try {
+      const w = vcanvas.width, h = vcanvas.height;
+      if (!w || !h) return;
+      const x = Math.max(0, Math.floor(w * 0.4)), y = Math.max(0, Math.floor(h * 0.4));
+      const d = vctx.getImageData(x, y, Math.min(8, w - x), Math.min(8, h - y)).data;
+      let lit = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i] > 20 || d[i + 1] > 20 || d[i + 2] > 20) lit++;
+      }
+      if (lit === 0) {
+        vCanvasProbeMiss++;
+      } else {
+        vCanvasProbeMiss = 0; vCanvasProbeOk++;
+        /* 确认画布正常后停止探测，避免播放期间持续 getImageData */
+        if (vCanvasProbeOk >= 3) { clearTimeout(vCanvasProbeTimer); vCanvasProbeTimer = 0; return; }
+      }
+    } catch (e) { vCanvasProbeMiss = 0; }
+    if (vCanvasProbeMiss >= 2) videoCanvasFallback();
+  }
+  function scheduleCanvasProbe(){
+    clearTimeout(vCanvasProbeTimer);
+    if (vCanvasFail) return;
+    vCanvasProbeTimer = setTimeout(() => {
+      vCanvasProbeTimer = 0;
+      if (vCanvasFail || !videoView.classList.contains('on')) return;
+      videoCanvasProbe();
+      scheduleCanvasProbe();
+    }, 700);
+  }
+  function videoCanvasFallback(){
+    if (vCanvasFail) return;
+    vCanvasFail = true;
+    clearTimeout(vCanvasProbeTimer); vCanvasProbeTimer = 0;
+    videoStopDraw();
+    if (vcanvas) vcanvas.style.display = 'none';
+    if (vvideo) vvideo.style.opacity = '1';
+    say('当前设备画布渲染异常，已切换为直接显示视频');
+    try { videoShowControls(); } catch (e) {}
+  }
   if (vvideoEl) {
     vvideoEl.controls = false;
     vvideoEl.removeAttribute('controls');
@@ -1581,6 +1625,8 @@
     vTranscode = null; vSeekDragging = false;
     vStallActive = false; vStallRetry = 0; clearTimeout(vStallTimer); vStallTimer = 0;
     vPlaybackStarted = false; vLastDowngradeAt = 0;
+    clearTimeout(vCanvasProbeTimer); vCanvasProbeTimer = 0;
+    vCanvasFail = false; vCanvasProbeMiss = 0; vCanvasProbeOk = 0;
     vStopLongPress(true);
     try { vvideo.playbackRate = 1; } catch (e) {}
     if (vrate) vrate.classList.remove('on');
@@ -1698,6 +1744,10 @@
     try { vvideo.playbackRate = 1; } catch (e) {}
     if (vrate) vrate.classList.remove('on');
     openwin.classList.add('on');
+    vCanvasFail = false; vCanvasProbeMiss = 0; vCanvasProbeOk = 0;
+    clearTimeout(vCanvasProbeTimer); vCanvasProbeTimer = 0;
+    if (vcanvas) vcanvas.style.display = '';
+    vvideo.style.opacity = '';
     videoStartDraw();
     applyOw();
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
@@ -1804,7 +1854,7 @@
   vvideo.addEventListener('waiting', () => { videoSyncBuffer(); videoStallBegin(); });
   vvideo.addEventListener('stalled', () => { videoSyncBuffer(); videoStallBegin(); });
   vvideo.addEventListener('progress', videoSyncBuffer);
-  vvideo.addEventListener('playing', () => { vPlaybackStarted = true; vStallActive = false; clearTimeout(vStallTimer); vStallTimer = 0; vStallRetry = 0; videoSyncBuffer(); });
+  vvideo.addEventListener('playing', () => { vPlaybackStarted = true; vStallActive = false; clearTimeout(vStallTimer); vStallTimer = 0; vStallRetry = 0; videoSyncBuffer(); scheduleCanvasProbe(); });
   vvideo.addEventListener('pause', videoStallEnd);
   vvideo.addEventListener('emptied', () => { vStallActive = false; clearTimeout(vStallTimer); vStallTimer = 0; });
   vvideo.addEventListener('playing', () => { vHlsPlayed = true; });
