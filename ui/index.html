@@ -1345,31 +1345,41 @@
     vplay.setAttribute('aria-label', vvideo.paused ? '播放' : '暂停');
   }
   // ---- 画质档位、预缓冲与卡顿重连 ----
+  function vqIsMobile(){
+    return coarse || innerWidth <= 620;
+  }
+  function vqDefaultQ(){
+    /* 默认档位：手机 480p、桌面 720p；手动选择优先 */
+    return vqIsMobile() ? '480' : '720';
+  }
   function hlsConfigFor(q){
-    /* 低档位加大预缓冲：360p 90s / 480p 60s / 720p 40s / 1080p 30s */
-    const pre = q === '360' ? 90 : q === '480' ? 60 : q === '720' ? 40 : 30;
+    /* 预缓冲按档位：360p 60s / 480p 45s / 720p 30s / 1080p 20s，兼顾手机内存 */
+    const pre = q === '360' ? 60 : q === '480' ? 45 : q === '720' ? 30 : 20;
     return {
       enableWorker: true,
       lowLatencyMode: false,
       startFragPrefetch: true,
-      backBufferLength: 30,
+      backBufferLength: 20,
       maxBufferLength: pre,
       maxMaxBufferLength: pre * 2,
-      maxBufferSize: 96 * 1024 * 1024,
-      manifestLoadingMaxRetry: 4,
-      manifestLoadingRetryDelay: 800,
-      levelLoadingMaxRetry: 4,
-      fragLoadingMaxRetry: 5,
-      fragLoadingRetryDelay: 1000,
-      nudgeMaxRetry: 10
+      maxBufferSize: 40 * 1024 * 1024,
+      maxBufferHole: 0.5,
+      manifestLoadingMaxRetry: 5,
+      manifestLoadingRetryDelay: 600,
+      levelLoadingMaxRetry: 5,
+      fragLoadingMaxRetry: 6,
+      fragLoadingRetryDelay: 800,
+      fragLoadingMaxRetryTimeout: 30000,
+      nudgeMaxRetry: 10,
+      appendErrorMaxRetry: 5
     };
   }
   function vqLabel(q){
     return q === 'auto' ? '自动' : q + 'p';
   }
   function vqStartQ(){
-    /* 手动档直接用；自动档从 1080 起步，弱网卡顿后逐级降档 */
-    return vQuality === 'auto' ? '1080' : vQuality;
+    /* 手动档直接用；自动档从设备默认档位起步，弱网卡顿后逐级降档 */
+    return vQuality === 'auto' ? vqDefaultQ() : vQuality;
   }
   function videoSyncQuality(){
     if (!vquality) return;
@@ -1451,18 +1461,18 @@
       if (tryAutoDowngrade('网络持续卡顿')) return;
       vStallRetry = 0;
     }
-    /* 继续观察：仍无进展则 3 秒后再试，恢复后 playing 会停止重连 */
+    /* 继续观察：仍无进展则 5 秒后再试，恢复后 playing 会停止重连 */
     vStallTimer = setTimeout(() => {
       vStallTimer = 0;
       if (vStallActive && !vvideo.paused && videoBufferAhead() < 0.5) videoStallRecover();
-    }, 3000);
+    }, 5000);
   }
   function tryAutoDowngrade(reason){
     if (!vTranscode) return false;
     if (vQuality !== 'auto') return false;
     /* 避免转码首段较慢时在几秒内反复重建会话 */
     const now = Date.now();
-    if (now - vLastDowngradeAt < 20000) return false;
+    if (now - vLastDowngradeAt < 30000) return false;
     vLastDowngradeAt = now;
     const cur = String(vTranscode.q || '1080');
     const idx = VQ_LEVELS.indexOf(cur);
