@@ -45,6 +45,27 @@
     background:linear-gradient(135deg,var(--teal),var(--indigo));
     box-shadow:0 8px 28px rgba(94,234,212,.28), inset 0 1px 0 rgba(255,255,255,.5);
   }
+  /* 手机标题栏用户头像：圆环跑马灯，绿=就绪 / 橙=索引中 / 红=未就绪 */
+  .avatar{
+    display:none;flex:none;position:relative;width:32px;height:32px;border-radius:50%;
+    place-items:center;font-size:13px;font-weight:650;color:#07121a;
+    background:linear-gradient(135deg,var(--teal),var(--indigo));
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.45);--avc:#34d399;
+  }
+  .avatar.ok{--avc:#34d399}
+  .avatar.busy{--avc:#f59e0b}
+  .avatar.bad{--avc:#f87171}
+  .avatar .av-ring{
+    position:absolute;inset:-3px;border-radius:50%;pointer-events:none;
+    background:conic-gradient(from 0deg,rgba(0,0,0,0) 0 58%,var(--avc) 76%,rgba(0,0,0,0) 94%);
+    -webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 3px),#000 calc(100% - 2px));
+    mask:radial-gradient(farthest-side,transparent calc(100% - 3px),#000 calc(100% - 2px));
+    animation:avspin 1.6s linear infinite;
+  }
+  .avatar.bad .av-ring{animation-duration:0.9s}
+  @keyframes avspin{to{transform:rotate(360deg)}}
+  @media(prefers-reduced-motion:reduce){.avatar .av-ring{animation:none}}
+  html[data-theme="light"] .avatar{color:#07121a}
   .brand h1{margin:0;font-size:18px;letter-spacing:.4px;font-weight:650}
   .brand p{margin:1px 0 0;font-size:12px;color:var(--dim);letter-spacing:2.2px;text-transform:uppercase}
   .status{
@@ -728,8 +749,9 @@
     .wrap{padding:16px 12px calc(56px + env(safe-area-inset-bottom))}
     header{gap:7px;margin-bottom:12px}
     .mark{width:32px;height:32px;border-radius:10px;font-size:15px}
-    .brand h1{font-size:15px}
-    .brand p{display:none}
+    .brand{display:none}
+    .avatar{display:grid;width:30px;height:30px;font-size:12px}
+    .avatar .av-ring{inset:-2.5px}
     .status{margin-left:auto;gap:5px;font-size:10.5px;padding:4px 8px;min-width:0}
     .status .dot{width:5px;height:5px}
     .status .cnt{display:none}
@@ -809,6 +831,7 @@
     .status{font-size:10px;padding:3px 7px}
     .gear{width:30px;height:30px}
     .mark{width:30px;height:30px;border-radius:9px;font-size:14px}
+    .avatar{width:28px;height:28px;font-size:11px}
     .brand h1{font-size:14px}
     .setbox .acell{flex-wrap:wrap}
     .setbox .acell select{max-width:100%}
@@ -946,6 +969,7 @@
 <div class="wrap">
   <header>
     <div class="mark">玄</div>
+    <div class="avatar" id="avatar" aria-hidden="true"><span class="av-ring"></span><span id="avWho">玄</span></div>
     <div class="brand">
       <h1>玄览</h1>
       <p>Arcane Vision</p>
@@ -3312,11 +3336,25 @@
   document.addEventListener('keydown', e => { if (e.key === 'Escape') hideCtx(); });
   window.addEventListener('blur', hideCtx);
   const who = $('who');
+  const avatarEl = $('avatar'), avWhoEl = $('avWho');
+  function avatarText(){
+    if (!avWhoEl) return;
+    const t = (who.textContent || '').trim();
+    avWhoEl.textContent = t ? t.charAt(0).toUpperCase() : '玄';
+    if (avatarEl) avatarEl.title = t || '用户';
+  }
+  function avatarState(cls){
+    if (!avatarEl) return;
+    avatarEl.classList.remove('ok', 'busy', 'bad');
+    avatarEl.classList.add(cls);
+  }
   fetch(API + 'me').then(r=>r.json()).then(d=>{
     who.textContent = d.name || (d.uid >= 0 ? 'uid ' + d.uid : '');
     who.title = d.admin ? '飞牛账号 · 管理员' : '飞牛账号';
     if (typeof d.uid === 'number') myUid = d.uid;
+    avatarText();
   }).catch(()=>{});
+  avatarState('ok');
   const spin = $('spin'), prog = $('prog'), dot = $('dot'), stext = $('stext'), scount = $('scount');
   const toast = $('toast');
   let type = '', cat = '', timer = null, seq = 0, sel = -1, items = [], state = {building:false};
@@ -4998,16 +5036,19 @@
           stext.textContent = 'USB 建索引中 · ' + (u.mounts || 0) + ' 个';
         }
         prog.classList.remove('hide');
+        avatarState('busy');
       } else if (d.state === 'degraded') {
         dot.className = 'dot bad';
         const bad = (d.volumes || []).filter(v => !v.ok).map(v => v.root.replace(/^\/vol/, '卷'));
         stext.textContent = '部分卷不可用' + (bad.length ? '（' + bad.join('、') + '）' : '');
         stext.title = (d.error ? d.error + '\n' : '') + (d.volumes || []).map(v => v.root + ' · ' + (v.ok ? v.records + ' 条' : '不可用')).join('\n');
         prog.classList.add('hide');
+        avatarState('bad');
       } else {
         dot.className = 'dot'; stext.textContent = '就绪'; prog.classList.add('hide');
+        avatarState('ok');
       }
-    }).catch(()=>{ dot.className='dot bad'; stext.textContent='未连接'; });
+    }).catch(()=>{ dot.className='dot bad'; stext.textContent='未连接'; avatarState('bad'); });
   }
 
   const qclear = document.getElementById('qclear');
