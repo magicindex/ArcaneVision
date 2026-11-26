@@ -726,15 +726,17 @@
 
   @media(max-width:620px),(pointer:coarse){
     .wrap{padding:16px 12px calc(56px + env(safe-area-inset-bottom))}
-    header{gap:9px;margin-bottom:16px}
-    .mark{width:40px;height:40px;border-radius:12px;font-size:18px}
-    .brand h1{font-size:17px}
+    header{gap:7px;margin-bottom:12px}
+    .mark{width:32px;height:32px;border-radius:10px;font-size:15px}
+    .brand h1{font-size:15px}
     .brand p{display:none}
-    .status{margin-left:auto;gap:6px;font-size:11px;padding:6px 9px;min-width:0}
+    .status{margin-left:auto;gap:5px;font-size:10.5px;padding:4px 8px;min-width:0}
+    .status .dot{width:5px;height:5px}
     .status .cnt{display:none}
-    .usb-ind{font-size:10.5px;padding:5px 7px}
-    .status .who{max-width:76px;margin-left:4px;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .gear{width:34px;height:34px;margin-left:2px}
+    .usb-ind{font-size:10px;padding:4px 6px}
+    .status .who{max-width:56px;margin-left:3px;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .gear{width:32px;height:32px;margin-left:2px}
+    .gear svg{width:15px;height:15px}
     .search input{font-size:16px;padding:17px 48px 17px 46px}
     .search .qclear{width:32px;height:32px;right:8px}
 
@@ -804,7 +806,10 @@
   }
   @media(max-width:380px){
     .status .who{display:none}
-    .gear{width:32px;height:32px}
+    .status{font-size:10px;padding:3px 7px}
+    .gear{width:30px;height:30px}
+    .mark{width:30px;height:30px;border-radius:9px;font-size:14px}
+    .brand h1{font-size:14px}
     .setbox .acell{flex-wrap:wrap}
     .setbox .acell select{max-width:100%}
   }
