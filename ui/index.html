@@ -1323,9 +1323,13 @@
     const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
     return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s).padStart(2, '0');
   }
+  function videoFileTime(){
+    const tc = vTranscode;
+    return (tc ? (tc.start || 0) : 0) + (vvideo.currentTime || 0);
+  }
   function videoSyncTime(){
     const tc = vTranscode;
-    const cur = tc && tc.hls ? (vvideo.currentTime || 0) : ((tc ? tc.start : 0) + (vvideo.currentTime || 0));
+    const cur = videoFileTime();
     let dur = tc && tc.duration > 0 ? tc.duration : vvideo.duration;
     if (!isFinite(dur) || dur <= 0) dur = 0;
     vtime.textContent = fmtVideoTime(cur) + ' / ' + fmtVideoTime(dur);
@@ -1416,7 +1420,7 @@
   function videoStallRecover(){
     if (!vStallActive || !vPlaybackStarted) return;
     const tc = vTranscode;
-    const at = vvideo.currentTime || 0;
+    const at = videoFileTime();
     vStallRetry++;
     if (vHls) {
       try { vHls.startLoad(at); } catch (e) {}
@@ -1464,7 +1468,7 @@
     const idx = VQ_LEVELS.indexOf(cur);
     if (idx < 0 || idx >= VQ_LEVELS.length - 1) return false;
     const next = VQ_LEVELS[idx + 1];
-    const at = vvideo.currentTime || 0;
+    const at = videoFileTime();
     vStallActive = false; vStallRetry = 0;
     clearTimeout(vStallTimer); vStallTimer = 0;
     say('网络不稳定，已自动降为 ' + next + 'p 并加大预缓冲');
@@ -1482,7 +1486,7 @@
     vQuality = order[(i + 1) % order.length];
     try { localStorage.setItem(VQ_KEY, vQuality); } catch (e) {}
     if (vquality) videoSyncQuality();
-    const at = vvideo.currentTime || 0;
+    const at = videoFileTime();
     const target = vqStartQ();
     if (vTranscode.hls) openTranscode(vTranscode.path, vTranscode.why, at, target);
     else { vTranscode.q = target; videoTranscodeSeek(at); }
@@ -1515,16 +1519,11 @@
   function videoSeekBy(delta){
     if (!isFinite(delta)) return;
     const tc = vTranscode;
-    if (tc && tc.hls) {
-      const max = tc.duration > 0 ? tc.duration : vvideo.duration;
-      if (isFinite(max)) vvideo.currentTime = Math.max(0, Math.min(max, (vvideo.currentTime || 0) + delta));
-      videoSyncTime(); videoShowControls();
-      return;
-    }
     if (tc) {
-      const cur = (tc.start || 0) + (vvideo.currentTime || 0);
+      const cur = videoFileTime();
       const max = tc.duration > 0 ? tc.duration : cur + delta;
-      videoTranscodeSeek(Math.max(0, Math.min(max, cur + delta)));
+      const target = Math.max(0, Math.min(max, cur + delta));
+      if (tc.hls) videoHlsSeek(target); else videoTranscodeSeek(target);
       return;
     }
     const cur = vvideo.currentTime || 0;
@@ -1532,6 +1531,22 @@
     vvideo.currentTime = Math.max(0, Math.min(max, cur + delta));
     videoSyncTime();
     videoShowControls();
+  }
+  function videoHlsSeek(target){
+    const tc = vTranscode;
+    if (!tc) return;
+    if (!tc.hls) { videoTranscodeSeek(target); return; }
+    let T = Math.max(0, Number(target) || 0);
+    const dur = tc.duration > 0 ? tc.duration : 0;
+    if (dur > 0) T = Math.min(dur, T);
+    const rel = T - (tc.start || 0);
+    if (rel < 0.5) {
+      /* 目标早于本次 HLS 转码起点：从目标位置重新开一个会话 */
+      openTranscode(tc.path, tc.why, T, tc.q);
+      return;
+    }
+    try { vvideo.currentTime = rel; } catch (e) {}
+    videoSyncTime(); videoShowControls();
   }
   function videoTranscodeSeek(target){
     if (!vTranscode) return;
@@ -1575,7 +1590,7 @@
     if (vHlsFalling) return;
     vHlsFalling = true;
     const tc = vTranscode;
-    const at = vvideo.currentTime || (tc && tc.start) || 0;
+    const at = videoFileTime();
     stopHls();
     if (!tc) { vHlsFalling = false; return; }
     tc.hls = false;
@@ -1815,8 +1830,7 @@
     const dur = tc.duration > 0 ? tc.duration : 0;
     vSeekDragging = false;
     if (tc.hls && dur > 0) {
-      vvideo.currentTime = Math.max(0, Math.min(dur, dur * (Number(vseek.value) / 1000)));
-      videoSyncTime();
+      videoHlsSeek(dur * (Number(vseek.value) / 1000));
       return;
     }
     if (dur > 0) videoTranscodeSeek(dur * (Number(vseek.value) / 1000));
@@ -2177,8 +2191,11 @@
       }).catch(() => {});
   }
   async function openTranscode(p, why, start, q){
+    /* 先记住总时长：videoPending 会清空 vTranscode */
+    const durLimit = vTranscode && vTranscode.duration > 0 ? vTranscode.duration : 0;
     videoPending(baseName(p));
-    const at = Math.max(0, Number(start) || 0);
+    let at = Math.max(0, Number(start) || 0);
+    if (durLimit > 0 && at > durLimit - 1) at = Math.max(0, durLimit - 1);
     const Q = (q && VQ_LEVELS.includes(String(q))) ? String(q) : vqStartQ();
     let hlsOk = false;
     try {
@@ -2189,7 +2206,8 @@
     let info = null;
     if (hlsOk) {
       try {
-        const r = await fetch(API + 'hls?path=' + encodeURIComponent(p) + '&q=' + encodeURIComponent(Q), {cache: 'no-store'});
+        const r = await fetch(API + 'hls?path=' + encodeURIComponent(p) + '&q=' + encodeURIComponent(Q) +
+          (at > 0 ? '&t=' + at.toFixed(3) : ''), {cache: 'no-store'});
         info = await r.json();
       } catch (e) {}
     }
@@ -2203,22 +2221,12 @@
       refreshTranscodeDuration(p);
       return;
     }
-    vTranscode = { path:p, why:why||'', q:Q, duration:0, start:0, hls:true };
+    /* 从 at 开始转码：HLS 时间轴 0 即文件 at 秒，切档后无需再 seek */
+    vTranscode = { path:p, why:why||'', q:Q, duration:0, start:at, hls:true };
     setOwTag(Q + 'p HLS');
-    say('正在转码播放（' + Q + 'p HLS，已开启预缓冲）');
+    if (at > 0) say('已切换为 ' + Q + 'p 并从当前位置继续播放');
+    else say('正在转码播放（' + Q + 'p HLS，已开启预缓冲）');
     openVideo(API + info.url, baseName(p));
-    /* 切档/降档后保持播放位置：HLS 从 0 起播，metadata 就绪后跳回原时间 */
-    if (at > 0) {
-      let seekDone = false;
-      const seekTo = () => {
-        if (seekDone) return;
-        seekDone = true;
-        try { vvideo.currentTime = Math.max(0, Math.min(at, vvideo.duration || at)); } catch (e) {}
-        try { const pl = vvideo.play(); if (pl && pl.catch) pl.catch(() => {}); } catch (e) {}
-      };
-      vvideo.addEventListener('loadedmetadata', seekTo, {once: true});
-      setTimeout(seekTo, 1500);
-    }
     videoSyncQuality();
     refreshTranscodeDuration(p);
   }

@@ -6932,6 +6932,12 @@ static void handle_hls_start(int fd, const char *qs, int uid) {
     if (!strcmp(qbuf, "720")) { W = 1280; H = 720; brk = 2000; }
     else if (!strcmp(qbuf, "480")) { W = 854; H = 480; brk = 1100; }
     else if (!strcmp(qbuf, "360")) { W = 640; H = 360; brk = 700; }
+    /* 切档/降档时从当前位置开始转码，避免重新从 0 转再等 */
+    char tbuf[32], ss[32];
+    double start = 0;
+    if (param(qs, "t", tbuf, sizeof tbuf)) start = atof(tbuf);
+    if (!(start >= 0) || start > 1e7) start = 0;
+    snprintf(ss, sizeof ss, "%.3f", start);
 
     char sid[32], dir[300];
     pthread_mutex_lock(&g_hls_mu);
@@ -6960,6 +6966,7 @@ static void handle_hls_start(int fd, const char *qs, int uid) {
     argv[n++] = "-hide_banner"; argv[n++] = "-loglevel"; argv[n++] = "error"; argv[n++] = "-nostdin";
     argv[n++] = "-analyzeduration"; argv[n++] = "0"; argv[n++] = "-probesize"; argv[n++] = "1000000";
     argv[n++] = "-hwaccel"; argv[n++] = "auto";
+    if (start > 0) { argv[n++] = "-ss"; argv[n++] = ss; }
     argv[n++] = "-i"; argv[n++] = real;
     argv[n++] = "-t"; argv[n++] = "14400";
     argv[n++] = "-map"; argv[n++] = "0:v:0"; argv[n++] = "-map"; argv[n++] = "0:a:0?";
