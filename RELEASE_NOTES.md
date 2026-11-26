@@ -1,34 +1,31 @@
-# 玄览 0.10.64 发布说明
+# 玄览 0.10.65 发布说明
 
 > 发布：2026-11-27 · 适用于飞牛 fnOS（amd64）· 正式版
 
-0.10.64 修复部分机型设置面板无法上下滑动。
+0.10.65 让视频在准备好后自动播放，并兼容移动端自动播放策略。
 
-安装包：`xuanlan_0.10.64_amd64.fpk`（2,197,786 字节）。
-SHA-256：`c8dec30fbca55309cba748f7ed2afc9960e9cc8aaf7dcab36b4c8d999b3980f5`。
+安装包：`xuanlan_0.10.65_amd64.fpk`（2,198,256 字节）。
+SHA-256：`81f953a8f6c639fa652faf5bef8123df548c22fb810c43f18cde9f1b2034a28d`。
 
-## 问题
+## 变更
 
-- 荣耀 Play 5 Pro 等机型在飞牛 App 内打开「设置」时面板能显示，但内容无法上下滑动；
-- 原因：全屏遮罩 `.setmask` 使用 `backdrop-filter: blur(6px)` 毛玻璃，
-  部分 Android WebView 在毛玻璃合成层下会吞掉内部 `overflow` 的触摸滚动事件；
-- 小米等设备毛玻璃实现正常，因此不易复现。
-
-## 修复
-
-- 手机 / 触屏下禁用设置、目录查找、弹窗遮罩的 `backdrop-filter`（背景色保留，视觉基本一致）；
-- 设置面板 `.setbody`、目录列表补齐 `-webkit-overflow-scrolling: touch` 与 `touch-action: pan-y`；
-- 遮罩与滚动容器增加 `overscroll-behavior: contain`，避免滚动穿透到页面；
-- 桌面端仍保留毛玻璃效果。
+- 打开视频（直出 / HLS 转码 / 本地视频）时统一走新的自动播放逻辑；
+- HLS 就绪（MANIFEST_PARSED）后再次尝试播放，覆盖转码首段较慢的情况；
+- 移动端浏览器拦截「有声自动播放」时：
+  - 自动**静音起播**，toast 提示「已静音自动播放，点画面或音量按钮恢复声音」；
+  - 用户点击画面或音量按钮后恢复声音（同一用户手势内完成）；
+- 用户手动操作音量后不再自动恢复静音，尊重手动设置；
+- 关闭视频时重置自动静音状态。
 
 ## 验证
 
-- 手机媒体查询下 `.setmask`/`.finder`/`.modal` 的 `backdrop-filter` 为 `none`；
-- `.setbody` 计算样式包含 `touch-action: pan-y`、`overflow-y: auto`；
-- `tests/ui_behavior_test.py` 通过。
+- 桌面与允许自动播放的设备：直接有声自动播放；
+- 拦截有声播放的设备：静音自动起播，点击画面恢复声音；
+- `settings.autoplay` 关闭时保持不自动播放；
+- `tests/ui_behavior_test.py` 与 JS 语法检查通过。
 
 ## 安装包
 
-`xuanlan_0.10.64_amd64.fpk`
+`xuanlan_0.10.65_amd64.fpk`
 
-SHA-256：`c8dec30fbca55309cba748f7ed2afc9960e9cc8aaf7dcab36b4c8d999b3980f5`。
+SHA-256：`81f953a8f6c639fa652faf5bef8123df548c22fb810c43f18cde9f1b2034a28d`。

@@ -1269,7 +1269,7 @@
     if (qv === 'auto' || VQ_LEVELS.includes(qv)) vQuality = qv;
   } catch (e) {}
   const VOL_KEY = 'xl_video_volume', MUTE_KEY = 'xl_video_muted';
-  let vSavedVolume = 1, vSavedMuted = false;
+  let vSavedVolume = 1, vSavedMuted = false, vAutoMuted = false;
   try {
     const sv = parseFloat(localStorage.getItem(VOL_KEY));
     if (isFinite(sv)) vSavedVolume = Math.max(0, Math.min(1, sv));
@@ -1594,8 +1594,38 @@
     clearTimeout(vHideTimer);
     videoView.classList.remove('ctrlon');
   }
+  function videoTryAutoplay(){
+    if (settings.autoplay !== false) {
+      let p = null;
+      try { p = vvideo.play(); } catch (e) {}
+      if (!p || !p.catch) return;
+      p.catch(err => {
+        if (!err || err.name !== 'NotAllowedError') return;
+        /* 移动端拦截有声自动播放：先静音起播，用户触摸画面/音量后再恢复声音 */
+        vAutoMuted = true;
+        vvideo.muted = true;
+        vSavedMuted = true;
+        videoSyncVolume();
+        try { const p2 = vvideo.play(); if (p2 && p2.catch) p2.catch(() => {}); } catch (e) {}
+        say('已静音自动播放，点画面或音量按钮恢复声音');
+      });
+    } else {
+      try { vvideo.pause(); } catch (e) {}
+    }
+  }
+  function videoResumeSound(){
+    if (!vAutoMuted) return;
+    vAutoMuted = false;
+    if (!vvideo.muted) return;
+    vvideo.muted = false;
+    vSavedMuted = false;
+    if (!(vvideo.volume > 0)) vvideo.volume = vSavedVolume > 0 ? vSavedVolume : 1;
+    videoPersistVolume();
+    videoSyncVolume();
+  }
   function videoToggle(){
     if (vvideo.paused) {
+      videoResumeSound();
       const p = vvideo.play();
       if (p && p.catch) p.catch(() => {});
     } else {
@@ -1652,7 +1682,7 @@
   function videoStop(){
     vTranscode = null; vSeekDragging = false;
     vStallActive = false; vStallRetry = 0; clearTimeout(vStallTimer); vStallTimer = 0;
-    vPlaybackStarted = false; vLastDowngradeAt = 0;
+    vPlaybackStarted = false; vLastDowngradeAt = 0; vAutoMuted = false;
     clearTimeout(vCanvasProbeTimer); vCanvasProbeTimer = 0;
     vCanvasFail = false; vCanvasProbeMiss = 0; vCanvasProbeOk = 0;
     vStopLongPress(true);
@@ -1791,10 +1821,7 @@
       vHls = new Hls(hlsConfigFor(vTranscode.q));
       vHls.loadSource(url);
       vHls.attachMedia(vvideo);
-      vHls.on(Hls.Events.MANIFEST_PARSED, () => {
-        if (settings.autoplay === false) return;
-        const p = vvideo.play(); if (p && p.catch) p.catch(() => {});
-      });
+      vHls.on(Hls.Events.MANIFEST_PARSED, videoTryAutoplay);
       clearTimeout(vHlsGuard);
       vHlsProgress = false;
       vHlsGuard = setTimeout(() => {
@@ -1826,12 +1853,7 @@
     }
     videoApplyVolume();
     try { vvideo.focus({ preventScroll: true }); } catch (e) { try { vvideo.focus(); } catch (e2) {} }
-    if (settings.autoplay !== false) {
-      const p = vvideo.play();
-      if (p && p.catch) p.catch(() => {});
-    } else {
-      try { vvideo.pause(); } catch (e) {}
-    }
+    videoTryAutoplay();
     videoSyncPlay();
     videoSyncTime();
     videoShowControls();
@@ -1874,6 +1896,7 @@
   vvideo.addEventListener('pointerleave', vEndLong);
   vvideo.addEventListener('click', () => {
     if (vLongConsumed) { vLongConsumed = false; return; }
+    videoResumeSound();
     /* 手机：控件隐藏时第一次点击只唤出控件，控件显示时点击才播放/暂停。 */
     if (!vTapHadControls) { videoShowControls(); return; }
     videoToggle();
@@ -1950,6 +1973,7 @@
   }
   if (vquality) vquality.addEventListener('click', vqCycle);
   if (vmute) vmute.addEventListener('click', () => {
+    vAutoMuted = false;
     vvideo.muted = !vvideo.muted;
     vSavedMuted = vvideo.muted;
     if (!vvideo.muted) {
