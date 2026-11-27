@@ -325,8 +325,8 @@
   .openwin .vbar input[type=range]{accent-color:#59d3c8;height:16px;min-width:60px;background:transparent;-webkit-appearance:none;appearance:none}
   .openwin .vbar .vseek-wrap{flex:1;min-width:60px;position:relative;display:flex;align-items:center}
   .openwin .vbar .vseek-buf{position:absolute;left:0;top:50%;transform:translateY(-50%);height:6px;border-radius:3px;
-    background:rgba(94,234,212,.32);pointer-events:none;width:0;z-index:0;transition:width .18s linear}
-  html[data-theme="light"] .openwin .vbar .vseek-buf{background:rgba(15,156,140,.30)}
+    background:rgba(94,234,212,.62);pointer-events:none;width:0;z-index:0;transition:width .18s linear}
+  html[data-theme="light"] .openwin .vbar .vseek-buf{background:rgba(15,156,140,.48)}
   .openwin .vbar #vseek{flex:1;width:100%;min-width:0;position:relative;z-index:1}
   .openwin .vbar #vseek::-webkit-slider-runnable-track{height:6px;border-radius:3px;background:rgba(255,255,255,.16)}
   .openwin .vbar #vseek::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;margin-top:-3px;border-radius:50%;
@@ -1449,16 +1449,16 @@
     return vqIsMobile() ? '480' : '720';
   }
   function hlsConfigFor(q){
-    /* 预缓冲按档位：360p 60s / 480p 45s / 720p 30s / 1080p 20s，兼顾手机内存 */
-    const pre = q === '360' ? 60 : q === '480' ? 45 : q === '720' ? 30 : 20;
+    /* 预缓冲按档位：360p 120s / 480p 90s / 720p 60s / 1080p 45s，快进到已转码区间不卡顿 */
+    const pre = q === '360' ? 120 : q === '480' ? 90 : q === '720' ? 60 : 45;
     return {
       enableWorker: true,
       lowLatencyMode: false,
       startFragPrefetch: true,
-      backBufferLength: 20,
+      backBufferLength: 30,
       maxBufferLength: pre,
       maxMaxBufferLength: pre * 2,
-      maxBufferSize: 40 * 1024 * 1024,
+      maxBufferSize: 96 * 1024 * 1024,
       maxBufferHole: 0.5,
       manifestLoadingMaxRetry: 5,
       manifestLoadingRetryDelay: 600,
