@@ -322,8 +322,19 @@
   .openwin .vbar #vbuf:empty{display:none}
   .openwin .vbar #vquality{font-size:11px;padding:4px 8px;min-width:46px;white-space:nowrap;font-variant-numeric:tabular-nums}
   html[data-theme="light"] .openwin .vbar #vbuf{color:#0f766e}
-  .openwin .vbar input[type=range]{accent-color:#59d3c8;height:16px;min-width:60px}
-  .openwin .vbar #vseek{flex:1}
+  .openwin .vbar input[type=range]{accent-color:#59d3c8;height:16px;min-width:60px;background:transparent;-webkit-appearance:none;appearance:none}
+  .openwin .vbar .vseek-wrap{flex:1;min-width:60px;position:relative;display:flex;align-items:center}
+  .openwin .vbar .vseek-buf{position:absolute;left:0;top:50%;transform:translateY(-50%);height:6px;border-radius:3px;
+    background:rgba(94,234,212,.32);pointer-events:none;width:0;z-index:0;transition:width .18s linear}
+  html[data-theme="light"] .openwin .vbar .vseek-buf{background:rgba(15,156,140,.30)}
+  .openwin .vbar #vseek{flex:1;width:100%;min-width:0;position:relative;z-index:1}
+  .openwin .vbar #vseek::-webkit-slider-runnable-track{height:6px;border-radius:3px;background:rgba(255,255,255,.16)}
+  .openwin .vbar #vseek::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;margin-top:-3px;border-radius:50%;
+    background:#59d3c8;box-shadow:0 0 6px rgba(89,211,200,.55)}
+  .openwin .vbar #vseek::-moz-range-track{height:6px;border-radius:3px;background:rgba(255,255,255,.16)}
+  .openwin .vbar #vseek::-moz-range-thumb{width:12px;height:12px;border:0;border-radius:50%;background:#59d3c8}
+  html[data-theme="light"] .openwin .vbar #vseek::-webkit-slider-runnable-track{background:rgba(15,23,42,.14)}
+  html[data-theme="light"] .openwin .vbar #vseek::-moz-range-track{background:rgba(15,23,42,.14)}
   .openwin .vbar #vvol{width:68px;flex:none}
   .openwin #vorient{position:absolute;right:8px;bottom:calc(64px + env(safe-area-inset-bottom));z-index:6;
     width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;
@@ -348,7 +359,7 @@
   .openwin .vbar.compact #vtime{font-size:10.5px}
   .openwin .vbar.compact #vbuf{display:none}
   .openwin .vbar.compact #vquality{font-size:10.5px;min-width:0;padding:3px 7px}
-  .openwin .vbar.compact #vseek{min-width:56px;width:min(22vw,140px);flex:none}
+  .openwin .vbar.compact .vseek-wrap{min-width:56px;width:min(22vw,140px);flex:none}
   .openwin .vbar.dragging{cursor:grabbing;user-select:none;transition:none}
   .openwin #vhint{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:2;
     font-size:11px;color:#dbe8f8;background:rgba(8,14,24,.62);border:1px solid rgba(160,190,230,.2);
@@ -370,7 +381,7 @@
     .openwin .vbar #vbuf{display:none}
     .openwin .vbar #vfull{display:none}
     .openwin .vbar{gap:6px}
-    .openwin .vbar #vseek{min-width:50px}
+    .openwin .vbar .vseek-wrap{min-width:50px}
     .openwin .vbar #vquality{font-size:10.5px;min-width:0;padding:3px 7px}
     .openwin .vbar{padding-bottom:max(11px,env(safe-area-inset-bottom))}
     .card,.setbox,.finder .panel,.openwin .vbar.compact,.setmask,.finder,.modal{backdrop-filter:none}
@@ -1135,7 +1146,8 @@
     '<div id="videoview"><div id="vstage"><video id="vvideo" playsinline webkit-playsinline preload="metadata" tabindex="0" disablepictureinpicture></video><canvas id="vcanvas"></canvas>' +
     '<div class="vbar"><button id="vplay" type="button" aria-label="播放或暂停">▶</button>' +
     '<span id="vtime">0:00 / 0:00</span><span id="vbuf" aria-live="polite"></span>' +
-    '<input id="vseek" type="range" min="0" max="1000" value="0" step="1" aria-label="播放进度">' +
+    '<div class="vseek-wrap"><div class="vseek-buf" id="vseekBuf"></div>' +
+    '<input id="vseek" type="range" min="0" max="1000" value="0" step="1" aria-label="播放进度"></div>' +
     '<button id="vcompact" type="button" aria-label="切换胶囊控制条" data-tip="切换胶囊控制条"></button>' +
     '<button id="vquality" type="button" aria-label="画质" data-tip="画质：自动（点击切换）">自动</button>' +
     '<button id="vmute" type="button" aria-label="静音" data-tip="静音"></button>' +
@@ -1353,6 +1365,7 @@
   const vplay = openwin.querySelector('#vplay');
   const vtime = openwin.querySelector('#vtime');
   const vseek = openwin.querySelector('#vseek');
+  const vseekBuf = openwin.querySelector('#vseekBuf');
   const vmute = openwin.querySelector('#vmute');
   const vvol = openwin.querySelector('#vvol');
   const ICON_VOL_ON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16 9.5a3.5 3.5 0 0 1 0 5M18.5 7a7 7 0 0 1 0 10"/></svg>';
@@ -1489,6 +1502,20 @@
     if (ahead >= 1) vbuf.textContent = '缓冲 ' + Math.round(ahead) + 's';
     else if (vvideo.readyState < 3) vbuf.textContent = '缓冲中…';
     else vbuf.textContent = '';
+  }
+  function videoSyncSeekBuffer(){
+    if (!vseekBuf) return;
+    const tc = vTranscode;
+    const dur = tc && tc.duration > 0 ? tc.duration : vvideo.duration;
+    if (!isFinite(dur) || dur <= 0) { vseekBuf.style.width = '0%'; return; }
+    const off = tc ? (tc.start || 0) : 0;
+    let maxEnd = 0;
+    try {
+      const b = vvideo.buffered;
+      for (let i = 0; i < b.length; i++) maxEnd = Math.max(maxEnd, b.end(i));
+    } catch (e) {}
+    const pct = Math.max(0, Math.min(100, (off + maxEnd) / dur * 100));
+    vseekBuf.style.width = pct.toFixed(2) + '%';
   }
   function videoStallEnd(){
     clearTimeout(vStallTimer); vStallTimer = 0;
@@ -1691,6 +1718,7 @@
     vPlaybackStarted = false; vLastDowngradeAt = 0; vAutoMuted = false;
     clearTimeout(vCanvasProbeTimer); vCanvasProbeTimer = 0;
     vCanvasFail = false; vCanvasProbeMiss = 0; vCanvasProbeOk = 0;
+    if (vseekBuf) vseekBuf.style.width = '0%';
     vStopLongPress(true);
     try { vvideo.playbackRate = 1; } catch (e) {}
     if (vrate) vrate.classList.remove('on');
@@ -1910,7 +1938,7 @@
   vplay.addEventListener('click', videoToggle);
   vvideo.addEventListener('waiting', () => { videoSyncBuffer(); videoStallBegin(); });
   vvideo.addEventListener('stalled', () => { videoSyncBuffer(); videoStallBegin(); });
-  vvideo.addEventListener('progress', videoSyncBuffer);
+  vvideo.addEventListener('progress', () => { videoSyncBuffer(); videoSyncSeekBuffer(); });
   vvideo.addEventListener('playing', () => { vPlaybackStarted = true; vStallActive = false; clearTimeout(vStallTimer); vStallTimer = 0; vStallRetry = 0; videoSyncBuffer(); scheduleCanvasProbe(); });
   vvideo.addEventListener('pause', videoStallEnd);
   vvideo.addEventListener('emptied', () => { vStallActive = false; clearTimeout(vStallTimer); vStallTimer = 0; });
@@ -1926,7 +1954,7 @@
   vvideo.addEventListener('pause', () => { videoSyncPlay(); videoShowControls(); });
   vvideo.addEventListener('ended', () => { videoSyncPlay(); videoShowControls(); });
   vvideo.addEventListener('timeupdate', videoSyncTime);
-  vvideo.addEventListener('timeupdate', videoSyncBuffer);
+  vvideo.addEventListener('timeupdate', () => { videoSyncBuffer(); videoSyncSeekBuffer(); });
   vvideo.addEventListener('loadedmetadata', () => { videoSyncTime(); videoShowControls(); });
   vseek.addEventListener('input', () => {
     const tc = vTranscode;
