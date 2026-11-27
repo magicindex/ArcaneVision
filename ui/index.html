@@ -751,18 +751,20 @@
 
   @media(max-width:620px),(pointer:coarse){
     .wrap{padding:16px 12px calc(56px + env(safe-area-inset-bottom))}
-    header{gap:7px;margin-bottom:12px}
-    .mark{width:32px;height:32px;border-radius:10px;font-size:15px}
-    .brand{display:none}
-    .avatar{display:grid;width:30px;height:30px;font-size:12px}
-    .avatar .av-ring{inset:-2.5px}
-    .status{margin-left:auto;gap:5px;font-size:10.5px;padding:4px 8px;min-width:0}
+    header{gap:6px;margin-bottom:12px}
+    .mark{width:30px;height:30px;border-radius:9px;font-size:14px}
+    .brand{display:block;min-width:0}
+    .brand h1{font-size:13px;line-height:1.15}
+    .brand p{display:block;font-size:7px;letter-spacing:1.3px;margin-top:1px;white-space:nowrap}
+    .avatar{display:grid;width:26px;height:26px;font-size:10px}
+    .avatar .av-ring{inset:-2px}
+    .status{margin-left:auto;gap:4px;font-size:10px;padding:3px 7px;min-width:0}
     .status .dot{width:5px;height:5px}
     .status .cnt{display:none}
-    .usb-ind{font-size:10px;padding:4px 6px}
-    .status .who{max-width:56px;margin-left:3px;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .gear{width:32px;height:32px;margin-left:2px}
-    .gear svg{width:15px;height:15px}
+    .status .who{display:none}
+    .usb-ind{font-size:9.5px;padding:3px 5px}
+    .gear{width:30px;height:30px;margin-left:1px}
+    .gear svg{width:14px;height:14px}
     .search input{font-size:16px;padding:17px 48px 17px 46px}
     .search .qclear{width:32px;height:32px;right:8px}
 
@@ -832,11 +834,12 @@
   }
   @media(max-width:380px){
     .status .who{display:none}
-    .status{font-size:10px;padding:3px 7px}
-    .gear{width:30px;height:30px}
-    .mark{width:30px;height:30px;border-radius:9px;font-size:14px}
-    .avatar{width:28px;height:28px;font-size:11px}
-    .brand h1{font-size:14px}
+    .status{font-size:9.5px;padding:2px 6px}
+    .gear{width:28px;height:28px}
+    .mark{width:28px;height:28px;border-radius:8px;font-size:13px}
+    .avatar{width:24px;height:24px;font-size:9.5px}
+    .brand h1{font-size:12px}
+    .brand p{display:none}
     .setbox .acell{flex-wrap:wrap}
     .setbox .acell select{max-width:100%}
   }
